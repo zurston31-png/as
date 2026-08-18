@@ -60,6 +60,14 @@ class Signal(Base):
     volume_sma: Mapped[float | None] = mapped_column(Float, nullable=True)
     breakout_level: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Live 0-100 composite score (app/signals/scoring.py via
+    # app/signals/live_gate.py), populated for buy signals when
+    # LIVE_SIGNAL_SCORE_ENABLED and live candle data was available - persisted
+    # regardless of pass/fail so a passing signal's score stays visible in
+    # the journal, same principle as RugCheckResult.rug_risk_score.
+    signal_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    signal_score_reliable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    signal_score_factors: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class RugCheckResult(Base):

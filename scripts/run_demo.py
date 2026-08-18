@@ -68,8 +68,19 @@ async def main() -> None:
             ownership_renounced=True, mint_disabled=True, liquidity_locked=True, is_honeypot=False,
         )
 
+    async def fake_signal_score(chain: str, token_address: str, symbol: str):
+        from app.signals.scoring import Factor, SignalScore
+
+        if token_address != DEMO_ADDRESS:
+            return None
+        return SignalScore(
+            score=88.0, direction="long", reliable=True,
+            factors=[Factor(name="trend_direction", score=0.9, weight=1.0, reason="demo stub")],
+        )
+
     price_feed.get_price_usd = fake_price
     trading_service.run_rug_checks = fake_rug_check
+    trading_service.evaluate_live_entry_signal = fake_signal_score
 
     print("=" * 68)
     print("  DEMO TRADE  (simulated token, simulated money)")

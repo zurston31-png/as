@@ -24,10 +24,20 @@ DEXSCREENER = "https://api.dexscreener.com/latest/dex/tokens/{addr}"
 GOPLUS_SOLANA = "https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses={addr}"
 GOPLUS_EVM = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}?contract_addresses={addr}"
 RUGCHECK = "https://api.rugcheck.xyz/v1/tokens/{addr}/report"
+GECKOTERMINAL_POOLS = "https://api.geckoterminal.com/api/v2/networks/{network}/tokens/{addr}/pools"
+GECKOTERMINAL_OHLCV = "https://api.geckoterminal.com/api/v2/networks/{network}/pools/{pool}/ohlcv/minute?aggregate=15&limit=5&currency=usd"
 
 EVM_CHAIN_IDS = {
     "ethereum": "1", "bsc": "56", "polygon": "137", "arbitrum": "42161",
     "base": "8453", "avalanche": "43114", "optimism": "10",
+}
+
+# Must match app/data/live_provider.py's CHAIN_TO_GECKOTERMINAL_NETWORK -
+# this script exists specifically to verify that module's assumptions
+# against a real token, so keep the two in sync.
+GECKOTERMINAL_NETWORKS = {
+    "solana": "solana", "ethereum": "eth", "bsc": "bsc", "polygon": "polygon_pos",
+    "arbitrum": "arbitrum", "optimism": "optimism", "base": "base", "avalanche": "avax",
 }
 
 IS_WINDOWS = os.name == "nt"
@@ -95,7 +105,7 @@ def main() -> None:
     report: dict = {"token_address": address}
 
     # ---- 1. DexScreener: establishes the chain and real market depth ----
-    print("\n  [1/3] DexScreener (market data, tells us the chain)...")
+    print("\n  [1/4] DexScreener (market data, tells us the chain)...")
     dex_raw = fetch(DEXSCREENER.format(addr=address))
     pairs = (dex_raw or {}).get("pairs") or [] if isinstance(dex_raw, dict) else []
     report["dexscreener_pair_count"] = len(pairs)
@@ -122,7 +132,7 @@ def main() -> None:
     report["chain"] = chain
 
     # ---- 2. GoPlus ----
-    print(f"\n  [2/3] GoPlus Security ({chain})...")
+    print(f"\n  [2/4] GoPlus Security ({chain})...")
     if chain == "solana":
         goplus_raw = fetch(GOPLUS_SOLANA.format(addr=address))
     else:
@@ -143,7 +153,7 @@ def main() -> None:
     # ---- 3. RugCheck (Solana specialist, indexes new launches) ----
     rugcheck_raw = None
     if chain == "solana":
-        print("\n  [3/3] RugCheck.xyz (Solana specialist)...")
+        print("\n  [3/4] RugCheck.xyz (Solana specialist)...")
         rugcheck_raw = fetch(RUGCHECK.format(addr=address))
         report["rugcheck_raw"] = rugcheck_raw
         if isinstance(rugcheck_raw, dict) and "__error__" not in rugcheck_raw:
@@ -152,7 +162,45 @@ def main() -> None:
             err = (rugcheck_raw or {}).get("__error__", "no data")
             print(f"        no usable data ({err})")
     else:
-        print("\n  [3/3] RugCheck.xyz - skipped (Solana only)")
+        print("\n  [3/4] RugCheck.xyz - skipped (Solana only)")
+
+    # ---- 4. GeckoTerminal (live candles for the signal-scoring gate) ----
+    print("\n  [4/4] GeckoTerminal (live candles for the signal-score gate)...")
+    gt_network = GECKOTERMINAL_NETWORKS.get(chain)
+    gt_pool = None
+    gt_ohlcv_raw = None
+    if not gt_network:
+        print(f"        no GeckoTerminal network mapped for chain {chain!r} - live signal score would be unavailable")
+    else:
+        pools_raw = fetch(GECKOTERMINAL_POOLS.format(network=gt_network, addr=address))
+        report["geckoterminal_pools_raw"] = pools_raw
+        pools = (pools_raw or {}).get("data") or [] if isinstance(pools_raw, dict) else []
+        if not pools:
+            print("        no pools found - live signal score would be unavailable for this token")
+        else:
+            def reserve_usd(pool):
+                try:
+                    return float((pool.get("attributes") or {}).get("reserve_in_usd") or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+
+            best_pool = max(pools, key=reserve_usd)
+            gt_pool = (best_pool.get("attributes") or {}).get("address")
+            print(f"        found pool {gt_pool} (${reserve_usd(best_pool):,.0f} reserve)")
+
+            if gt_pool:
+                gt_ohlcv_raw = fetch(GECKOTERMINAL_OHLCV.format(network=gt_network, pool=gt_pool))
+                report["geckoterminal_ohlcv_raw"] = gt_ohlcv_raw
+                ohlcv_list = None
+                if isinstance(gt_ohlcv_raw, dict):
+                    ohlcv_list = ((gt_ohlcv_raw.get("data") or {}).get("attributes") or {}).get("ohlcv_list")
+                if ohlcv_list:
+                    print(f"        got {len(ohlcv_list)} sample candles, e.g. {ohlcv_list[0]}")
+                    print("        shape matches what app/data/live_provider.py expects - live signal score should work")
+                else:
+                    err = gt_ohlcv_raw.get("__error__") if isinstance(gt_ohlcv_raw, dict) else None
+                    print(f"        UNEXPECTED RESPONSE SHAPE ({err or 'no ohlcv_list found'}) - "
+                          "app/data/live_provider.py may need updating; see diagnostic_output.json")
 
     OUTPUT.write_text(json.dumps(report, indent=2), encoding="utf-8")
 

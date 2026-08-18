@@ -21,6 +21,7 @@ from app.risk.manager import RiskManager, halt_trading
 from app.rugcheck.filters import run_rug_checks
 from app.schemas import TradingViewAlert
 from app.services import portfolio
+from app.signals.live_gate import evaluate_live_entry_signal
 
 logger = logging.getLogger(__name__)
 risk_manager = RiskManager()
@@ -81,6 +82,33 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
     if existing:
         logger.info("ignoring buy signal for %s: position already open (id=%s)", signal.symbol, existing.id)
         return
+
+    if settings.LIVE_SIGNAL_SCORE_ENABLED:
+        score = await evaluate_live_entry_signal(signal.chain, signal.token_address, signal.symbol)
+        if score is None:
+            reason = (
+                f"live signal score unavailable for {signal.symbol} - no trustworthy candle data "
+                f"(need >={settings.SIGNAL_SCORE_MIN_CANDLES} live {settings.SIGNAL_SCORE_TIMEFRAME} candles)"
+            )
+            db.add(models.RiskEvent(event_type="signal_score_unavailable", details=reason, signal_id=signal.id))
+            await notifier.notify_rejection(signal, reason)
+            return
+
+        signal.signal_score = score.score
+        signal.signal_score_reliable = score.reliable
+        signal.signal_score_factors = score.as_dict()["factors"]
+
+        if score.score < settings.MIN_SIGNAL_SCORE_TO_ENTER or not score.reliable:
+            reason = (
+                f"signal score {score.score:.1f}/100 "
+                f"{'(unreliable - too much missing data) ' if not score.reliable else ''}"
+                f"below minimum {settings.MIN_SIGNAL_SCORE_TO_ENTER:.1f}"
+            )
+            db.add(models.RiskEvent(event_type="signal_score_rejected", details=reason, signal_id=signal.id))
+            await notifier.notify_rejection(signal, reason)
+            return
+    else:
+        logger.warning("LIVE_SIGNAL_SCORE_ENABLED=false - buy signals are NOT being scored before entry")
 
     report = await run_rug_checks(signal.chain, signal.token_address)
     db.add(

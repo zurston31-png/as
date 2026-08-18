@@ -74,17 +74,16 @@ def check_csrf(csrf_token: str = Form(default="")) -> None:
 
 
 async def _enrich_open_positions(db, open_positions: list[models.Position]) -> list[dict]:
-    """Attach current price, unrealized P&L, age, and the rug risk score
-    recorded at entry to each open position, for the dashboard's "what am I
-    actually holding right now" view - the raw Position row alone answers
-    "what did I buy", not "how is it doing".
-
-    Signal score is deliberately absent here: the 0-100 signal-scoring
-    engine (app/signals/scoring.py) isn't wired into the LIVE entry
-    decision yet (it needs a live OHLCV feed the bot doesn't have for
-    on-chain memecoins - see app/data/providers.py), so there is no live
-    score to show. Showing a fabricated one would be worse than showing
-    none.
+    """Attach current price, unrealized P&L, age, the rug risk score, and
+    the live signal score recorded at entry to each open position, for the
+    dashboard's "what am I actually holding right now" view - the raw
+    Position row alone answers "what did I buy", not "how is it doing" or
+    "why did the bot buy it". Both scores are entry-time snapshots (from
+    the Signal/RugCheckResult rows the entry trade is linked to), not a
+    live re-score on every dashboard refresh - re-running the signal score
+    per open position per page load would mean another GeckoTerminal call
+    per position per refresh, which buys nothing (the entry decision is
+    already made) at the cost of latency and rate-limit pressure.
     """
     entry_trade_ids = [p.entry_trade_id for p in open_positions if p.entry_trade_id]
     signal_ids_by_trade = {}
@@ -94,9 +93,12 @@ async def _enrich_open_positions(db, open_positions: list[models.Position]) -> l
 
     signal_ids = [sid for sid in signal_ids_by_trade.values() if sid]
     rug_by_signal = {}
+    signals_by_id = {}
     if signal_ids:
         for check in db.query(models.RugCheckResult).filter(models.RugCheckResult.signal_id.in_(signal_ids)).all():
             rug_by_signal[check.signal_id] = check
+        for sig in db.query(models.Signal).filter(models.Signal.id.in_(signal_ids)).all():
+            signals_by_id[sig.id] = sig
 
     now = dt.datetime.now(dt.timezone.utc)
     enriched = []
@@ -119,6 +121,7 @@ async def _enrich_open_positions(db, open_positions: list[models.Position]) -> l
 
         signal_id = signal_ids_by_trade.get(p.entry_trade_id)
         rug_check = rug_by_signal.get(signal_id) if signal_id else None
+        entry_signal = signals_by_id.get(signal_id) if signal_id else None
 
         enriched.append({
             "position": p,
@@ -128,6 +131,7 @@ async def _enrich_open_positions(db, open_positions: list[models.Position]) -> l
             "age_hours": age_hours,
             "rug_risk_score": rug_check.rug_risk_score if rug_check else None,
             "rug_risk_level": rug_check.rug_risk_level if rug_check else None,
+            "signal_score": entry_signal.signal_score if entry_signal else None,
         })
     return enriched
 

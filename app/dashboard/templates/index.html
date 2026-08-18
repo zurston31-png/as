@@ -85,7 +85,7 @@
     <h2>Open Positions</h2>
     {% if positions %}
     <table>
-      <thead><tr><th>Symbol</th><th>Chain</th><th>Qty</th><th>Entry</th><th>Current</th><th>Unrealized P&amp;L</th><th>Stop Loss</th><th>Take Profit</th><th>Rug score</th><th>Age</th></tr></thead>
+      <thead><tr><th>Symbol</th><th>Chain</th><th>Qty</th><th>Entry</th><th>Current</th><th>Unrealized P&amp;L</th><th>Stop Loss</th><th>Take Profit</th><th>Signal score</th><th>Rug score</th><th>Age</th></tr></thead>
       <tbody>
         {% for e in positions %}
         {% set p = e.position %}
@@ -100,6 +100,13 @@
           </td>
           <td>${{ "%.8f"|format(p.stop_loss) }}</td>
           <td>${{ "%.8f"|format(p.take_profit) }}</td>
+          <td>
+            {% if e.signal_score is not none %}
+              <span class="{{ 'pos' if e.signal_score >= 75 else 'neg' }}">{{ "%.0f"|format(e.signal_score) }}/100</span>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
           <td>
             {% if e.rug_risk_score is not none %}
               <span class="{{ 'neg' if e.rug_risk_score >= 45 else 'pos' }}">{{ "%.0f"|format(e.rug_risk_score) }}/100</span>

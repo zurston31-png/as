@@ -351,7 +351,7 @@ closed-trade P&L, rendered as a dependency-free inline SVG — no JS charting
 library or CDN involved), portfolio stats (win rate, profit factor,
 expectancy, max drawdown, current win/loss streak, realized-today and
 unrealized P&L, current exposure in $ and % of portfolio), open positions
-with live current price, unrealized P&L, age, and the rug risk score
+with live current price, unrealized P&L, age, and the signal/rug scores
 recorded at entry, recent trades, recent signals with their rug score and
 verdict, recent risk/rejection events, and current mode (PAPER/LIVE) with a
 halt/resume control. It auto-refreshes every 20s.
@@ -362,15 +362,42 @@ halt/resume control. It auto-refreshes every 20s.
 or still open — assembling what's otherwise spread across the dashboard's
 separate tables: entry price/size/stop/target, the TradingView indicator
 payload that triggered it (RSI, EMA9/21, volume vs its SMA, breakout
-level), the rug check's score and the scanner that produced it, and every
-exit leg (full or partial) with its own reason and P&L — `Trade.close_reason`
-is recorded per leg, not just once on the position, since a position can
-close in more than one step (a partial profit-take, then later a full exit
-for a different reason). This is "study why the bot won or lost" made
-concrete: every field the spec asks a journal to answer is either shown
-directly or its absence is explained (the composite signal score isn't
-live-wired yet — see the note in the journal itself and in "Backtesting"
-above for where that score DOES exist today).
+level), the live 0-100 signal score computed at entry (see "Live signal
+score" below), the rug check's score and the scanner that produced it, and
+every exit leg (full or partial) with its own reason and P&L —
+`Trade.close_reason` is recorded per leg, not just once on the position,
+since a position can close in more than one step (a partial profit-take,
+then later a full exit for a different reason). This is "study why the bot
+won or lost" made concrete.
+
+### Live signal score
+
+The 0-100 composite signal score (`app/signals/scoring.py`) gates every
+live buy, not just backtests. `app/data/live_provider.py` fetches live
+OHLCV candles from [GeckoTerminal](https://www.geckoterminal.com/dex-api)
+(free, no API key — chosen over paid alternatives like Birdeye for that
+reason), resolving the token's highest-liquidity pool first since
+GeckoTerminal's OHLCV endpoint is keyed by pool, not by token address.
+`app/signals/live_gate.py` scores the result and is **fail-closed**: no
+trustworthy live candle data (fetch failure, an unmapped chain, too few
+candles — `SIGNAL_SCORE_MIN_CANDLES`) rejects the trade outright, the same
+rule the rug-check filter already follows for missing data. A score below
+`MIN_SIGNAL_SCORE_TO_ENTER` (default 75) or marked unreliable (too much
+missing data within the score itself) is rejected too, before the rug
+check ever runs. Set `LIVE_SIGNAL_SCORE_ENABLED=false` to skip this gate
+entirely (loud warning logged) and fall back to the pre-Stage-9 behavior:
+entries on the TradingView alert + rug check alone.
+
+**Honesty note**: `app/data/live_provider.py` is written from
+documented/trained knowledge of GeckoTerminal's public API shape, not
+verified against a live response from this development environment
+(outbound HTTP to public APIs is proxied/restricted there in a way it
+won't be on your deployment server). Every parse is defensive — a shape
+mismatch fails closed (rejects trades) rather than admitting bad ones —
+but run `python scripts/diagnose_token.py` against a real token address on
+your actual deployment (step 4/4) before trusting this gate's verdicts
+unattended; it fetches the exact same pool-resolution and OHLCV endpoints
+this module uses and tells you plainly if the shape doesn't match.
 
 ## Deployment
 

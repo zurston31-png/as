@@ -99,6 +99,22 @@ class Settings(BaseSettings):
     TIME_BASED_EXIT_ENABLED: bool = False
     MAX_POSITION_AGE_HOURS: float = 48.0
 
+    # --- Live signal score (Stage 2's scoring engine, wired into live entries) ---
+    # Master switch. False skips the score gate entirely (loud warning
+    # logged, same pattern as RUGCHECK_ENABLED=false) - entries then run on
+    # the TradingView alert + rug check alone, same as before this existed.
+    LIVE_SIGNAL_SCORE_ENABLED: bool = True
+    MIN_SIGNAL_SCORE_TO_ENTER: float = 75.0
+    SIGNAL_SCORE_TIMEFRAME: str = "15m"
+    SIGNAL_SCORE_CANDLE_LIMIT: int = 300
+    # Fewer live candles than this and the score is treated the same as no
+    # data at all (rejected, not scored on a thin sample) - matches the
+    # backtester's own warmup_bars default or reasoning by margin, though it
+    # doesn't have to match exactly since a live gate only needs ONE
+    # trustworthy reading, not a full walk-forward history.
+    SIGNAL_SCORE_MIN_CANDLES: int = 60
+    GECKOTERMINAL_API_BASE: str = "https://api.geckoterminal.com/api/v2"
+
     # --- Rug-pull / scam filter ---
     RUGCHECK_ENABLED: bool = True
     MAX_TOP10_HOLDER_PCT: float = 0.35
