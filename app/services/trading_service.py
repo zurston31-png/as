@@ -98,6 +98,9 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
             scanner_source=report.source,
             chain_screened=report.chain,
             lookup_outcomes=report.lookup_outcomes,
+            rug_risk_score=report.rug_risk_score,
+            rug_risk_level=report.rug_risk_level,
+            rug_risk_factors=report.rug_risk_factors,
         )
     )
 

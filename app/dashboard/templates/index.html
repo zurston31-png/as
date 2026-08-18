@@ -118,7 +118,7 @@
     <h2>Signals Received</h2>
     {% if signals %}
     <table>
-      <thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Price</th><th>Chain</th><th>Screened by</th><th>Verdict</th></tr></thead>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Price</th><th>Chain</th><th>Screened by</th><th>Rug score</th><th>Verdict</th></tr></thead>
       <tbody>
         {% for s in signals %}
         {% set check = checks.get(s.id) %}
@@ -129,6 +129,15 @@
           <td>{{ "$%.8f"|format(s.price) if s.price else "-" }}</td>
           <td>{{ (check.chain_screened if check and check.chain_screened else s.chain) }}</td>
           <td>{{ check.scanner_source if check and check.scanner_source else "-" }}</td>
+          <td>
+            {% if check and check.rug_risk_score is not none %}
+              <span class="{{ 'neg' if check.rug_risk_score >= 45 else 'pos' }}">
+                {{ "%.0f"|format(check.rug_risk_score) }}/100 ({{ check.rug_risk_level }})
+              </span>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
           <td>
             {% if check is none %}
               <span class="muted">no screening (sell / no action)</span>

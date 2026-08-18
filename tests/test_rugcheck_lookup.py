@@ -23,7 +23,7 @@ def _no_market_liquidity(monkeypatch):
     """Keep DexScreener out of these tests; depth is covered elsewhere."""
     async def none(_addr):
         return None
-    monkeypatch.setattr(filters.price_feed, "get_liquidity_usd", none)
+    monkeypatch.setattr(filters.price_feed, "get_market_snapshot", none)
 
 
 def _rugcheck_ok() -> dict:
@@ -166,8 +166,12 @@ async def test_market_liquidity_overrides_scanner_depth(monkeypatch):
     _patch(monkeypatch, rugcheck=_rugcheck_ok())
 
     async def deep(_addr):
-        return 1_234_567.0
-    monkeypatch.setattr(filters.price_feed, "get_liquidity_usd", deep)
+        return filters.MarketSnapshot(
+            price_usd=1.0, liquidity_usd=1_234_567.0, volume_24h_usd=None,
+            buys_24h=None, sells_24h=None, price_change_1h_pct=None,
+            price_change_24h_pct=None, pair_created_at=None, fdv_usd=None,
+        )
+    monkeypatch.setattr(filters.price_feed, "get_market_snapshot", deep)
 
     report = await filters.run_rug_checks("solana", "SomeMint")
     assert report.liquidity_usd == pytest.approx(1_234_567.0)

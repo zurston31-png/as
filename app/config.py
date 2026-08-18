@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     # "large amount of LP unlocked" arrives as exactly such a risk).
     REJECT_ON_DANGER_RISKS: bool = True
 
+    # Composite Rug Risk Score (0-100, app/rugcheck/risk_score.py) threshold.
+    # This is an ADDITIONAL gate on top of the binary checks above, not a
+    # replacement - a token can fail this even after passing every one of
+    # them, if enough moderate risk factors stack up together.
+    REJECT_RUG_SCORE_ABOVE: float = 65.0
+
     # --- Monitoring loop ---
     PRICE_POLL_INTERVAL_SECONDS: int = 30
     DEV_WALLET_POLL_INTERVAL_SECONDS: int = 300

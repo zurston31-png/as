@@ -87,6 +87,12 @@ class RugCheckResult(Base):
     chain_screened: Mapped[str | None] = mapped_column(String(32), nullable=True)
     lookup_outcomes: Mapped[list] = mapped_column(JSON, default=list)
     dev_wallet_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Composite 0-100 Rug Risk Score (app/rugcheck/risk_score.py), attached
+    # regardless of pass/fail so risk level stays visible in the trade
+    # journal even for a token that passed every binary check.
+    rug_risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rug_risk_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    rug_risk_factors: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Trade(Base):

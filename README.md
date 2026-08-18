@@ -259,6 +259,32 @@ data blocks the trade, it does not default to "pass"):
 Set `RUGCHECK_ENABLED=false` only if you fully understand the risk — the
 bot will log a loud warning and trade without screening.
 
+### Rug Risk Score (0-100)
+
+On top of the binary checks above, every screened token also gets a
+composite **Rug Risk Score** from `app/rugcheck/risk_score.py` — 0 (safe) to
+100 (critical) — from 14 independent factors: mint/freeze authority,
+honeypot status, liquidity lock, liquidity depth, holder concentration, dev
+wallet concentration, scanner danger flags, token/pool age, the 24h
+volume-to-liquidity ratio, buy/sell imbalance, and 1h price-swing-vs-liquidity
+(a manipulation heuristic). A token scoring `REJECT_RUG_SCORE_ABOVE` (default
+65, `"high_risk"`/`"critical"`) or above is rejected **even if it passed
+every binary check** — this is an additional gate layered on top, never a
+replacement for them.
+
+Two factors — liquidity change and suspicious transfer patterns — are
+always reported unavailable rather than faked: a pre-trade screen is a
+single snapshot with no prior observation to diff against, and no scanner
+field for transfer patterns is wired up yet. Like the signal score, a
+factor with no data scores neutral (50/100 on that factor) and is flagged,
+never scored as if it were safe — and if too much of the score has no data
+behind it, the whole score is marked `reliable: False` rather than quietly
+presented as trustworthy. The score, level, and full per-factor breakdown
+are persisted on every screened signal (`RugCheckResult.rug_risk_score` /
+`rug_risk_level` / `rug_risk_factors`) and shown in the dashboard's Recent
+Signals panel, so a rejection or a pass can both be read back with the
+reasoning behind it.
+
 ## Execution backends
 
 Set via `CHAIN` + `EXECUTION_BACKEND` in `.env`. **Whenever `LIVE_TRADING=false`,

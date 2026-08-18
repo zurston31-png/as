@@ -20,8 +20,9 @@ import logging
 from dataclasses import dataclass, field
 
 from app.config import settings
-from app.rugcheck import goplus, honeypot, rugcheck_xyz
+from app.rugcheck import goplus, honeypot, risk_score, rugcheck_xyz
 from app.services import price_feed
+from app.services.price_feed import MarketSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,13 @@ class RugCheckReport:
     chain: str | None = None
     lookup_outcomes: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
+    # Composite 0-100 Rug Risk Score (app/rugcheck/risk_score.py). Computed
+    # and attached regardless of pass/fail, so a passing token's risk level
+    # is still visible in the trade journal - "passed" is not the same claim
+    # as "zero risk".
+    rug_risk_score: float | None = None
+    rug_risk_level: str | None = None
+    rug_risk_factors: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -372,7 +380,7 @@ def estimate_dev_holder_pct(data: dict, id_keys: tuple[str, ...] = ("account", "
 # evaluation
 # --------------------------------------------------------------------------
 
-def evaluate_snapshot(snap: TokenSnapshot) -> RugCheckReport:
+def evaluate_snapshot(snap: TokenSnapshot, market: MarketSnapshot | None = None) -> RugCheckReport:
     reasons: list[str] = []
     unverifiable: list[str] = []
 
@@ -445,6 +453,23 @@ def evaluate_snapshot(snap: TokenSnapshot) -> RugCheckReport:
         reasons.append(
             "could not verify " + ", ".join(unverifiable)
             + f" - {snap.source} returned no recognised field for this chain"
+        )
+
+    # Composite Rug Risk Score - an ADDITIONAL gate layered on top of the
+    # binary checks above, never a replacement for them. Attached to the
+    # report regardless of outcome so risk level is visible even on a pass.
+    rug_risk = risk_score.score_rug_risk(
+        snap, market,
+        min_liquidity_usd=settings.MIN_LIQUIDITY_USD,
+        max_top10_pct=settings.MAX_TOP10_HOLDER_PCT,
+    )
+    report.rug_risk_score = rug_risk.score
+    report.rug_risk_level = rug_risk.level
+    report.rug_risk_factors = rug_risk.as_dict()["factors"]
+    if rug_risk.score >= settings.REJECT_RUG_SCORE_ABOVE:
+        reasons.append(
+            f"composite rug risk score {rug_risk.score:.0f}/100 ({rug_risk.level}) "
+            f"exceeds threshold {settings.REJECT_RUG_SCORE_ABOVE:.0f}"
         )
 
     report.reasons = reasons
@@ -546,11 +571,13 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
         except Exception:
             logger.warning("honeypot.is lookup failed for %s", token_address, exc_info=True)
 
-    # Market-measured depth beats any scanner's own figure.
-    market_liquidity = await price_feed.get_liquidity_usd(token_address)
-    if market_liquidity is not None:
-        snap.liquidity_usd = market_liquidity
+    # Market-measured depth beats any scanner's own figure, and the same
+    # fetch carries the volume/age/buy-sell data the rug risk score's
+    # market-behavior factors need.
+    market = await price_feed.get_market_snapshot(token_address)
+    if market is not None and market.liquidity_usd is not None:
+        snap.liquidity_usd = market.liquidity_usd
 
-    report = evaluate_snapshot(snap)
+    report = evaluate_snapshot(snap, market)
     report.lookup_outcomes = outcomes
     return report
