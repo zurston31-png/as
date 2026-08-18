@@ -88,6 +88,40 @@ jobs:
           print("LIVE_TRADING defaults to false")
           PY
 
+      - name: LIVE_EXECUTION_ACKNOWLEDGED must default to false
+        run: |
+          python - <<'PY'
+          from app.config import Settings
+          s = Settings(_env_file=None)
+          assert s.LIVE_EXECUTION_ACKNOWLEDGED is False, "LIVE_EXECUTION_ACKNOWLEDGED must default to false"
+          print("LIVE_EXECUTION_ACKNOWLEDGED defaults to false")
+          PY
+
+      - name: Jupiter and EVM refuse to submit without both live-execution flags set
+        run: |
+          python - <<'PY'
+          import asyncio
+          from app.config import settings
+          from app.execution.jupiter import JupiterExecutionClient
+          from app.execution.evm import EvmExecutionClient
+
+          async def main():
+              settings.LIVE_TRADING = True
+              settings.LIVE_EXECUTION_ACKNOWLEDGED = False
+
+              jupiter_result = await JupiterExecutionClient()._execute_swap(
+                  {"inAmount": "1", "outAmount": "1"}, input_decimals=6, output_decimals=6,
+              )
+              assert not jupiter_result.success, "Jupiter must refuse without LIVE_EXECUTION_ACKNOWLEDGED"
+
+              evm_result = await EvmExecutionClient()._execute_swap("0x" + "1" * 40, "0x" + "2" * 40, 1, 150)
+              assert not evm_result.success, "EVM backend must refuse without LIVE_EXECUTION_ACKNOWLEDGED"
+
+              print("Jupiter and EVM both refuse live submission without LIVE_EXECUTION_ACKNOWLEDGED")
+
+          asyncio.run(main())
+          PY
+
       - name: Paper engine must be forced whenever LIVE_TRADING is false
         run: |
           python - <<'PY'
