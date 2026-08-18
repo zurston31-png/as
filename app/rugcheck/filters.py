@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from app.config import settings
 from app.rugcheck import goplus, honeypot
+from app.services import price_feed
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,20 @@ def estimate_dev_holder_pct(data: dict) -> float | None:
     return None
 
 
-def evaluate_token_security(chain: str, data: dict, honeypot_flag: bool = False) -> RugCheckReport:
+def evaluate_token_security(
+    chain: str,
+    data: dict,
+    honeypot_flag: bool = False,
+    liquidity_usd: float | None = None,
+) -> RugCheckReport:
+    """Apply every pre-trade check to a security-scanner response.
+
+    `liquidity_usd`, when supplied, is pool depth measured by a market data
+    source (DexScreener) and takes priority over anything the security
+    scanner reports. GoPlus's liquidity fields are EVM-shaped and are absent
+    from its Solana responses, so relying on them alone made every Solana
+    token fail the depth check for lack of data.
+    """
     reasons: list[str] = []
     report = RugCheckReport(passed=True, raw={"goplus": data})
 
@@ -126,10 +140,12 @@ def evaluate_token_security(chain: str, data: dict, honeypot_flag: bool = False)
     report.dev_wallet_pct = estimate_dev_holder_pct(data)
 
     # --- liquidity depth ---
-    liquidity_usd = _to_float(data.get("total_liquidity") or data.get("liquidity"))
+    # Market-data depth wins; fall back to the scanner's own figure (EVM only).
+    if liquidity_usd is None:
+        liquidity_usd = _to_float(data.get("total_liquidity") or data.get("liquidity"))
     report.liquidity_usd = liquidity_usd
     if liquidity_usd is None:
-        reasons.append("no liquidity figure returned - cannot confirm exit depth")
+        reasons.append("no liquidity figure available from market data - cannot confirm exit depth")
     elif liquidity_usd < settings.MIN_LIQUIDITY_USD:
         reasons.append(
             f"liquidity too thin: ${liquidity_usd:,.0f} (minimum ${settings.MIN_LIQUIDITY_USD:,.0f})"
@@ -162,4 +178,10 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
         except Exception:
             logger.warning("honeypot.is lookup failed for %s, relying on GoPlus only", token_address, exc_info=True)
 
-    return evaluate_token_security(chain, data, honeypot_flag=honeypot_flag)
+    # Pool depth from market data rather than the security scanner - see
+    # evaluate_token_security's docstring.
+    liquidity_usd = await price_feed.get_liquidity_usd(token_address)
+
+    return evaluate_token_security(
+        chain, data, honeypot_flag=honeypot_flag, liquidity_usd=liquidity_usd
+    )

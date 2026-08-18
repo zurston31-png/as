@@ -72,6 +72,41 @@ def test_empty_response_fails_closed():
     assert report.reasons
 
 
+def test_market_liquidity_overrides_scanner_figure():
+    """Pool depth from market data wins over the scanner's own number."""
+    data = _clean_solana_response(total_liquidity="100")  # scanner says thin
+    thin = evaluate_token_security("solana", data)
+    assert not thin.passed
+
+    deep = evaluate_token_security("solana", data, liquidity_usd=250_000.0)
+    assert deep.liquidity_usd == pytest.approx(250_000.0)
+    assert not any("liquidity too thin" in r for r in deep.reasons)
+
+
+def test_market_liquidity_satisfies_depth_check_when_scanner_omits_it():
+    """GoPlus's Solana responses carry no liquidity field. Supplying depth
+    from market data must clear the depth check rather than failing for
+    missing data — the bug that rejected every Solana token."""
+    data = _clean_solana_response()
+    data.pop("total_liquidity")
+
+    without = evaluate_token_security("solana", data)
+    assert any("no liquidity figure" in r for r in without.reasons)
+
+    with_market = evaluate_token_security("solana", data, liquidity_usd=250_000.0)
+    assert not any("liquidity" in r and "no liquidity figure" in r for r in with_market.reasons)
+    assert with_market.passed, with_market.reasons
+
+
+def test_thin_market_liquidity_still_rejected():
+    """The override must not become a bypass: genuinely thin pools still fail."""
+    data = _clean_solana_response()
+    data.pop("total_liquidity")
+    report = evaluate_token_security("solana", data, liquidity_usd=50.0)
+    assert not report.passed
+    assert any("liquidity too thin" in r for r in report.reasons)
+
+
 def test_estimate_dev_holder_pct_prefers_creator_address():
     data = _clean_solana_response()
     assert estimate_dev_holder_pct(data) == pytest.approx(0.05)
