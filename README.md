@@ -194,12 +194,20 @@ Set via `CHAIN` + `EXECUTION_BACKEND` in `.env`. **Whenever `LIVE_TRADING=false`
 the paper engine is used no matter what `EXECUTION_BACKEND` says** — this is
 enforced in `app/execution/__init__.py`, not just a default.
 
-- **`jupiter`** (Solana, default) — real Jupiter v6 quote+swap integration,
-  signs and submits with `SOLANA_PRIVATE_KEY` when live. Position quantities
-  are tracked in the token's raw base units (Jupiter's own `outAmount`),
-  which avoids needing per-token decimal handling.
+- **`jupiter`** (Solana, default) — **live submission is currently
+  disabled.** Quoting works and paper trading is unaffected, but the entry
+  price was computed from raw base units, mixing USDC's 6 decimals with the
+  token's. That is only correct for a 6-decimal token; Solana memecoins
+  commonly use 9, and the resulting stop-loss and take-profit would be wrong
+  by a factor of 1000 — closing every position on the first monitor tick at a
+  fabricated profit. Rather than leave that armed, live submission returns an
+  explanatory error. Fixing it means tracking quantity in whole tokens and
+  price in USD while still passing base units to the swap; see the comment in
+  `app/execution/jupiter.py`.
 - **`cex`** — Binance/Coinbase/Kraken/etc. via `ccxt`. Use an API key with
   **trade-only** permission (never enable withdrawals on it).
+- **`cex`** is currently the only backend wired for live execution.
+
 - **`evm_1inch`** — **experimental / incomplete.** Quote path works; actual
   transaction signing is not implemented (see
   `app/execution/evm.py` docstring). Do not enable `LIVE_TRADING` with

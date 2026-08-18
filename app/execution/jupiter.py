@@ -23,6 +23,33 @@ logger = logging.getLogger(__name__)
 
 USDC_DECIMALS = 6
 
+# Live submission is disabled until the unit mismatch below is corrected.
+#
+# The swap itself is fine — Jupiter is handed raw base units and returns raw
+# base units. The accounting built on top of it is not. `avg_price` is
+# computed as inAmount/outAmount, which mixes USDC base units (6 decimals)
+# with the token's base units, so it only equals USD-per-whole-token when the
+# token happens to have exactly 6 decimals. Solana memecoins commonly use 9.
+#
+# That figure becomes Position.entry_price, and the risk manager derives the
+# stop-loss and take-profit from it. The monitor then compares those against
+# a real USD price from DexScreener. For a 9-decimal token the stored entry
+# is 1000x too low, so the live price sits above the take-profit immediately
+# and the position closes on the first tick at a fabricated profit.
+#
+# Fixing it properly means tracking quantity in whole tokens and price in USD
+# (fetching the mint's decimals, or marking to market against the price feed)
+# while still passing raw base units to the swap. That change moves real
+# money and cannot be verified without a funded wallet, so the path is closed
+# rather than left armed.
+DECIMALS_BUG_MSG = (
+    "Jupiter live execution is disabled: entry price is computed from raw "
+    "base units and is wrong for any token whose decimals are not 6, which "
+    "would set a bogus stop-loss and take-profit. See the comment in "
+    "app/execution/jupiter.py. Use EXECUTION_BACKEND=cex for live trading, "
+    "or keep LIVE_TRADING=false for paper trading (unaffected)."
+)
+
 
 class JupiterExecutionClient(ExecutionClient):
     def __init__(self):
@@ -55,6 +82,14 @@ class JupiterExecutionClient(ExecutionClient):
     async def _execute_swap(self, quote: dict) -> SwapResult:
         if not settings.LIVE_TRADING:
             return SwapResult(success=False, error="LIVE_TRADING is false; refusing to submit an on-chain swap")
+
+        return SwapResult(success=False, error=DECIMALS_BUG_MSG)
+
+    async def _execute_swap_unsafe(self, quote: dict) -> SwapResult:
+        """Kept for reference while the decimals bug above is fixed. Not reachable.
+
+        Do not re-enable without correcting the units: see DECIMALS_BUG_MSG.
+        """
 
         try:
             from solana.rpc.async_api import AsyncClient
