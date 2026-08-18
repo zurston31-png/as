@@ -10,6 +10,12 @@ paper trading mode and stays there until you explicitly flip a flag.**
 > **This is not financial advice, and memecoins are extremely high risk.**
 > See [Disclaimer](#disclaimer) before you fund a real wallet.
 
+> 🪟 **New to this / on Windows?** Start with
+> **[GETTING_STARTED_WINDOWS.md](GETTING_STARTED_WINDOWS.md)** — a
+> no-experience-required walkthrough. Double-click `START_HERE.bat` and it
+> sets everything up for you. The rest of this README assumes some
+> command-line familiarity.
+
 ## Architecture
 
 ```
