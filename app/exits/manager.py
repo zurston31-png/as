@@ -78,28 +78,77 @@ def record_price_tick(position: models.Position, price: float, now: dt.datetime 
 
 
 class ExitManager:
-    def __init__(self):
-        self.trailing_enabled = settings.TRAILING_STOP_ENABLED
-        self.trailing_activation_pct = settings.TRAILING_STOP_ACTIVATION_PCT
-        self.trailing_distance_pct = settings.TRAILING_STOP_DISTANCE_PCT
+    def __init__(
+        self,
+        *,
+        trailing_enabled: bool | None = None,
+        trailing_activation_pct: float | None = None,
+        trailing_distance_pct: float | None = None,
+        break_even_enabled: bool | None = None,
+        break_even_trigger_pct: float | None = None,
+        break_even_buffer_pct: float | None = None,
+        partial_enabled: bool | None = None,
+        partial_trigger_pct: float | None = None,
+        partial_size_pct: float | None = None,
+        momentum_enabled: bool | None = None,
+        momentum_lookback: int | None = None,
+        momentum_drop_pct: float | None = None,
+        trend_reversal_enabled: bool | None = None,
+        trend_reversal_min_samples: int | None = None,
+        time_exit_enabled: bool | None = None,
+        max_position_age_hours: float | None = None,
+    ):
+        """Every parameter defaults to the matching `settings.*` value when
+        omitted, so `ExitManager()` behaves exactly as before - this is only
+        for callers (the backtester) that need deterministic, config-driven
+        exit rules independent of the live environment's `.env`, while
+        running the IDENTICAL exit logic live trading uses.
+        """
+        self.trailing_enabled = trailing_enabled if trailing_enabled is not None else settings.TRAILING_STOP_ENABLED
+        self.trailing_activation_pct = (
+            trailing_activation_pct if trailing_activation_pct is not None
+            else settings.TRAILING_STOP_ACTIVATION_PCT
+        )
+        self.trailing_distance_pct = (
+            trailing_distance_pct if trailing_distance_pct is not None else settings.TRAILING_STOP_DISTANCE_PCT
+        )
 
-        self.break_even_enabled = settings.BREAK_EVEN_ENABLED
-        self.break_even_trigger_pct = settings.BREAK_EVEN_TRIGGER_PCT
-        self.break_even_buffer_pct = settings.BREAK_EVEN_BUFFER_PCT
+        self.break_even_enabled = break_even_enabled if break_even_enabled is not None else settings.BREAK_EVEN_ENABLED
+        self.break_even_trigger_pct = (
+            break_even_trigger_pct if break_even_trigger_pct is not None else settings.BREAK_EVEN_TRIGGER_PCT
+        )
+        self.break_even_buffer_pct = (
+            break_even_buffer_pct if break_even_buffer_pct is not None else settings.BREAK_EVEN_BUFFER_PCT
+        )
 
-        self.partial_enabled = settings.PARTIAL_TAKE_PROFIT_ENABLED
-        self.partial_trigger_pct = settings.PARTIAL_TAKE_PROFIT_TRIGGER_PCT
-        self.partial_size_pct = settings.PARTIAL_TAKE_PROFIT_SIZE_PCT
+        self.partial_enabled = partial_enabled if partial_enabled is not None else settings.PARTIAL_TAKE_PROFIT_ENABLED
+        self.partial_trigger_pct = (
+            partial_trigger_pct if partial_trigger_pct is not None else settings.PARTIAL_TAKE_PROFIT_TRIGGER_PCT
+        )
+        self.partial_size_pct = (
+            partial_size_pct if partial_size_pct is not None else settings.PARTIAL_TAKE_PROFIT_SIZE_PCT
+        )
 
-        self.momentum_enabled = settings.MOMENTUM_EXIT_ENABLED
-        self.momentum_lookback = settings.MOMENTUM_EXIT_LOOKBACK_SAMPLES
-        self.momentum_drop_pct = settings.MOMENTUM_EXIT_DROP_PCT
+        self.momentum_enabled = momentum_enabled if momentum_enabled is not None else settings.MOMENTUM_EXIT_ENABLED
+        self.momentum_lookback = (
+            momentum_lookback if momentum_lookback is not None else settings.MOMENTUM_EXIT_LOOKBACK_SAMPLES
+        )
+        self.momentum_drop_pct = (
+            momentum_drop_pct if momentum_drop_pct is not None else settings.MOMENTUM_EXIT_DROP_PCT
+        )
 
-        self.trend_reversal_enabled = settings.TREND_REVERSAL_EXIT_ENABLED
-        self.trend_reversal_min_samples = settings.TREND_REVERSAL_MIN_SAMPLES
+        self.trend_reversal_enabled = (
+            trend_reversal_enabled if trend_reversal_enabled is not None else settings.TREND_REVERSAL_EXIT_ENABLED
+        )
+        self.trend_reversal_min_samples = (
+            trend_reversal_min_samples if trend_reversal_min_samples is not None
+            else settings.TREND_REVERSAL_MIN_SAMPLES
+        )
 
-        self.time_exit_enabled = settings.TIME_BASED_EXIT_ENABLED
-        self.max_position_age_hours = settings.MAX_POSITION_AGE_HOURS
+        self.time_exit_enabled = time_exit_enabled if time_exit_enabled is not None else settings.TIME_BASED_EXIT_ENABLED
+        self.max_position_age_hours = (
+            max_position_age_hours if max_position_age_hours is not None else settings.MAX_POSITION_AGE_HOURS
+        )
 
     def evaluate(
         self, position: models.Position, current_price: float, now: dt.datetime | None = None

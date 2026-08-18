@@ -368,6 +368,53 @@ after a crash or reboot — no manual restart needed.
 6. Watch the first several live trades closely and confirm Telegram/Discord
    alerts are arriving.
 
+## Backtesting
+
+```bash
+python scripts/run_backtest.py                          # synthetic bull market
+python scripts/run_backtest.py --regime pump --seed 7    # synthetic pump
+python scripts/run_backtest.py --csv data/ --symbol WIF --timeframe 15m   # your own OHLCV history
+```
+
+`app/backtesting/engine.py` walks a `CandleSeries` one bar at a time using
+only `series.head(i+1)` at bar i — the same look-ahead guarantee
+`CandleSeries.up_to()` gives — and reuses the exact same `RiskManager`
+(position sizing) and `ExitManager` (trailing/break-even/partial/momentum/
+trend/time exits) that live trading runs, both now dependency-injectable so
+a backtest is deterministic and independent of `.env`. A signal confirmed
+at bar i fills at a LATER bar's open (`execution_delay_bars`, default 1),
+run through realistic per-side fees, slippage, and spread
+(`BacktestConfig.fee_pct` / `slippage_pct` / `spread_pct`) — never the price
+that produced the signal.
+
+Entry requires the signal score ≥ `min_score_to_enter` (default 75) **and**
+a tradeable, allowed market regime (`app/signals/market_regime.py`) **and**
+higher-timeframe/volume/momentum each individually confirming, not just
+outweighed in the composite **and** a minimum reward:risk
+(`min_reward_risk`) computed from the nearest real resistance level above
+price — a setup with a wall right overhead is rejected outright, not given
+a fabricated target that always clears the bar. The stop is ATR-based by
+default (`use_atr_stop`, `atr_multiple`), falling back to a fixed percent
+only when ATR is unavailable.
+
+Two things are intentionally NOT simulated: the rug-pull filter (no
+historical scanner data to replay against — every backtested trade
+implicitly assumes it would have passed screening), and cross-symbol
+portfolio-level position sizing (the engine backtests one symbol's series
+at a time; loop it over tokens yourself for "across tokens", and a single
+long-enough series naturally spans multiple regimes for "across regimes" —
+`BacktestTrade.market_regime` records which regime each trade actually
+happened in).
+
+`BacktestResult.stats` reports total return, trade count, win rate, avg
+win/loss, profit factor, expectancy (in $ and R), max drawdown, Sharpe and
+Sortino (annualized by observed trade frequency — a defensible
+approximation for an irregular trade-return series, not a literal
+fixed-interval Sharpe), avg R multiple, and longest winning/losing streak.
+`BacktestResult.rejections` records every entry considered and why it
+didn't qualify — the same "show why it didn't trade" transparency the
+signal score and rug score give for live signals.
+
 ## Configuration reference
 
 Every variable is documented inline in [`.env.example`](.env.example) —

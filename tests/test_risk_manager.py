@@ -118,10 +118,10 @@ def test_position_size_defaults_to_the_configured_stop_pct():
 
 
 def test_position_size_respects_the_absolute_trade_cap():
-    rm = RiskManager()
     original_cap = settings.MAX_TRADE_SIZE_USD
     settings.MAX_TRADE_SIZE_USD = 50
     try:
+        rm = RiskManager()
         size = rm.position_size_usd(portfolio_value_usd=10_000)
         assert size == 50
     finally:
@@ -443,3 +443,53 @@ def test_not_enough_closed_trades_yet_does_not_halt(db_session):
         for t in created:
             db_session.delete(t)
         db_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# constructor overrides (backtester dependency injection)
+# ---------------------------------------------------------------------------
+
+def test_constructor_overrides_are_used_instead_of_settings():
+    """The backtester needs deterministic, config-driven limits independent
+    of whatever .env happens to say - these kwargs are what make that
+    possible while still running the exact same sizing/gating code live
+    trading uses."""
+    rm = RiskManager(
+        max_pct_per_trade=0.03, stop_loss_pct=0.20, take_profit_pct=0.5,
+        max_trade_size_usd=999_999, max_concurrent_positions=9,
+        max_exposure_per_token_pct=1.0, max_total_exposure_pct=1.0,
+        max_consecutive_losses=7, max_daily_trades=40, cooldown_seconds=1,
+    )
+    assert rm.max_pct_per_trade == pytest.approx(0.03)
+    assert rm.stop_loss_pct == pytest.approx(0.20)
+    assert rm.take_profit_pct == pytest.approx(0.5)
+    assert rm.max_trade_size_usd == 999_999
+    assert rm.max_concurrent_positions == 9
+    assert rm.max_consecutive_losses == 7
+    assert rm.max_daily_trades == 40
+    assert rm.cooldown_seconds == 1
+
+    # stop_loss_pct=0.20 keeps the resulting notional under the
+    # HARD_MAX_EXPOSURE_PER_TOKEN_PCT ceiling (25% of portfolio) even though
+    # this test set the per-token cap itself to 100% - that hard ceiling
+    # isn't configurable away (see test_exposure_caps_are_clamped_to_hard_ceilings),
+    # so the formula check below needs a stop wide enough to not collide
+    # with it, the same lesson test_wider_stop_produces_a_smaller_position
+    # already documents.
+    size = rm.position_size_usd(10_000.0)
+    expected = (10_000.0 * 0.03) / 0.20
+    assert size == pytest.approx(expected)
+
+
+def test_constructor_overrides_still_respect_hard_ceilings():
+    rm = RiskManager(max_pct_per_trade=0.9, daily_loss_limit_pct=0.9, max_consecutive_losses=1)
+    assert rm.max_pct_per_trade == HARD_MAX_PORTFOLIO_PCT_PER_TRADE
+    assert rm.daily_loss_limit_pct == HARD_MAX_DAILY_LOSS_PCT
+    assert rm.max_consecutive_losses == HARD_MIN_CONSECUTIVE_LOSSES
+
+
+def test_omitted_constructor_kwargs_fall_back_to_settings():
+    rm_default = RiskManager()
+    rm_explicit_none = RiskManager(max_pct_per_trade=None, stop_loss_pct=None)
+    assert rm_explicit_none.max_pct_per_trade == rm_default.max_pct_per_trade
+    assert rm_explicit_none.stop_loss_pct == rm_default.stop_loss_pct

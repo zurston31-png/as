@@ -394,3 +394,30 @@ def test_record_price_tick_caps_the_sample_buffer_length():
     assert len(pos.recent_prices) == MAX_RECENT_PRICE_SAMPLES
     # the buffer keeps the MOST RECENT samples, not the earliest ones
     assert pos.recent_prices[-1][1] == pytest.approx(1.0 + (MAX_RECENT_PRICE_SAMPLES + 19) * 0.001)
+
+
+# ---------------------------------------------------------------------------
+# constructor overrides (backtester dependency injection)
+# ---------------------------------------------------------------------------
+
+def test_constructor_overrides_are_used_instead_of_settings():
+    rm = ExitManager(
+        trailing_enabled=True, trailing_activation_pct=0.05, trailing_distance_pct=0.02,
+        break_even_enabled=False, partial_enabled=False, momentum_enabled=False,
+        trend_reversal_enabled=False, time_exit_enabled=True, max_position_age_hours=1.0,
+    )
+    assert rm.trailing_activation_pct == pytest.approx(0.05)
+    assert rm.trailing_distance_pct == pytest.approx(0.02)
+    assert rm.break_even_enabled is False
+    assert rm.partial_enabled is False
+    assert rm.momentum_enabled is False
+    assert rm.trend_reversal_enabled is False
+    assert rm.time_exit_enabled is True
+    assert rm.max_position_age_hours == pytest.approx(1.0)
+
+
+def test_omitted_constructor_kwargs_fall_back_to_settings():
+    default = ExitManager()
+    explicit_none = ExitManager(trailing_activation_pct=None, momentum_drop_pct=None)
+    assert explicit_none.trailing_activation_pct == default.trailing_activation_pct
+    assert explicit_none.momentum_drop_pct == default.momentum_drop_pct

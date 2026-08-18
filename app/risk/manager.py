@@ -71,23 +71,72 @@ def _day_bounds(now: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetim
 
 
 class RiskManager:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        max_pct_per_trade: float | None = None,
+        daily_loss_limit_pct: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
+        max_concurrent_positions: int | None = None,
+        max_exposure_per_token_pct: float | None = None,
+        max_total_exposure_pct: float | None = None,
+        max_consecutive_losses: int | None = None,
+        max_daily_trades: int | None = None,
+        cooldown_seconds: int | None = None,
+        max_trade_size_usd: float | None = None,
+    ):
+        """Every parameter defaults to the matching `settings.*` value when
+        omitted, so `RiskManager()` behaves exactly as before - this is only
+        for callers (the backtester) that need deterministic, config-driven
+        limits independent of the live environment's `.env`, while running
+        the IDENTICAL sizing/gating formulas live trading uses. A backtest
+        result is only meaningful if it reflects the same risk logic that
+        would actually run the trade, not a re-implementation that could
+        silently drift from it.
+        """
         # Fraction of the portfolio risked (lost, if the stop is hit) per trade.
-        self.max_pct_per_trade = min(settings.MAX_PORTFOLIO_PCT_PER_TRADE, HARD_MAX_PORTFOLIO_PCT_PER_TRADE)
-        self.daily_loss_limit_pct = min(settings.DAILY_LOSS_LIMIT_PCT, HARD_MAX_DAILY_LOSS_PCT)
-        self.stop_loss_pct = max(settings.STOP_LOSS_PCT, HARD_MIN_STOP_LOSS_PCT)
-        self.take_profit_pct = settings.TAKE_PROFIT_PCT
-        self.max_concurrent_positions = min(settings.MAX_CONCURRENT_POSITIONS, HARD_MAX_CONCURRENT_POSITIONS)
-        self.max_exposure_per_token_pct = min(
-            settings.MAX_EXPOSURE_PER_TOKEN_PCT, HARD_MAX_EXPOSURE_PER_TOKEN_PCT
+        self.max_pct_per_trade = min(
+            max_pct_per_trade if max_pct_per_trade is not None else settings.MAX_PORTFOLIO_PCT_PER_TRADE,
+            HARD_MAX_PORTFOLIO_PCT_PER_TRADE,
         )
-        self.max_total_exposure_pct = min(settings.MAX_TOTAL_EXPOSURE_PCT, HARD_MAX_TOTAL_EXPOSURE_PCT)
+        self.daily_loss_limit_pct = min(
+            daily_loss_limit_pct if daily_loss_limit_pct is not None else settings.DAILY_LOSS_LIMIT_PCT,
+            HARD_MAX_DAILY_LOSS_PCT,
+        )
+        self.stop_loss_pct = max(
+            stop_loss_pct if stop_loss_pct is not None else settings.STOP_LOSS_PCT, HARD_MIN_STOP_LOSS_PCT
+        )
+        self.take_profit_pct = take_profit_pct if take_profit_pct is not None else settings.TAKE_PROFIT_PCT
+        self.max_concurrent_positions = min(
+            max_concurrent_positions if max_concurrent_positions is not None else settings.MAX_CONCURRENT_POSITIONS,
+            HARD_MAX_CONCURRENT_POSITIONS,
+        )
+        self.max_exposure_per_token_pct = min(
+            max_exposure_per_token_pct if max_exposure_per_token_pct is not None
+            else settings.MAX_EXPOSURE_PER_TOKEN_PCT,
+            HARD_MAX_EXPOSURE_PER_TOKEN_PCT,
+        )
+        self.max_total_exposure_pct = min(
+            max_total_exposure_pct if max_total_exposure_pct is not None else settings.MAX_TOTAL_EXPOSURE_PCT,
+            HARD_MAX_TOTAL_EXPOSURE_PCT,
+        )
         self.max_consecutive_losses = min(
-            max(settings.MAX_CONSECUTIVE_LOSSES, HARD_MIN_CONSECUTIVE_LOSSES),
+            max(
+                max_consecutive_losses if max_consecutive_losses is not None else settings.MAX_CONSECUTIVE_LOSSES,
+                HARD_MIN_CONSECUTIVE_LOSSES,
+            ),
             HARD_MAX_CONSECUTIVE_LOSSES,
         )
-        self.max_daily_trades = min(settings.MAX_DAILY_TRADES, HARD_MAX_DAILY_TRADES)
-        self.cooldown_seconds = min(settings.TRADE_COOLDOWN_SECONDS, HARD_MAX_COOLDOWN_SECONDS)
+        self.max_daily_trades = min(
+            max_daily_trades if max_daily_trades is not None else settings.MAX_DAILY_TRADES,
+            HARD_MAX_DAILY_TRADES,
+        )
+        self.cooldown_seconds = min(
+            cooldown_seconds if cooldown_seconds is not None else settings.TRADE_COOLDOWN_SECONDS,
+            HARD_MAX_COOLDOWN_SECONDS,
+        )
+        self.max_trade_size_usd = max_trade_size_usd if max_trade_size_usd is not None else settings.MAX_TRADE_SIZE_USD
 
     # ---- sizing ----
     def position_size_usd(
@@ -113,7 +162,7 @@ class RiskManager:
         stop_pct = max(stop_loss_pct if stop_loss_pct is not None else self.stop_loss_pct, HARD_MIN_STOP_LOSS_PCT)
         risk_amount = portfolio_value_usd * self.max_pct_per_trade
         notional = risk_amount / stop_pct
-        notional = min(notional, settings.MAX_TRADE_SIZE_USD)
+        notional = min(notional, self.max_trade_size_usd)
 
         total_room = max(portfolio_value_usd * self.max_total_exposure_pct - current_total_exposure_usd, 0.0)
         symbol_room = max(portfolio_value_usd * self.max_exposure_per_token_pct - current_symbol_exposure_usd, 0.0)
