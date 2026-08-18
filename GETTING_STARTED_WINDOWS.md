@@ -100,6 +100,32 @@ mint authority still active. That's the filter doing its job.
 
 ---
 
+## Step 6 (optional): let TradingView send signals automatically
+
+Up to now you've been sending signals by hand. To have real chart alerts
+arrive on their own:
+
+**Double-click `CONNECT_TRADINGVIEW.bat`** (leave the bot running).
+
+It gives your PC a temporary public web address, checks that a signal sent
+to that address really reaches your bot, and then prints the two values you
+paste into TradingView — the webhook URL and your secret.
+
+It walks you through installing ngrok (free) the first time.
+
+Two things to know:
+
+- **Webhook alerts need a paid TradingView plan.** They aren't on the free
+  tier.
+- **The public address changes** every time you restart ngrok, so you'd have
+  to update your alerts. A rented server with a real domain fixes that —
+  see [deploy/vps_setup.md](deploy/vps_setup.md) when you get there.
+
+Still paper trading. Alerts arriving this way are simulated exactly like the
+ones you sent by hand.
+
+---
+
 ## What you have now
 
 A working bot on your own computer that:
