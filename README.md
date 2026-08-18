@@ -415,6 +415,33 @@ fixed-interval Sharpe), avg R multiple, and longest winning/losing streak.
 didn't qualify — the same "show why it didn't trade" transparency the
 signal score and rug score give for live signals.
 
+### Walk-forward testing
+
+```bash
+python scripts/run_backtest.py --walk-forward
+python scripts/run_backtest.py --walk-forward --regime pump
+```
+
+A single backtest proves a config made money on one slice of history —
+walk-forward testing is what checks it wasn't just tuned to that slice.
+`app/backtesting/walk_forward.py` splits the series into train / validation
+/ out-of-sample windows (`CandleSeries.split()`, chronological and
+non-overlapping) and picks a config **using train performance only** —
+validation and out-of-sample are backtested *after* that choice is locked
+in, so neither can influence which config wins. `run_walk_forward()` takes
+either a single `BacktestConfig` (the common case: "does this one set of
+parameters generalize?") or a `dict`/`list` of candidates for a small
+parameter search, selected by `selection_metric` (default `expectancy_r` —
+average realized R per trade, comparable across configs regardless of
+position sizing).
+
+If validation performance falls to less than half of what train showed,
+the result carries an explicit overfitting warning rather than silently
+reporting the (misleading) train number as if it were confirmed. A
+candidate with too few training trades to be statistically meaningful gets
+its own warning too, rather than a lucky small sample being reported as if
+it were a real edge.
+
 ## Configuration reference
 
 Every variable is documented inline in [`.env.example`](.env.example) —

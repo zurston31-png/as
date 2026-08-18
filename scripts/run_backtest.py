@@ -4,6 +4,7 @@
     python scripts/run_backtest.py                          # synthetic bull market
     python scripts/run_backtest.py --regime pump --seed 7
     python scripts/run_backtest.py --csv data/WIF_15m.csv    # your own OHLCV history
+    python scripts/run_backtest.py --walk-forward            # train/validation/out-of-sample split
 
 This does NOT touch the live database, the webhook, or any network call -
 it is pure history-in, statistics-out, exactly what "prove the strategy
@@ -19,7 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.backtesting.engine import run_backtest  # noqa: E402
-from app.backtesting.types import BacktestConfig  # noqa: E402
+from app.backtesting.types import BacktestConfig, BacktestResult  # noqa: E402
+from app.backtesting.walk_forward import run_walk_forward  # noqa: E402
 from app.data.candles import Timeframe  # noqa: E402
 from app.data.providers import CsvCandleProvider, SyntheticCandleProvider  # noqa: E402
 
@@ -35,9 +37,19 @@ def main() -> None:
     parser.add_argument("--candles", type=int, default=600)
     parser.add_argument("--starting-balance", type=float, default=1000.0)
     parser.add_argument("--min-score", type=float, default=75.0)
+    parser.add_argument("--walk-forward", action="store_true",
+                         help="split into train/validation/out-of-sample instead of one straight run")
     args = parser.parse_args()
 
     timeframe = Timeframe(args.timeframe)
+
+    if args.walk_forward and args.candles == 600:
+        # Each of the three windows needs to individually clear
+        # warmup_bars (210) before it can place a single trade - the
+        # default --candles is sized for one straight run, not a 3-way
+        # split, so bump it unless the user asked for a specific length.
+        args.candles = 2400
+        print("--walk-forward: using --candles 2400 by default so each of the three windows has enough history")
 
     if args.csv:
         provider = CsvCandleProvider(args.csv)
@@ -49,14 +61,27 @@ def main() -> None:
         print(f"Generated {len(series)} synthetic {args.regime!r} candles (seed={args.seed})")
 
     config = BacktestConfig(starting_balance_usd=args.starting_balance, min_score_to_enter=args.min_score)
-    result = run_backtest(series, config, symbol=args.symbol)
-    s = result.stats
 
+    if args.walk_forward:
+        wf = run_walk_forward(series, config)
+        print(f"\nChosen config: {wf.chosen_label!r} (selected on TRAIN performance only, metric={wf.selection_metric})")
+        for window_name, window_result in (("TRAIN", wf.train), ("VALIDATION", wf.validation), ("OUT-OF-SAMPLE", wf.out_of_sample)):
+            _print_result(window_result, timeframe, heading=window_name)
+        if wf.warnings:
+            print("\nWalk-forward warnings:")
+            for w in wf.warnings:
+                print(f"    - {w}")
+    else:
+        result = run_backtest(series, config, symbol=args.symbol)
+        _print_result(result, timeframe)
+
+
+def _print_result(result: BacktestResult, timeframe: Timeframe, heading: str | None = None) -> None:
+    s = result.stats
     print()
     print("=" * 70)
-    print(f"  BACKTEST RESULT — {result.symbol} {timeframe.value}")
+    print(f"  {heading + ' - ' if heading else ''}BACKTEST RESULT — {result.symbol} {timeframe.value}")
     print("=" * 70)
-    print(f"  Starting balance   ${config.starting_balance_usd:,.2f}")
     print(f"  Final balance      ${s.final_balance_usd:,.2f}")
     print(f"  Total return       {s.total_return_pct:+.2f}%  (${s.total_return_usd:+,.2f})")
     print(f"  Max drawdown       {s.max_drawdown_pct:.2f}%")
