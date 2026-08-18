@@ -187,6 +187,8 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
         highest_price_since_entry=result.avg_price,
     )
     db.add(position)
+    db.flush()
+    trade.position_id = position.id
 
     portfolio.adjust_cash_balance(db, -size_usd)
 
@@ -215,6 +217,7 @@ async def close_position(db: Session, position: models.Position, reason: str, si
 
     trade = models.Trade(
         signal_id=signal_id,
+        position_id=position.id,
         symbol=position.symbol,
         token_address=position.token_address,
         chain=position.chain,
@@ -243,6 +246,7 @@ async def close_position(db: Session, position: models.Position, reason: str, si
     trade.pnl_pct = pnl_pct
     trade.tx_hash = result.tx_hash
     trade.closed_at = now
+    trade.close_reason = reason
     db.add(trade)
 
     position.status = models.PositionStatus.CLOSED.value
@@ -281,6 +285,7 @@ async def partial_close_position(
 
     trade = models.Trade(
         signal_id=signal_id,
+        position_id=position.id,
         symbol=position.symbol,
         token_address=position.token_address,
         chain=position.chain,
@@ -309,6 +314,7 @@ async def partial_close_position(
     trade.pnl_pct = pnl_pct
     trade.tx_hash = result.tx_hash
     trade.closed_at = now
+    trade.close_reason = reason
     db.add(trade)
 
     position.qty -= result.filled_qty

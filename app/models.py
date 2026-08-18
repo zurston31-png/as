@@ -102,6 +102,13 @@ class Trade(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # Which Position this leg belongs to - set on both the entry (buy) and
+    # every exit (sell) leg, including partial exits. Without this there is
+    # no way to join an exit trade back to the entry's signal/rug-check
+    # context or the position's close_reason, since a monitor-triggered
+    # exit (stop-loss/take-profit/smart-exit) carries no signal_id of its
+    # own - only a TradingView-driven sell does.
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     symbol: Mapped[str] = mapped_column(String(64), index=True)
     token_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -121,6 +128,11 @@ class Trade(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     opened_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Why THIS leg closed - set on every sell trade, full or partial. A
+    # position can have several partial-exit legs each with a different
+    # reason ("partial profit-take" then later "trend reversal" for the
+    # rest); Position.close_reason alone only ever captures the LAST one.
+    close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Position(Base):

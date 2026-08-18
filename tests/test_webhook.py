@@ -66,6 +66,10 @@ def test_webhook_buy_opens_position_then_sell_closes_it():
         assert trade is not None
         assert trade.status == "filled"
         assert trade.mode == "paper"
+        # Trade.position_id (Stage 8) must link the entry leg back to the
+        # position it opened - without it there's no way to join an exit
+        # leg back to its entry's signal/rug-check context in the journal.
+        assert trade.position_id == position.id
     finally:
         db.close()
 
@@ -81,6 +85,8 @@ def test_webhook_buy_opens_position_then_sell_closes_it():
         sell_trade = db.query(models.Trade).filter_by(symbol=symbol, side="sell").first()
         assert sell_trade is not None
         assert sell_trade.pnl_usd is not None
+        assert sell_trade.position_id == position.id
+        assert sell_trade.close_reason == position.close_reason
     finally:
         db.close()
 

@@ -326,9 +326,31 @@ in `.env` (either, both, or neither — each is independently optional). You'll
 get a message for: trade executed, rug-check rejection, risk-halt triggered,
 errors, and a daily P&L summary at `DAILY_SUMMARY_HOUR_UTC`.
 
-The dashboard (`/`, HTTP Basic Auth) shows open positions, recent trades,
-performance stats, recent risk/rejection events, and current mode
-(PAPER/LIVE) with a halt/resume control. It auto-refreshes every 20s.
+The dashboard (`/`, HTTP Basic Auth) shows an equity curve (built from
+closed-trade P&L, rendered as a dependency-free inline SVG — no JS charting
+library or CDN involved), portfolio stats (win rate, profit factor,
+expectancy, max drawdown, current win/loss streak, realized-today and
+unrealized P&L, current exposure in $ and % of portfolio), open positions
+with live current price, unrealized P&L, age, and the rug risk score
+recorded at entry, recent trades, recent signals with their rug score and
+verdict, recent risk/rejection events, and current mode (PAPER/LIVE) with a
+halt/resume control. It auto-refreshes every 20s.
+
+### Trade journal
+
+`/journal` (same auth) shows one record per position — a full round trip,
+or still open — assembling what's otherwise spread across the dashboard's
+separate tables: entry price/size/stop/target, the TradingView indicator
+payload that triggered it (RSI, EMA9/21, volume vs its SMA, breakout
+level), the rug check's score and the scanner that produced it, and every
+exit leg (full or partial) with its own reason and P&L — `Trade.close_reason`
+is recorded per leg, not just once on the position, since a position can
+close in more than one step (a partial profit-take, then later a full exit
+for a different reason). This is "study why the bot won or lost" made
+concrete: every field the spec asks a journal to answer is either shown
+directly or its absence is explained (the composite signal score isn't
+live-wired yet — see the note in the journal itself and in "Backtesting"
+above for where that score DOES exist today).
 
 ## Deployment
 
@@ -441,6 +463,29 @@ reporting the (misleading) train number as if it were confirmed. A
 candidate with too few training trades to be statistically meaningful gets
 its own warning too, rather than a lucky small sample being reported as if
 it were a real edge.
+
+### Strategy comparison
+
+```bash
+python scripts/compare_strategies.py
+python scripts/compare_strategies.py --regime pump --candles 3000
+```
+
+`app/backtesting/strategy_comparison.py` runs five signal-weighting
+profiles — `balanced` (the default), `momentum`, `breakout`,
+`trend_following`, and `mean_reversion` — through the identical engine,
+risk manager, and exit manager, each via its own walk-forward split, and
+ranks them by **out-of-sample** expectancy, profit factor, and max
+drawdown. Win rate never enters the ranking formula at all: a strategy that
+wins often but with an ugly drawdown or a poor profit factor should not
+outrank a steadier one just because it's "right" more often, which is
+exactly the failure mode a win-rate-only comparison would produce. A
+"strategy" here is a re-weighting of the same composite signal score
+(`app/signals/scoring.py`'s factor weights reshuffled toward a different
+style of setup — e.g. `mean_reversion` favors RSI/Bollinger/VWAP over
+breakout structure), not four independently-coded trading systems — keeping
+everything else identical is what makes the comparison isolate what the
+signal weighting itself contributes.
 
 ## Configuration reference
 

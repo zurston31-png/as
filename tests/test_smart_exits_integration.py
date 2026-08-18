@@ -75,6 +75,8 @@ def test_partial_close_position_sells_a_fraction_and_leaves_the_position_open(_p
         assert trade.status == "filled"
         assert trade.qty == pytest.approx(50.0)
         assert trade.pnl_usd is not None
+        assert trade.position_id == pos.id
+        assert trade.close_reason == "test partial"
     finally:
         db.close()
 

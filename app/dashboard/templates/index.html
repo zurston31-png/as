@@ -45,6 +45,7 @@
 <header>
   <h1>🤖 Memecoin Trading Bot</h1>
   <div class="controls">
+    <a href="/journal" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">📓 Trade Journal</a>
     <span class="badge {{ 'live' if stats.mode == 'LIVE' else 'paper' }}">{{ stats.mode }} · {{ stats.chain }}/{{ stats.execution_backend }}</span>
     {% if stats.halted %}
       <span class="badge halted">HALTED</span>
@@ -58,28 +59,55 @@
 <main>
   <div class="stats">
     <div class="stat"><div class="label">Portfolio Value</div><div class="value">${{ "%.2f"|format(stats.portfolio_value) }}</div></div>
-    <div class="stat"><div class="label">Starting Balance</div><div class="value">${{ "%.2f"|format(stats.starting_balance) }}</div></div>
     <div class="stat"><div class="label">Total P&amp;L</div><div class="value {{ 'pos' if stats.total_pnl >= 0 else 'neg' }}">${{ "%.2f"|format(stats.total_pnl) }}</div></div>
+    <div class="stat"><div class="label">Realized Today</div><div class="value {{ 'pos' if stats.realized_today_usd >= 0 else 'neg' }}">${{ "%.2f"|format(stats.realized_today_usd) }}</div></div>
+    <div class="stat"><div class="label">Unrealized P&amp;L</div><div class="value {{ 'pos' if stats.unrealized_pnl_usd >= 0 else 'neg' }}">${{ "%.2f"|format(stats.unrealized_pnl_usd) }}</div></div>
     <div class="stat"><div class="label">Win Rate</div><div class="value">{{ "%.1f"|format(stats.win_rate) }}%</div></div>
+    <div class="stat"><div class="label">Profit Factor</div><div class="value">{{ stats.profit_factor_display }}</div></div>
+    <div class="stat"><div class="label">Expectancy / Trade</div><div class="value {{ 'pos' if stats.expectancy_usd >= 0 else 'neg' }}">${{ "%.2f"|format(stats.expectancy_usd) }}</div></div>
+    <div class="stat"><div class="label">Max Drawdown</div><div class="value">{{ "%.2f"|format(stats.max_drawdown_pct) }}%</div></div>
     <div class="stat"><div class="label">Closed Trades</div><div class="value">{{ stats.total_trades }}</div></div>
+    <div class="stat"><div class="label">Current Streak</div><div class="value {{ 'pos' if stats.current_streak > 0 else ('neg' if stats.current_streak < 0 else '') }}">{{ stats.current_streak }}</div></div>
     <div class="stat"><div class="label">Open Positions</div><div class="value">{{ stats.open_positions }}</div></div>
+    <div class="stat"><div class="label">Current Exposure</div><div class="value">${{ "%.2f"|format(stats.current_exposure_usd) }} <span class="muted" style="font-size:12px">({{ "%.0f"|format(stats.exposure_pct_of_portfolio) }}%)</span></div></div>
   </div>
+
+  <section>
+    <h2>Equity Curve</h2>
+    {% if equity_svg %}
+      {{ equity_svg | safe }}
+    {% else %}
+    <div class="empty">Not enough closed trades yet to draw an equity curve.</div>
+    {% endif %}
+  </section>
 
   <section>
     <h2>Open Positions</h2>
     {% if positions %}
     <table>
-      <thead><tr><th>Symbol</th><th>Chain</th><th>Qty</th><th>Entry</th><th>Stop Loss</th><th>Take Profit</th><th>Opened</th></tr></thead>
+      <thead><tr><th>Symbol</th><th>Chain</th><th>Qty</th><th>Entry</th><th>Current</th><th>Unrealized P&amp;L</th><th>Stop Loss</th><th>Take Profit</th><th>Rug score</th><th>Age</th></tr></thead>
       <tbody>
-        {% for p in positions %}
+        {% for e in positions %}
+        {% set p = e.position %}
         <tr>
           <td>{{ p.symbol }}</td>
           <td>{{ p.chain }}</td>
           <td>{{ "%.6f"|format(p.qty) }}</td>
           <td>${{ "%.8f"|format(p.entry_price) }}</td>
+          <td>${{ "%.8f"|format(e.current_price) }}</td>
+          <td class="{{ 'pos' if e.unrealized_pnl_usd >= 0 else 'neg' }}">
+            ${{ "%.2f"|format(e.unrealized_pnl_usd) }} ({{ "%.1f"|format(e.unrealized_pnl_pct * 100) }}%)
+          </td>
           <td>${{ "%.8f"|format(p.stop_loss) }}</td>
           <td>${{ "%.8f"|format(p.take_profit) }}</td>
-          <td>{{ p.opened_at.strftime("%Y-%m-%d %H:%M UTC") if p.opened_at else "-" }}</td>
+          <td>
+            {% if e.rug_risk_score is not none %}
+              <span class="{{ 'neg' if e.rug_risk_score >= 45 else 'pos' }}">{{ "%.0f"|format(e.rug_risk_score) }}/100</span>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
+          <td>{{ "%.1f"|format(e.age_hours) + "h" if e.age_hours is not none else "-" }}</td>
         </tr>
         {% endfor %}
       </tbody>
