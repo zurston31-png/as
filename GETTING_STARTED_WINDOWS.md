@@ -100,7 +100,22 @@ mint authority still active. That's the filter doing its job.
 
 ---
 
-## Step 6 (optional): let TradingView send signals automatically
+## Step 6 (optional): get alerts on your phone
+
+**Double-click `SETUP_TELEGRAM.bat`.**
+
+It walks you through creating a Telegram bot, finds your chat ID for you,
+saves everything, and sends a test message. Takes about two minutes.
+
+After that the bot messages you on every trade, every rejected token, and
+once a day with your profit/loss - so you don't have to keep opening the
+dashboard.
+
+Restart the bot afterwards for it to take effect.
+
+---
+
+## Step 7 (optional): let TradingView send signals automatically
 
 Up to now you've been sending signals by hand. To have real chart alerts
 arrive on their own:
