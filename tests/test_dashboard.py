@@ -96,10 +96,54 @@ def test_api_stats_returns_json():
 
 
 def test_halt_and_resume_round_trip():
-    halt = client.post("/api/halt", auth=AUTH, follow_redirects=False)
+    from app.dashboard.routes import CSRF_TOKEN
+
+    token = {"csrf_token": CSRF_TOKEN}
+    halt = client.post("/api/halt", auth=AUTH, data=token, follow_redirects=False)
     assert halt.status_code == 303
     assert client.get("/api/stats", auth=AUTH).json()["halted"] is True
 
-    resume = client.post("/api/resume", auth=AUTH, follow_redirects=False)
+    resume = client.post("/api/resume", auth=AUTH, data=token, follow_redirects=False)
     assert resume.status_code == 303
     assert client.get("/api/stats", auth=AUTH).json()["halted"] is False
+
+
+# --- security regressions -------------------------------------------------
+
+def test_state_changing_endpoints_reject_missing_csrf_token():
+    """Browsers attach cached Basic Auth to cross-origin form posts, so auth
+    alone would let a visited page resume a bot the risk manager halted."""
+    for path in ("/api/halt", "/api/resume"):
+        resp = client.post(path, auth=AUTH, follow_redirects=False)
+        assert resp.status_code == 403, f"{path} accepted a request with no CSRF token"
+
+
+def test_state_changing_endpoints_reject_wrong_csrf_token():
+    for path in ("/api/halt", "/api/resume"):
+        resp = client.post(path, auth=AUTH, data={"csrf_token": "not-the-token"},
+                           follow_redirects=False)
+        assert resp.status_code == 403
+
+
+def test_csrf_token_is_rendered_into_the_forms():
+    from app.dashboard.routes import CSRF_TOKEN
+
+    body = client.get("/", auth=AUTH).text
+    assert body.count(f'value="{CSRF_TOKEN}"') >= 1
+
+
+def test_default_dashboard_password_is_refused(monkeypatch):
+    """The webhook refuses its placeholder secret; the dashboard must refuse
+    its placeholder password, or a compose deployment that only rotated the
+    webhook secret exposes halt/resume on admin/changeme."""
+    from app.dashboard.routes import PLACEHOLDER_PASSWORD
+
+    monkeypatch.setattr(settings, "DASHBOARD_PASSWORD", PLACEHOLDER_PASSWORD)
+    resp = client.get("/", auth=(settings.DASHBOARD_USERNAME, PLACEHOLDER_PASSWORD))
+    assert resp.status_code == 401
+    assert "still the default" in resp.json()["detail"]
+
+
+def test_empty_dashboard_password_is_refused(monkeypatch):
+    monkeypatch.setattr(settings, "DASHBOARD_PASSWORD", "")
+    assert client.get("/", auth=(settings.DASHBOARD_USERNAME, "")).status_code == 401

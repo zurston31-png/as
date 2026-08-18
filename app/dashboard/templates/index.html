@@ -24,7 +24,7 @@
   .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
   .stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
-  .pos { color: var(--green); } .neg { color: var(--red); }
+  .pos { color: var(--green); } .neg { color: var(--red); } .muted { color: var(--muted); }
   section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 22px; overflow: hidden; }
   section h2 { font-size: 14px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -48,10 +48,10 @@
     <span class="badge {{ 'live' if stats.mode == 'LIVE' else 'paper' }}">{{ stats.mode }} · {{ stats.chain }}/{{ stats.execution_backend }}</span>
     {% if stats.halted %}
       <span class="badge halted">HALTED</span>
-      <form method="post" action="/api/resume"><button type="submit" class="ok">Resume trading</button></form>
+      <form method="post" action="/api/resume"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="ok">Resume trading</button></form>
     {% else %}
       <span class="badge running">RUNNING</span>
-      <form method="post" action="/api/halt"><button type="submit" class="danger">Halt trading</button></form>
+      <form method="post" action="/api/halt"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="danger">Halt trading</button></form>
     {% endif %}
   </div>
 </header>
@@ -111,6 +111,43 @@
     </table>
     {% else %}
     <div class="empty">No trades yet.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Signals Received</h2>
+    {% if signals %}
+    <table>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Type</th><th>Price</th><th>Chain</th><th>Screened by</th><th>Verdict</th></tr></thead>
+      <tbody>
+        {% for s in signals %}
+        {% set check = checks.get(s.id) %}
+        <tr>
+          <td>{{ s.received_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ s.symbol }}</td>
+          <td class="side-{{ s.signal_type }}">{{ s.signal_type|upper }}</td>
+          <td>{{ "$%.8f"|format(s.price) if s.price else "-" }}</td>
+          <td>{{ (check.chain_screened if check and check.chain_screened else s.chain) }}</td>
+          <td>{{ check.scanner_source if check and check.scanner_source else "-" }}</td>
+          <td>
+            {% if check is none %}
+              <span class="muted">no screening (sell / no action)</span>
+            {% elif check.passed %}
+              <span class="pos">passed</span>
+            {% else %}
+              <span class="neg">blocked</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      No signals received yet. If you've set up TradingView alerts and expect
+      activity, check that the bot's public address is still valid — an ngrok
+      URL changes each restart and alerts then arrive nowhere, silently.
+    </div>
     {% endif %}
   </section>
 

@@ -78,6 +78,15 @@ class RugCheckResult(Base):
     is_honeypot: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     top10_holder_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Which scanner the verdict came from, which chain it was screened as,
+    # and what every source consulted actually returned. Without these,
+    # reviewing a paper trade cannot answer "why did the bot buy this?" —
+    # the same "passed" row could come from a rich RugCheck report or a
+    # sparse GoPlus one, and a chain misroute is invisible.
+    scanner_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chain_screened: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    lookup_outcomes: Mapped[list] = mapped_column(JSON, default=list)
+    dev_wallet_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Trade(Base):

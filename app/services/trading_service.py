@@ -94,6 +94,10 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
             is_honeypot=report.is_honeypot,
             top10_holder_pct=report.top10_holder_pct,
             liquidity_usd=report.liquidity_usd,
+            dev_wallet_pct=report.dev_wallet_pct,
+            scanner_source=report.source,
+            chain_screened=report.chain,
+            lookup_outcomes=report.lookup_outcomes,
         )
     )
 

@@ -41,6 +41,13 @@ class RugCheckReport:
     top10_holder_pct: float | None = None
     liquidity_usd: float | None = None
     dev_wallet_pct: float | None = None
+    # Provenance, persisted with the result. Reviewing a paper trade needs to
+    # distinguish a verdict from a rich RugCheck report from one scraped out
+    # of a sparse GoPlus record, and needs the chain actually screened so a
+    # misroute is visible rather than looking like a verdict on the token.
+    source: str | None = None
+    chain: str | None = None
+    lookup_outcomes: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
 
 
@@ -369,7 +376,7 @@ def evaluate_snapshot(snap: TokenSnapshot) -> RugCheckReport:
     reasons: list[str] = []
     unverifiable: list[str] = []
 
-    report = RugCheckReport(passed=True, raw=snap.raw)
+    report = RugCheckReport(passed=True, raw=snap.raw, source=snap.source, chain=snap.chain)
     report.mint_disabled = snap.mint_authority_active is False
     report.ownership_renounced = snap.mint_authority_active is False
     report.liquidity_locked = snap.lp_secured
@@ -472,10 +479,19 @@ def evaluate_token_security(
 async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckReport:
     if not settings.RUGCHECK_ENABLED:
         logger.warning("RUGCHECK_ENABLED=false - buy signals are NOT being screened for scams/rugs")
-        return RugCheckReport(passed=True, reasons=[], raw={"skipped": True})
+        return RugCheckReport(
+            passed=True, reasons=[], source="disabled",
+            lookup_outcomes=["screening disabled via RUGCHECK_ENABLED=false"],
+            raw={"skipped": True},
+        )
 
     if not token_address:
-        return RugCheckReport(passed=False, reasons=["no on-chain token address supplied with signal"])
+        return RugCheckReport(
+            passed=False,
+            reasons=["no on-chain token address supplied with signal"],
+            chain=chain,
+            lookup_outcomes=["no lookup attempted - signal carried no token address"],
+        )
 
     # Route on the address's own encoding, not the declared label.
     chain = resolve_chain(chain, token_address)
@@ -517,6 +533,8 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
         return RugCheckReport(
             passed=False,
             reasons=[f"no security data for this token (screened as {chain}) - " + "; ".join(outcomes)],
+            chain=chain,
+            lookup_outcomes=outcomes,
             raw={"lookup_outcomes": outcomes, "chain": chain},
         )
 
@@ -533,4 +551,6 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
     if market_liquidity is not None:
         snap.liquidity_usd = market_liquidity
 
-    return evaluate_snapshot(snap)
+    report = evaluate_snapshot(snap)
+    report.lookup_outcomes = outcomes
+    return report

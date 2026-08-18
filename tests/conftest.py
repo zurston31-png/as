@@ -13,6 +13,9 @@ if _tmp_db.exists():
 
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp_db}"
 os.environ.setdefault("WEBHOOK_SECRET", "test-webhook-secret-please-ignore")
+# Must not be the shipped placeholder: the dashboard refuses that outright,
+# the same way the webhook refuses its placeholder secret.
+os.environ.setdefault("DASHBOARD_PASSWORD", "test-dashboard-password")
 os.environ.setdefault("LIVE_TRADING", "false")
 os.environ.setdefault("RUGCHECK_ENABLED", "true")
 

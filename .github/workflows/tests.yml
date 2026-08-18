@@ -1,0 +1,108 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is what the Docker image pins; 3.14 is what python.org's
+        # default download currently gives a new user following the Windows
+        # guide. Both need to keep working.
+        python-version: ["3.11", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Check every file compiles
+        run: python -m compileall -q app scripts
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  # Guards the invariant the whole project rests on: the bot must never
+  # start in live mode by default, and the sample config must never ship a
+  # usable webhook secret.
+  safety-defaults:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: LIVE_TRADING must default to false
+        run: |
+          python - <<'PY'
+          from app.config import Settings
+          s = Settings(_env_file=None)
+          assert s.LIVE_TRADING is False, "LIVE_TRADING must default to false"
+          print("LIVE_TRADING defaults to false")
+          PY
+
+      - name: Paper engine must be forced whenever LIVE_TRADING is false
+        run: |
+          python - <<'PY'
+          from app.config import settings
+          from app.execution import get_execution_client
+          from app.execution.paper import PaperExecutionClient
+
+          settings.LIVE_TRADING = False
+          for backend in ("jupiter", "cex", "evm_1inch", "paper"):
+              settings.EXECUTION_BACKEND = backend
+              client = get_execution_client()
+              assert isinstance(client, PaperExecutionClient), (
+                  f"{backend} returned {type(client).__name__} with LIVE_TRADING=false"
+              )
+          print("paper engine forced for every backend while LIVE_TRADING is false")
+          PY
+
+      - name: .env.example must not ship a usable webhook secret
+        run: |
+          python - <<'PY'
+          from app.security import PLACEHOLDER_SECRET, verify_webhook_secret
+          from app.config import settings
+
+          line = next(
+              l for l in open(".env.example") if l.startswith("WEBHOOK_SECRET=")
+          )
+          shipped = line.split("=", 1)[1].strip()
+          assert shipped == PLACEHOLDER_SECRET, "sample secret drifted from the placeholder"
+
+          settings.WEBHOOK_SECRET = shipped
+          assert not verify_webhook_secret(shipped), (
+              "the placeholder secret authenticates - an unconfigured deployment "
+              "would accept trade signals from anyone"
+          )
+          print("placeholder secret is refused")
+          PY
+
+      - name: No real secrets committed
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$|\.db$|\.sqlite3$'; then
+            echo "a secrets or database file is tracked in git"
+            exit 1
+          fi
+          echo "no secret or database files tracked"
