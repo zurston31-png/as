@@ -434,30 +434,43 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
 
     is_solana = chain.lower() == "solana"
     snap: TokenSnapshot | None = None
-    errors: list[str] = []
+    # Per-source outcome, so a rejection says which scanners were consulted
+    # and what each one actually did. "no scanner had a record" on its own is
+    # not actionable — it hides whether a lookup errored, was blocked, or
+    # genuinely returned nothing.
+    outcomes: list[str] = []
 
     if is_solana:
         try:
             data = await rugcheck_xyz.fetch_token_report(token_address)
             if data:
                 snap = snapshot_from_rugcheck(data)
+                outcomes.append(f"rugcheck.xyz: {len(data)} fields")
+            else:
+                outcomes.append("rugcheck.xyz: no record")
         except Exception as exc:  # noqa: BLE001
             logger.warning("RugCheck lookup failed for %s: %s", token_address, exc)
-            errors.append(f"RugCheck lookup failed: {exc}")
+            outcomes.append(f"rugcheck.xyz: lookup failed ({type(exc).__name__}: {exc})")
 
     if snap is None:
         try:
             data = await goplus.fetch_token_security(chain, token_address)
+            if data:
+                snap = snapshot_from_goplus(chain, data)
+                outcomes.append(f"goplus: {len(data)} fields")
+            else:
+                outcomes.append("goplus: no record")
         except Exception as exc:  # noqa: BLE001
             logger.exception("GoPlus lookup failed for %s", token_address)
-            errors.append(f"GoPlus lookup failed: {exc}")
-            data = {}
-        if data:
-            snap = snapshot_from_goplus(chain, data)
+            outcomes.append(f"goplus: lookup failed ({type(exc).__name__}: {exc})")
 
     if snap is None:
-        detail = "; ".join(errors) if errors else "no security scanner had a record of this token"
-        return RugCheckReport(passed=False, reasons=[detail])
+        logger.warning("no security data for %s on %s - %s", token_address, chain, "; ".join(outcomes))
+        return RugCheckReport(
+            passed=False,
+            reasons=["no security data for this token - " + "; ".join(outcomes)],
+            raw={"lookup_outcomes": outcomes},
+        )
 
     if not is_solana:
         try:

@@ -17,10 +17,37 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+# Send an explicit User-Agent. Some public APIs sit behind a WAF that
+# throttles or blocks default library agents, and the diagnostic script that
+# successfully reached this endpoint identified itself, so match it rather
+# than leaving httpx's default as an unexamined difference.
+HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": "memecoin-trading-bot/1.0",
+}
+
+
 async def fetch_token_report(mint: str) -> dict:
+    """Return RugCheck's report, or {} when it has no usable record.
+
+    A 404 means the token is not indexed and is reported as "no record"
+    rather than raised, so callers can distinguish that from a transport or
+    server failure.
+    """
     url = f"{settings.RUGCHECK_API_BASE}/tokens/{mint}/report"
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(url, headers={"Accept": "application/json"})
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        resp = await client.get(url, headers=HEADERS)
+        if resp.status_code == 404:
+            logger.info("RugCheck has no record of %s", mint)
+            return {}
         resp.raise_for_status()
         data = resp.json()
-    return data if isinstance(data, dict) else {}
+
+    if not isinstance(data, dict):
+        logger.warning("RugCheck returned a %s for %s, expected an object", type(data).__name__, mint)
+        return {}
+    # Error-shaped bodies are returned with a 200 by some endpoints.
+    if data.get("error") or data.get("message") and len(data) <= 2:
+        logger.info("RugCheck reported no usable data for %s: %s", mint, data)
+        return {}
+    return data
