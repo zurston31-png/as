@@ -1,0 +1,105 @@
+"""Dashboard route tests.
+
+These exist because a Starlette signature change broke the dashboard with
+a 500 while every other test still passed — the suite had no coverage of
+the HTML page at all. Rendering the real template against real rows is the
+point here, so keep these hitting the actual route rather than mocking it.
+"""
+import pytest
+from fastapi.testclient import TestClient
+
+from app import models
+from app.config import settings
+from app.database import SessionLocal
+from app.main import app
+
+client = TestClient(app)
+AUTH = (settings.DASHBOARD_USERNAME, settings.DASHBOARD_PASSWORD)
+
+
+@pytest.fixture()
+def sample_rows():
+    """An open position, a closed round trip, and a risk event, so the
+    template renders every table rather than just the empty states."""
+    import datetime as dt
+
+    now = dt.datetime.now(dt.timezone.utc)
+    db = SessionLocal()
+    created = []
+    try:
+        pos = models.Position(
+            symbol="DASHCOIN",
+            token_address="DashCoinAddress111",
+            qty=1234.5,
+            entry_price=0.00042,
+            stop_loss=0.000357,
+            take_profit=0.000546,
+            status=models.PositionStatus.OPEN.value,
+            opened_at=now,
+        )
+        buy = models.Trade(
+            symbol="DASHCOIN", side="buy", status=models.TradeStatus.FILLED.value,
+            mode=models.TradeMode.PAPER.value, size_usd=20.0, qty=1234.5,
+            entry_price=0.00042, opened_at=now,
+        )
+        sell = models.Trade(
+            symbol="OLDCOIN", side="sell", status=models.TradeStatus.FILLED.value,
+            mode=models.TradeMode.PAPER.value, size_usd=20.0, qty=1000.0,
+            exit_price=0.0005, pnl_usd=3.21, pnl_pct=0.16, closed_at=now,
+        )
+        event = models.RiskEvent(event_type="rug_check_rejected", details="unit test event")
+        for row in (pos, buy, sell, event):
+            db.add(row)
+            created.append(row)
+        db.commit()
+        yield
+    finally:
+        for row in created:
+            db.delete(row)
+        db.commit()
+        db.close()
+
+
+def test_dashboard_requires_auth():
+    resp = client.get("/")
+    assert resp.status_code == 401
+
+
+def test_dashboard_rejects_wrong_password():
+    resp = client.get("/", auth=(settings.DASHBOARD_USERNAME, "definitely-not-the-password"))
+    assert resp.status_code == 401
+
+
+def test_dashboard_renders_when_empty():
+    resp = client.get("/", auth=AUTH)
+    assert resp.status_code == 200, resp.text[:500]
+    assert "Memecoin Trading Bot" in resp.text
+
+
+def test_dashboard_renders_positions_trades_and_events(sample_rows):
+    resp = client.get("/", auth=AUTH)
+    assert resp.status_code == 200, resp.text[:500]
+    body = resp.text
+    assert "DASHCOIN" in body          # open position row
+    assert "OLDCOIN" in body           # closed trade row
+    assert "unit test event" in body   # risk event row
+    assert "PAPER" in body             # mode badge
+
+
+def test_api_stats_returns_json():
+    resp = client.get("/api/stats", auth=AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] == "PAPER"
+    assert body["halted"] is False
+    assert isinstance(body["portfolio_value_usd"], (int, float))
+
+
+def test_halt_and_resume_round_trip():
+    halt = client.post("/api/halt", auth=AUTH, follow_redirects=False)
+    assert halt.status_code == 303
+    assert client.get("/api/stats", auth=AUTH).json()["halted"] is True
+
+    resume = client.post("/api/resume", auth=AUTH, follow_redirects=False)
+    assert resume.status_code == 303
+    assert client.get("/api/stats", auth=AUTH).json()["halted"] is False

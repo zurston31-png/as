@@ -65,10 +65,14 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
             "halted": is_trading_halted(db),
             "watchlist": settings.SYMBOLS_WATCHLIST,
         }
+        # Starlette's request-first signature. The older
+        # TemplateResponse(name, {"request": ...}) form is deprecated, and on
+        # current Starlette it silently treats the context dict as the
+        # template name ("unhashable type: 'dict'").
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
                 "stats": stats,
                 "positions": open_positions,
                 "trades": recent_trades,
