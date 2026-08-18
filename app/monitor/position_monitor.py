@@ -1,0 +1,70 @@
+"""Background loop that polls every open position for:
+  - stop-loss / take-profit triggers
+  - dev-wallet-sell risk triggers
+
+Runs as an asyncio task started from app/main.py's startup hook, independent
+of the webhook — this is what makes exits happen even if no TradingView
+sell alert ever fires.
+"""
+import asyncio
+import logging
+
+from app import models
+from app.config import settings
+from app.database import SessionLocal
+from app.monitor.devwallet import check_dev_wallet_exit
+from app.services import price_feed
+from app.services.trading_service import close_position
+
+logger = logging.getLogger(__name__)
+
+_stop_event = asyncio.Event()
+
+
+async def _evaluate_position(db, pos: models.Position) -> None:
+    if not pos.token_address:
+        return
+
+    price = await price_feed.get_price_usd(pos.token_address)
+    if price is not None:
+        if price <= pos.stop_loss:
+            await close_position(db, pos, reason=f"stop-loss hit at ${price:.8f}")
+            return
+        if price >= pos.take_profit:
+            await close_position(db, pos, reason=f"take-profit hit at ${price:.8f}")
+            return
+
+    exit_reason = await check_dev_wallet_exit(pos)
+    if exit_reason:
+        await close_position(db, pos, reason=exit_reason)
+
+
+async def _check_positions_once() -> None:
+    db = SessionLocal()
+    try:
+        positions = db.query(models.Position).filter_by(status=models.PositionStatus.OPEN.value).all()
+        for pos in positions:
+            try:
+                await _evaluate_position(db, pos)
+            except Exception:
+                logger.exception("error evaluating position id=%s (%s)", pos.id, pos.symbol)
+        db.commit()
+    except Exception:
+        logger.exception("position monitor tick failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+async def run_forever() -> None:
+    logger.info("position monitor loop starting (interval=%ss)", settings.PRICE_POLL_INTERVAL_SECONDS)
+    while not _stop_event.is_set():
+        await _check_positions_once()
+        try:
+            await asyncio.wait_for(_stop_event.wait(), timeout=settings.PRICE_POLL_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+
+
+def stop() -> None:
+    _stop_event.set()

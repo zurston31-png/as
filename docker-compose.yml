@@ -1,0 +1,49 @@
+services:
+  bot:
+    build:
+      context: .
+      args:
+        # Flip to "true" once you're past paper trading and ready to install
+        # the live-execution dependencies (solana/ccxt/web3).
+        INSTALL_LIVE_DEPS: "false"
+    image: memecoin-bot:latest
+    container_name: memecoin-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # --- Optional: Caddy reverse proxy with automatic HTTPS for production. ---
+  # Point TradingView's webhook at https://your-domain.example/webhook/tradingview
+  # instead of exposing port 8000 directly. Uncomment and add a Caddyfile.
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - bot
+  #
+  # volumes:
+  #   caddy_data:
+  #   caddy_config:
