@@ -96,6 +96,62 @@ Open `http://localhost:8000/` (HTTP Basic Auth: `DASHBOARD_USERNAME` /
 `DASHBOARD_PASSWORD` from `.env`) to see the dashboard. `LIVE_TRADING=false`
 by default, so every fill is simulated — no real funds or keys are touched.
 
+## Automatic token scanner
+
+The bot finds its own tokens — you don't have to paste a contract address or
+build a TradingView chart per memecoin. Every 60s
+(`SCANNER_INTERVAL_SECONDS`):
+
+```
+DexScreener + Birdeye new listings
+   ↓  discover           app/scanner/discovery.py
+   ↓  free pre-screen    app/scanner/filters.py   (liquidity / volume / age / txns / sell pressure)
+   ↓  signal score       app/signals/live_gate.py (0-100, must clear MIN_SIGNAL_SCORE_TO_ENTER)
+   ↓  rug check          app/rugcheck/            (binary gates + 0-100 rug risk score)
+   ↓  risk + sizing      app/risk/manager.py      (exposure caps, cooldowns, halts)
+   ↓  paper position     monitored by the usual stop-loss / take-profit / smart exits
+```
+
+**DexScreener** needs no API key and lists any token once it has a pool and
+a trade. **Birdeye** is optional (`BIRDEYE_API_KEY`) and adds its dedicated
+new-listing feed, including launchpad/meme-platform tokens. Either source
+failing is logged and skipped, not fatal — a discovery outage means "no
+candidates this cycle", never a crash.
+
+The scanner is a **source of signals, not a second trading path**: it
+records a `Signal` with `source="scanner"` and calls the exact same
+`_handle_buy_signal` a webhook alert does. Everything already built — the
+risk gate, the score gate, the rug filter, exposure-aware sizing, the smart
+exits, the journal, the dashboard — applies unchanged, because there is no
+separate implementation that could drift from it. Tests assert this
+directly: a scanner candidate is rejected by a failing rug check, a weak
+signal score, and an active trading halt.
+
+Cost ordering is load-bearing. A cycle can surface hundreds of new mints;
+the free pre-screen rejects most of them using data already in the listing
+payload, so the expensive stages (several rug-check lookups, a pool
+resolution plus candle fetch) only ever run on the handful worth it. A
+`ScannedToken` row per candidate records how far it got and why it stopped,
+visible in the dashboard's **Auto Scanner** panel — so "found 300 tokens,
+traded none" is answerable rather than mysterious.
+
+```bash
+python scripts/scan_once.py           # discover + pre-screen only, no trades
+python scripts/scan_once.py --trade   # one full cycle (opens PAPER positions)
+```
+
+Run the first form on your real server before leaving the scanner
+unattended: the DexScreener/Birdeye response shapes are the one part that
+couldn't be verified from the development sandbox, and that script shows
+you exactly what comes back plus how your `SCANNER_MIN_*` thresholds are
+filtering it.
+
+**Safety**: with `LIVE_TRADING=true` the scanner refuses to run unless
+`SCANNER_ALLOW_LIVE_TRADING=true` is also set. Auto-discovering tokens
+nobody has vetted and buying them unattended with real money is a much
+bigger step than either autonomy or live trading alone, so it takes its own
+deliberate opt-in rather than arriving as a side effect of an upgrade.
+
 ## Setting up TradingView alerts
 
 1. Open `pine/memecoin_signal_strategy.pine` in TradingView's Pine Editor,

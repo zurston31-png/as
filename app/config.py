@@ -115,6 +115,39 @@ class Settings(BaseSettings):
     SIGNAL_SCORE_MIN_CANDLES: int = 60
     GECKOTERMINAL_API_BASE: str = "https://api.geckoterminal.com/api/v2"
 
+    # --- Automatic token scanner (Stage 9) ---
+    # Finds newly listed tokens itself instead of waiting for a TradingView
+    # alert to name one. Discovered tokens go through the SAME pipeline a
+    # webhook alert does (risk gate -> signal score -> rug check -> sizing),
+    # so nothing here bypasses an existing protection.
+    SCANNER_ENABLED: bool = True
+    SCANNER_INTERVAL_SECONDS: int = 60
+    # Auto-discovery + auto-buy + real money is a much bigger step than any
+    # one of those alone: the scanner will happily find a token nobody has
+    # ever looked at and open a position in it unattended. In paper mode
+    # that's the point. With LIVE_TRADING=true the scanner refuses to run
+    # unless this is ALSO set, so upgrading a live deployment can't silently
+    # start auto-buying brand-new memecoins.
+    SCANNER_ALLOW_LIVE_TRADING: bool = False
+
+    # Cheap pre-screen, applied to the listing payload before any rug check
+    # or candle fetch is spent on a candidate (app/scanner/filters.py).
+    SCANNER_MAX_TOKENS_PER_CYCLE: int = 30
+    SCANNER_MIN_LIQUIDITY_USD: float = 25_000.0
+    SCANNER_MIN_VOLUME_24H_USD: float = 50_000.0
+    SCANNER_MIN_TXNS_24H: int = 100
+    SCANNER_MAX_SELL_SHARE: float = 0.70
+    # Skip the first hours of a pool's life - the highest-risk rug window,
+    # and too little history for the signal engine to read anyway.
+    SCANNER_MIN_TOKEN_AGE_HOURS: float = 6.0
+    SCANNER_MAX_TOKEN_AGE_HOURS: float = 720.0   # 30 days; 0 disables the ceiling
+    # How long before a rejected token is worth re-evaluating. Without this
+    # the scanner re-analyses the same few hundred tokens every cycle.
+    SCANNER_RECHECK_MINUTES: int = 60
+
+    BIRDEYE_API_KEY: Optional[str] = None
+    BIRDEYE_API_BASE: str = "https://public-api.birdeye.so"
+
     # --- Rug-pull / scam filter ---
     RUGCHECK_ENABLED: bool = True
     MAX_TOP10_HOLDER_PCT: float = 0.35

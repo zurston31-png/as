@@ -1,0 +1,220 @@
+"""The automatic token scanner loop.
+
+Every SCANNER_INTERVAL_SECONDS:
+
+    discover  (DexScreener + optional Birdeye new listings)
+      -> dedupe   (skip anything evaluated within SCANNER_RECHECK_MINUTES)
+      -> prescreen (liquidity / volume / age / txns / sell pressure, free)
+      -> hand to trading_service.handle_discovered_token, which runs the
+         SAME risk gate -> signal score -> rug check -> sizing -> execution
+         path a TradingView alert takes
+      -> record the outcome on ScannedToken for the audit trail
+
+Cost ordering is deliberate and load-bearing. Discovery can surface
+hundreds of brand-new mints a minute; the prescreen rejects most of them
+using data that already arrived in the listing payload, so the expensive
+stages (several rug-check lookups, a pool resolution plus candle fetch)
+only ever run on the few that could plausibly be traded. Reversing that
+order would work identically and hammer four APIs to do it.
+
+Positions opened here are monitored by the existing position monitor
+(app/monitor/position_monitor.py) exactly like any other position - stop
+loss, take profit, trailing stop, and every other Stage 4 exit apply
+unchanged, because the scanner never created a special kind of position in
+the first place.
+"""
+from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import logging
+
+from sqlalchemy.orm import Session
+
+from app import models
+from app.config import settings
+from app.database import SessionLocal
+from app.scanner.discovery import DiscoveredToken, discover_tokens
+from app.scanner.filters import prescreen
+from app.services.trading_service import handle_discovered_token
+
+logger = logging.getLogger(__name__)
+
+_stop_event = asyncio.Event()
+
+# ScannedToken.last_stage values, in pipeline order.
+STAGE_PRESCREEN = "prescreen"
+STAGE_EVALUATED = "evaluated"
+STAGE_TRADED = "traded"
+
+
+def scanner_blocked_reason() -> str | None:
+    """Why the scanner must not run right now, or None if it may."""
+    if not settings.SCANNER_ENABLED:
+        return "SCANNER_ENABLED=false"
+    if settings.LIVE_TRADING and not settings.SCANNER_ALLOW_LIVE_TRADING:
+        return (
+            "LIVE_TRADING=true but SCANNER_ALLOW_LIVE_TRADING=false - auto-discovering brand-new "
+            "tokens and buying them unattended with real money is a deliberate extra step; set "
+            "SCANNER_ALLOW_LIVE_TRADING=true only if that is genuinely what you want"
+        )
+    return None
+
+
+def _record(
+    db: Session, token: DiscoveredToken, *, stage: str, reason: str, traded: bool = False
+) -> models.ScannedToken:
+    row = db.query(models.ScannedToken).filter_by(token_address=token.token_address).first()
+    now = dt.datetime.now(dt.timezone.utc)
+    if row is None:
+        row = models.ScannedToken(
+            token_address=token.token_address,
+            symbol=token.symbol,
+            chain=token.chain,
+            discovery_source=token.source,
+            first_seen_at=now,
+            evaluation_count=0,
+            times_traded=0,
+        )
+        db.add(row)
+
+    row.symbol = token.symbol
+    row.last_evaluated_at = now
+    row.evaluation_count = (row.evaluation_count or 0) + 1
+    row.last_stage = stage
+    row.last_reason = reason
+    row.liquidity_usd = token.liquidity_usd
+    row.volume_24h_usd = token.volume_24h_usd
+    if traded:
+        row.times_traded = (row.times_traded or 0) + 1
+    return row
+
+
+def _recently_evaluated(db: Session, token_address: str) -> bool:
+    row = db.query(models.ScannedToken).filter_by(token_address=token_address).first()
+    if row is None or row.last_evaluated_at is None:
+        return False
+    last = row.last_evaluated_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=dt.timezone.utc)
+    elapsed_minutes = (dt.datetime.now(dt.timezone.utc) - last).total_seconds() / 60
+    return elapsed_minutes < settings.SCANNER_RECHECK_MINUTES
+
+
+async def scan_once(db: Session | None = None) -> dict:
+    """Run one full scan cycle. Returns a summary dict for logging/tests.
+
+    Takes an optional session so scripts/scan_once.py and the tests can
+    drive a single cycle against their own session without going near the
+    background loop.
+    """
+    blocked = scanner_blocked_reason()
+    if blocked:
+        logger.warning("scanner cycle skipped: %s", blocked)
+        return {"skipped": blocked, "discovered": 0, "evaluated": 0, "traded": 0}
+
+    owns_session = db is None
+    db = db or SessionLocal()
+    summary = {"discovered": 0, "prescreen_rejected": 0, "skipped_recent": 0, "evaluated": 0, "traded": 0}
+
+    try:
+        tokens = await discover_tokens()
+        summary["discovered"] = len(tokens)
+
+        considered = 0
+        for token in tokens:
+            if considered >= settings.SCANNER_MAX_TOKENS_PER_CYCLE:
+                logger.info(
+                    "scanner hit SCANNER_MAX_TOKENS_PER_CYCLE=%d, deferring the rest to the next cycle",
+                    settings.SCANNER_MAX_TOKENS_PER_CYCLE,
+                )
+                break
+
+            if _recently_evaluated(db, token.token_address):
+                summary["skipped_recent"] += 1
+                continue
+
+            verdict = prescreen(token)
+            if not verdict.passed:
+                _record(db, token, stage=STAGE_PRESCREEN, reason=verdict.reason)
+                summary["prescreen_rejected"] += 1
+                considered += 1
+                continue
+
+            # Past the free filters - this one is worth spending network on.
+            considered += 1
+            summary["evaluated"] += 1
+            try:
+                signal = await handle_discovered_token(
+                    db,
+                    symbol=token.symbol,
+                    token_address=token.token_address,
+                    chain=token.chain,
+                    price=token.price_usd or 0.0,
+                    discovery_source=token.source,
+                    extra={
+                        "liquidity_usd": token.liquidity_usd,
+                        "volume_24h_usd": token.volume_24h_usd,
+                        "age_hours": token.age_hours,
+                    },
+                )
+                db.flush()
+                traded = (
+                    db.query(models.Trade)
+                    .filter_by(signal_id=signal.id, side="buy", status=models.TradeStatus.FILLED.value)
+                    .first()
+                    is not None
+                )
+                if traded:
+                    summary["traded"] += 1
+                    _record(db, token, stage=STAGE_TRADED, reason="opened a position", traded=True)
+                else:
+                    _record(
+                        db, token, stage=STAGE_EVALUATED,
+                        reason="passed pre-screen but was rejected downstream "
+                               "(see risk events for this signal)",
+                    )
+            except Exception:
+                # One bad candidate must never take down the whole cycle.
+                logger.exception("scanner failed evaluating %s (%s)", token.symbol, token.token_address)
+                _record(db, token, stage=STAGE_EVALUATED, reason="evaluation raised an error - see server logs")
+
+        db.commit()
+    except Exception:
+        logger.exception("scanner cycle failed")
+        db.rollback()
+    finally:
+        if owns_session:
+            db.close()
+
+    logger.info(
+        "scan cycle: %d discovered, %d skipped (recent), %d rejected on pre-screen, "
+        "%d fully evaluated, %d traded",
+        summary["discovered"], summary["skipped_recent"], summary["prescreen_rejected"],
+        summary["evaluated"], summary["traded"],
+    )
+    return summary
+
+
+async def run_forever() -> None:
+    blocked = scanner_blocked_reason()
+    if blocked:
+        logger.warning("automatic token scanner is NOT running: %s", blocked)
+        return
+
+    logger.info(
+        "automatic token scanner starting (interval=%ss, min liquidity $%s, min 24h volume $%s)",
+        settings.SCANNER_INTERVAL_SECONDS,
+        f"{settings.SCANNER_MIN_LIQUIDITY_USD:,.0f}",
+        f"{settings.SCANNER_MIN_VOLUME_24H_USD:,.0f}",
+    )
+    while not _stop_event.is_set():
+        await scan_once()
+        try:
+            await asyncio.wait_for(_stop_event.wait(), timeout=settings.SCANNER_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+
+
+def stop() -> None:
+    _stop_event.set()

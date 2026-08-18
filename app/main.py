@@ -17,6 +17,7 @@ from app.config import settings
 from app.dashboard.routes import router as dashboard_router
 from app.database import SessionLocal, init_db
 from app.monitor import position_monitor
+from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
 from app.security import verify_webhook_secret
 from app.services.reporting import send_daily_summary
@@ -27,11 +28,12 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 _monitor_task: asyncio.Task | None = None
+_scanner_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _monitor_task
+    global _monitor_task, _scanner_task
     init_db()
 
     mode = "LIVE" if settings.LIVE_TRADING else "PAPER"
@@ -44,6 +46,13 @@ async def lifespan(app: FastAPI):
 
     _monitor_task = asyncio.create_task(position_monitor.run_forever())
 
+    scanner_blocked = scanner_loop.scanner_blocked_reason()
+    if scanner_blocked:
+        logger.info("automatic token scanner disabled: %s", scanner_blocked)
+    else:
+        logger.info("automatic token scanner enabled (every %ss)", settings.SCANNER_INTERVAL_SECONDS)
+        _scanner_task = asyncio.create_task(scanner_loop.run_forever())
+
     scheduler.add_job(
         send_daily_summary,
         CronTrigger(hour=settings.DAILY_SUMMARY_HOUR_UTC, minute=0),
@@ -55,9 +64,12 @@ async def lifespan(app: FastAPI):
     yield
 
     position_monitor.stop()
+    scanner_loop.stop()
     scheduler.shutdown(wait=False)
     if _monitor_task:
         _monitor_task.cancel()
+    if _scanner_task:
+        _scanner_task.cancel()
 
 
 app = FastAPI(title="Memecoin Trading Bot", lifespan=lifespan)

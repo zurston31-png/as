@@ -68,6 +68,10 @@ class Signal(Base):
     signal_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     signal_score_reliable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     signal_score_factors: Mapped[list] = mapped_column(JSON, default=list)
+    # Where this signal came from: "tradingview" (a webhook alert) or
+    # "scanner" (auto-discovered by app/scanner/). Both take the identical
+    # path through _handle_buy_signal; this only records which one found it.
+    source: Mapped[str] = mapped_column(String(32), default="tradingview", index=True)
 
 
 class RugCheckResult(Base):
@@ -208,6 +212,39 @@ class DailyPnL(Base):
     portfolio_value_usd: Mapped[float] = mapped_column(Float, default=0.0)
     trades_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScannedToken(Base):
+    """One row per token the auto-scanner has ever evaluated.
+
+    Serves two jobs at once. First, deduplication: a scan cycle re-surfaces
+    the same few hundred newly listed tokens every minute, and without a
+    persisted record the bot would re-run the full rug-check + candle-fetch
+    pipeline on all of them forever. `last_evaluated_at` plus
+    SCANNER_RECHECK_MINUTES is what stops that.
+
+    Second, an audit trail: `last_stage` records how far each candidate got
+    before being rejected (prescreen / signal_score / rug_check / traded),
+    so "the scanner found 300 tokens and traded none" is answerable rather
+    than mysterious - the same reasoning behind RugCheckResult's
+    lookup_outcomes.
+    """
+
+    __tablename__ = "scanned_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_address: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    chain: Mapped[str] = mapped_column(String(32), default="solana")
+    discovery_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_evaluated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    evaluation_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_24h_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    times_traded: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class BotState(Base):

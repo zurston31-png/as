@@ -16,6 +16,7 @@ from app.dashboard.analytics import compute_equity_curve, compute_portfolio_stat
 from app.dashboard.charts import equity_curve_svg
 from app.database import SessionLocal
 from app.risk.manager import halt_trading, is_trading_halted, resume_trading
+from app.scanner.loop import scanner_blocked_reason
 from app.services import portfolio, price_feed
 
 router = APIRouter()
@@ -170,6 +171,22 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
             .all()
         }
 
+        # What the auto-scanner has been doing. Without this, "the scanner is
+        # running but never trades" is indistinguishable from "the scanner
+        # isn't running" — the same visibility gap the Signals panel closes
+        # for TradingView alerts.
+        scanned_tokens = (
+            db.query(models.ScannedToken)
+            .order_by(models.ScannedToken.last_evaluated_at.desc())
+            .limit(25)
+            .all()
+        )
+        scanner_summary = {
+            "tracked": db.query(models.ScannedToken).count(),
+            "traded": db.query(models.ScannedToken).filter(models.ScannedToken.times_traded > 0).count(),
+            "blocked_reason": scanner_blocked_reason(),
+        }
+
         all_trades = db.query(models.Trade).all()
         portfolio_stats = compute_portfolio_stats(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
         equity_curve = compute_equity_curve(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
@@ -200,6 +217,7 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
             "execution_backend": settings.EXECUTION_BACKEND,
             "halted": is_trading_halted(db),
             "watchlist": settings.SYMBOLS_WATCHLIST,
+            "scanner_interval_seconds": settings.SCANNER_INTERVAL_SECONDS,
             "profit_factor_display": (
                 "∞" if portfolio_stats.profit_factor == float("inf")
                 else (f"{portfolio_stats.profit_factor:.2f}" if portfolio_stats.profit_factor is not None else "-")
@@ -226,6 +244,8 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
                 "signals": recent_signals,
                 "checks": checks_by_signal,
                 "equity_svg": equity_svg,
+                "scanned_tokens": scanned_tokens,
+                "scanner": scanner_summary,
             },
         )
     finally:

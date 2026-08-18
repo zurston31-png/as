@@ -67,6 +67,48 @@ async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
     return signal
 
 
+async def handle_discovered_token(
+    db: Session,
+    *,
+    symbol: str,
+    token_address: str,
+    chain: str,
+    price: float,
+    discovery_source: str,
+    extra: dict | None = None,
+) -> models.Signal:
+    """Entry point for the automatic scanner (app/scanner/).
+
+    Records the candidate as a Signal with source="scanner" and then runs it
+    through the IDENTICAL buy path a TradingView webhook alert takes - the
+    risk gate, the live signal score, the rug check, exposure-aware sizing,
+    execution and the position monitor are all the same code. The scanner is
+    a new *source of signals*, deliberately not a second trading path: a
+    parallel implementation could drift from this one and quietly lose a
+    protection, which is exactly the failure this avoids.
+    """
+    signal = models.Signal(
+        symbol=symbol,
+        token_address=token_address,
+        chain=chain,
+        signal_type="buy",
+        price=price,
+        source="scanner",
+        raw_payload={"discovery_source": discovery_source, **(extra or {})},
+    )
+    db.add(signal)
+    db.flush()
+
+    try:
+        await _handle_buy_signal(db, signal)
+    except Exception:
+        logger.exception("unhandled error processing scanner candidate %s (%s)", symbol, token_address)
+        await notifier.notify_error(f"Unhandled error processing scanner candidate {symbol} - see server logs")
+        raise
+
+    return signal
+
+
 async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
     gate = risk_manager.check_can_open_position(db, symbol=signal.symbol)
     if not gate.allowed:
