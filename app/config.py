@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     GOPLUS_API_KEY: Optional[str] = None
     GOPLUS_API_BASE: str = "https://api.gopluslabs.io/api/v1"
     HONEYPOT_API_BASE: str = "https://api.honeypot.is/v2"
+    RUGCHECK_API_BASE: str = "https://api.rugcheck.xyz/v1"
+    # Reject when the Solana specialist reports any risk it classes as
+    # danger. Set false to downgrade those to warnings (NOT recommended -
+    # "large amount of LP unlocked" arrives as exactly such a risk).
+    REJECT_ON_DANGER_RISKS: bool = True
 
     # --- Monitoring loop ---
     PRICE_POLL_INTERVAL_SECONDS: int = 30
