@@ -91,10 +91,18 @@ def install_dependencies() -> None:
         cwd=REPO_ROOT,
     )
     if result.returncode != 0:
+        pyv = f"{sys.version_info.major}.{sys.version_info.minor}"
         fail(
-            "Installing dependencies failed.\n\n"
-            "Most common cause is no internet connection or a firewall blocking pip.\n"
-            "Scroll up for the specific error."
+            "Installing the software failed. Scroll up to see the specific error.\n\n"
+            'If you see "failed building wheel" or "Microsoft Visual C++ is required"\n'
+            "or something about Rust or cargo:\n\n"
+            f"  Your Python ({pyv}) is probably newer than some packages support yet,\n"
+            "  so pip tried to compile them from source instead of downloading a\n"
+            "  ready-made version.\n\n"
+            "  Fix: install Python 3.12, 3.13 or 3.14 from\n"
+            "  https://www.python.org/downloads/  (scroll down for older releases),\n"
+            "  delete the 'venv' folder in this directory, then run this again.\n\n"
+            "Otherwise, the usual cause is no internet or a firewall blocking pip."
         )
 
 
