@@ -141,24 +141,60 @@ expressions directly in the script for anything more custom.
 Configured in `.env`, enforced in `app/risk/manager.py` on **every** trade —
 there is no code path that bypasses `RiskManager`:
 
+### Position sizing is risk-based, not a flat percentage
+
+`MAX_PORTFOLIO_PCT_PER_TRADE` is the fraction of the portfolio you're willing
+to **lose** on a trade if its stop is hit — not the position size itself.
+The bot solves for the notional that makes that true:
+
+```
+risk_amount = portfolio_value × MAX_PORTFOLIO_PCT_PER_TRADE
+position_size_usd = risk_amount / stop_loss_pct
+```
+
+A wider stop therefore produces a *smaller* position and a tighter stop a
+*larger* one, so the dollar amount actually at risk stays constant no
+matter where the stop sits. The earlier version sized every trade at a
+flat percent of the portfolio regardless of stop distance, so "2% risk"
+was really just the notional size — the real risk floated with the stop
+with no cap on it at all.
+
+Because sizing reads the *current* portfolio value on every trade, a
+losing streak shrinks the next position automatically — there is no code
+path that can scale a position up to recover a previous loss.
+
 | Setting | Default | Meaning |
 |---|---|---|
-| `MAX_PORTFOLIO_PCT_PER_TRADE` | 2% | Position size = portfolio value × this, capped further by `MAX_TRADE_SIZE_USD` |
+| `MAX_PORTFOLIO_PCT_PER_TRADE` | 2% | Fraction of the portfolio at risk per trade (see formula above), capped further by `MAX_TRADE_SIZE_USD` |
 | `MAX_TRADE_SIZE_USD` | $200 | Absolute per-trade cap |
 | `DAILY_LOSS_LIMIT_PCT` | 5% | If realized losses today exceed this % of `PORTFOLIO_STARTING_BALANCE_USD`, the bot halts and alerts you |
 | `STOP_LOSS_PCT` / `TAKE_PROFIT_PCT` | 15% / 30% | Set on every position at entry, enforced by the background monitor loop |
 | `MAX_CONCURRENT_POSITIONS` | 5 | New buys are rejected once this many positions are open |
+| `MAX_EXPOSURE_PER_TOKEN_PCT` | 10% | Cap on notional in a single token, as a fraction of portfolio value; sizing is clipped to whatever room remains |
+| `MAX_TOTAL_EXPOSURE_PCT` | 60% | Same cap, portfolio-wide across all open positions |
+| `MAX_CONSECUTIVE_LOSSES` | 4 | Auto-halts after this many losing trades in a row, independent of the daily $ loss limit — a losing streak can stay under that limit while still signaling the strategy has stopped working |
+| `MAX_DAILY_TRADES` | 8 | Hard cap on new positions opened per calendar day (UTC) |
+| `TRADE_COOLDOWN_SECONDS` | 900 | Minimum time between trades on the same symbol, so the bot can't immediately re-enter right after being stopped out |
 
-**Hard ceilings** in `app/risk/manager.py` (`HARD_MAX_*` constants) clamp
-these regardless of what `.env` says — e.g. `MAX_PORTFOLIO_PCT_PER_TRADE`
-can never exceed 10% and `DAILY_LOSS_LIMIT_PCT` can never exceed 25%, no
-matter how `.env` is misconfigured. Edit the constants themselves if you
-deliberately want a wider band.
+A signal can pass every other check and still be sized to **$0** (and
+rejected as `exposure_cap_rejected`) if the per-token or total exposure cap
+is already used up — see `RiskManager.position_size_usd` in
+`app/risk/manager.py`.
 
-When the daily loss limit trips, the bot sets a persisted `trading_halted`
-flag, sends a Telegram/Discord alert, and **stops opening new positions**
-until you resume it from the dashboard ("Resume trading" button) or via
-`POST /api/halt` / `POST /api/resume` (Basic Auth).
+**Hard ceilings** in `app/risk/manager.py` (`HARD_MAX_*` / `HARD_MIN_*`
+constants) clamp all of the above regardless of what `.env` says — e.g.
+`MAX_PORTFOLIO_PCT_PER_TRADE` can never exceed 10%, `DAILY_LOSS_LIMIT_PCT`
+can never exceed 25%, `MAX_EXPOSURE_PER_TOKEN_PCT` can never exceed 25%,
+and `MAX_CONSECUTIVE_LOSSES` can never be set below 2 (so a single loss
+can't be configured into a full shutdown) — no matter how `.env` is
+misconfigured. Edit the constants themselves if you deliberately want a
+wider band.
+
+When the daily loss limit **or** the consecutive-loss limit trips, the bot
+sets a persisted `trading_halted` flag, sends a Telegram/Discord alert, and
+**stops opening new positions** until you resume it from the dashboard
+("Resume trading" button) or via `POST /api/halt` / `POST /api/resume`
+(Basic Auth).
 
 ## Rug-pull / scam filter
 
@@ -262,8 +298,10 @@ after a crash or reboot — no manual restart needed.
    in live mode the bot tracks P&L against this figure via an internal
    ledger, it does not poll a wallet/exchange balance automatically.
 4. Double-check `MAX_PORTFOLIO_PCT_PER_TRADE`, `DAILY_LOSS_LIMIT_PCT`,
-   `MAX_CONCURRENT_POSITIONS`, `MAX_TRADE_SIZE_USD` for your real risk
-   tolerance.
+   `MAX_CONCURRENT_POSITIONS`, `MAX_TRADE_SIZE_USD`,
+   `MAX_EXPOSURE_PER_TOKEN_PCT`, `MAX_TOTAL_EXPOSURE_PCT`,
+   `MAX_CONSECUTIVE_LOSSES`, `MAX_DAILY_TRADES`, and `TRADE_COOLDOWN_SECONDS`
+   for your real risk tolerance.
 5. Set `SOLANA_PRIVATE_KEY` (or CEX API keys), `pip install -r
    requirements-live.txt`, then set `LIVE_TRADING=true` and restart.
 6. Watch the first several live trades closely and confirm Telegram/Discord

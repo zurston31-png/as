@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     TAKE_PROFIT_PCT: float = 0.30
     MAX_CONCURRENT_POSITIONS: int = 5
     PORTFOLIO_STARTING_BALANCE_USD: float = 1000.0
+    MAX_EXPOSURE_PER_TOKEN_PCT: float = 0.10
+    MAX_TOTAL_EXPOSURE_PCT: float = 0.60
+    MAX_CONSECUTIVE_LOSSES: int = 4
+    MAX_DAILY_TRADES: int = 8
+    TRADE_COOLDOWN_SECONDS: int = 900
 
     # --- Rug-pull / scam filter ---
     RUGCHECK_ENABLED: bool = True

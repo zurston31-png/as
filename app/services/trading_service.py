@@ -67,7 +67,7 @@ async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
 
 
 async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
-    gate = risk_manager.check_can_open_position(db)
+    gate = risk_manager.check_can_open_position(db, symbol=signal.symbol)
     if not gate.allowed:
         db.add(models.RiskEvent(event_type="buy_blocked", details=gate.reason, signal_id=signal.id))
         await notifier.notify_rejection(signal, gate.reason)
@@ -108,7 +108,22 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
         return
 
     portfolio_value = await portfolio.get_portfolio_value_usd(db)
-    size_usd = risk_manager.position_size_usd(portfolio_value)
+    total_exposure = await portfolio.get_open_positions_value_usd(db)
+    symbol_exposure = await portfolio.get_symbol_exposure_usd(db, signal.symbol)
+    size_usd = risk_manager.position_size_usd(
+        portfolio_value,
+        current_total_exposure_usd=total_exposure,
+        current_symbol_exposure_usd=symbol_exposure,
+    )
+
+    if size_usd <= 0:
+        reason = (
+            f"no exposure room left (portfolio ${portfolio_value:,.0f}, "
+            f"total exposure ${total_exposure:,.0f}, {signal.symbol} exposure ${symbol_exposure:,.0f})"
+        )
+        db.add(models.RiskEvent(event_type="exposure_cap_rejected", details=reason, signal_id=signal.id))
+        await notifier.notify_rejection(signal, reason)
+        return
 
     if report.liquidity_usd and size_usd > report.liquidity_usd * settings.MAX_PRICE_IMPACT_PCT:
         reason = (
@@ -239,3 +254,9 @@ async def close_position(db: Session, position: models.Position, reason: str, si
     if not daily.allowed:
         halt_trading(db, daily.reason)
         await notifier.notify_risk_halt(daily.reason)
+        return
+
+    streak = risk_manager.evaluate_consecutive_losses(db)
+    if not streak.allowed:
+        halt_trading(db, streak.reason)
+        await notifier.notify_risk_halt(streak.reason)

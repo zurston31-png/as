@@ -51,3 +51,28 @@ async def get_portfolio_value_usd(db: Session) -> float:
     cash = get_cash_balance_usd(db)
     positions_value = await get_open_positions_value_usd(db)
     return cash + positions_value
+
+
+async def get_symbol_exposure_usd(db: Session, symbol: str) -> float:
+    """Current open notional in one symbol — feeds the per-token exposure cap.
+
+    Today at most one position per symbol can be open at a time (the buy
+    path rejects a second entry while one is open), so this is normally 0 or
+    one position's value. It stays a real, tested query rather than an
+    assumption so the cap keeps working if that single-position rule ever
+    loosens (e.g. adding to a winner).
+    """
+    total = 0.0
+    positions = db.query(models.Position).filter_by(
+        symbol=symbol, status=models.PositionStatus.OPEN.value
+    ).all()
+    for pos in positions:
+        price = None
+        if pos.token_address:
+            try:
+                price = await price_feed.get_price_usd(pos.token_address)
+            except Exception:
+                logger.warning("price lookup failed for %s during exposure check", pos.symbol, exc_info=True)
+        price = price or pos.entry_price
+        total += pos.qty * price
+    return total
