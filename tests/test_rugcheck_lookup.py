@@ -52,6 +52,59 @@ def _patch(monkeypatch, *, rugcheck=None, rugcheck_exc=None, goplus=None, goplus
     monkeypatch.setattr(filters.goplus, "fetch_token_security", fake_goplus)
 
 
+SOLANA_MINT = "RmtMAYVTTFv2iK9muMrXEoAnSSsZPPgRPbqZCKwNDYk"
+EVM_ADDRESS = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+
+
+# --- chain routing ----------------------------------------------------------
+
+@pytest.mark.parametrize("declared", ["solana", "Solana", "SOLANA", "sol", "", "typo", "ethereum"])
+def test_solana_mint_always_routes_to_solana(declared):
+    """The address encoding is unambiguous; the typed label is not."""
+    assert filters.resolve_chain(declared, SOLANA_MINT) == "solana"
+
+
+@pytest.mark.parametrize("declared,expected", [
+    ("ethereum", "ethereum"), ("bsc", "bsc"), ("base", "base"),
+    ("", "ethereum"), ("solana", "ethereum"),
+])
+def test_evm_address_routes_to_an_evm_chain(declared, expected):
+    assert filters.resolve_chain(declared, EVM_ADDRESS) == expected
+
+
+def test_unrecognisable_address_falls_back_to_declared_label():
+    assert filters.resolve_chain("bsc", "not-a-real-address") == "bsc"
+
+
+def test_address_shape_detection():
+    assert filters.looks_like_solana_address(SOLANA_MINT)
+    assert not filters.looks_like_evm_address(SOLANA_MINT)
+    assert filters.looks_like_evm_address(EVM_ADDRESS)
+    assert not filters.looks_like_solana_address(EVM_ADDRESS)
+    # base58 excludes 0/O/I/l, so an address containing them is not a mint
+    assert not filters.looks_like_solana_address("0OIl" + "1" * 30)
+
+
+async def test_mislabelled_solana_token_still_reaches_rugcheck(monkeypatch):
+    """Regression: a Solana mint sent with any other chain label skipped the
+    Solana specialist entirely and was rejected on GoPlus's thin coverage,
+    reading as a verdict on the token rather than a routing mistake."""
+    _patch(monkeypatch, rugcheck=_rugcheck_ok(), goplus={})
+    report = await filters.run_rug_checks("ethereum", SOLANA_MINT)
+    assert report.passed, report.reasons
+    assert "rugcheck" in report.raw
+
+
+async def test_rejection_names_the_chain_it_screened_as(monkeypatch):
+    _patch(monkeypatch, rugcheck={}, goplus={})
+    report = await filters.run_rug_checks("whatever", SOLANA_MINT)
+    assert not report.passed
+    reason = report.reasons[0]
+    assert "screened as solana" in reason
+    assert "rugcheck.xyz: no record" in reason
+    assert "goplus: no record" in reason
+
+
 async def test_no_token_address_rejected():
     report = await filters.run_rug_checks("solana", None)
     assert not report.passed

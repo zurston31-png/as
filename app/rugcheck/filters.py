@@ -137,6 +137,51 @@ def _top10_from(entries: list[dict], pct_key: str) -> float | None:
 # snapshot builders
 # --------------------------------------------------------------------------
 
+# Base58 excludes 0, O, I and l to avoid visual ambiguity.
+BASE58_ALPHABET = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+
+
+def looks_like_evm_address(address: str) -> bool:
+    return (
+        len(address) == 42
+        and address.startswith("0x")
+        and all(c in "0123456789abcdefABCDEF" for c in address[2:])
+    )
+
+
+def looks_like_solana_address(address: str) -> bool:
+    return 32 <= len(address) <= 44 and all(c in BASE58_ALPHABET for c in address)
+
+
+def resolve_chain(declared: str, token_address: str) -> str:
+    """Decide which chain to screen against, trusting the address over the label.
+
+    The chain arrives as free text — typed into a Pine script input or a test
+    prompt — and any value other than exactly "solana" used to route a Solana
+    mint to the EVM path, skipping the Solana specialist and consulting only
+    a scanner with thin Solana coverage. The rejection then read "no record",
+    which looks like a verdict on the token rather than a routing mistake.
+
+    An address's own encoding is unambiguous, so prefer it.
+    """
+    declared_clean = (declared or "").strip().lower()
+    address = (token_address or "").strip()
+
+    if looks_like_evm_address(address):
+        detected = declared_clean if declared_clean and declared_clean != "solana" else "ethereum"
+    elif looks_like_solana_address(address):
+        detected = "solana"
+    else:
+        return declared_clean or "solana"
+
+    if declared_clean and declared_clean != detected:
+        logger.warning(
+            "signal declared chain %r but %s looks like a %s address - screening as %s",
+            declared, address, detected, detected,
+        )
+    return detected
+
+
 def _rugcheck_report_is_complete(data: dict) -> bool:
     """True when RugCheck clearly analysed this token rather than returning
     a stub. Guards the "no risk reported means LP is fine" inference below,
@@ -432,7 +477,10 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
     if not token_address:
         return RugCheckReport(passed=False, reasons=["no on-chain token address supplied with signal"])
 
-    is_solana = chain.lower() == "solana"
+    # Route on the address's own encoding, not the declared label.
+    chain = resolve_chain(chain, token_address)
+    is_solana = chain == "solana"
+
     snap: TokenSnapshot | None = None
     # Per-source outcome, so a rejection says which scanners were consulted
     # and what each one actually did. "no scanner had a record" on its own is
@@ -468,8 +516,8 @@ async def run_rug_checks(chain: str, token_address: str | None) -> RugCheckRepor
         logger.warning("no security data for %s on %s - %s", token_address, chain, "; ".join(outcomes))
         return RugCheckReport(
             passed=False,
-            reasons=["no security data for this token - " + "; ".join(outcomes)],
-            raw={"lookup_outcomes": outcomes},
+            reasons=[f"no security data for this token (screened as {chain}) - " + "; ".join(outcomes)],
+            raw={"lookup_outcomes": outcomes, "chain": chain},
         )
 
     if not is_solana:
