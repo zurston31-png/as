@@ -16,6 +16,7 @@ Mac/Linux users: python3 scripts/setup_and_run.py
 """
 import os
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -56,6 +57,38 @@ def fail(msg: str) -> None:
 
 def venv_python() -> Path:
     return VENV_DIR / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
+
+
+def port_is_taken(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.6)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def check_port_free() -> None:
+    """Refuse to start if something already holds the port.
+
+    Otherwise uvicorn fails to bind, the browser opens against the *other*
+    copy, and everything looks fine until its .env has a different webhook
+    secret than this folder's — which surfaces much later as a confusing
+    "secret didn't match" rejection while you're also unknowingly testing
+    the older code.
+    """
+    if not port_is_taken(PORT):
+        return
+    fail(
+        f"Something is already using port {PORT} - almost certainly another\n"
+        "copy of this bot that's still running.\n\n"
+        "Fix it:\n"
+        "  1. Look for another black console window and close it.\n"
+        "  2. If you extracted a fresh copy of the project, the OLD folder's\n"
+        "     bot is probably still running. Close that window too.\n"
+        "  3. Still stuck? Restart your computer, then run this again.\n\n"
+        "Why this matters: each folder generates its own private webhook\n"
+        "secret, so a leftover bot from an older folder will reject signals\n"
+        "sent by this one - and you'd be testing the old code without\n"
+        "realising it."
+    )
 
 
 def check_python_version() -> None:
@@ -174,6 +207,7 @@ def main() -> None:
     step(1, total, "Checking your Python version...")
     check_python_version()
     say(f"    Python {sys.version_info.major}.{sys.version_info.minor} - good")
+    check_port_free()
 
     step(2, total, "Creating an isolated environment for the bot...")
     create_venv()

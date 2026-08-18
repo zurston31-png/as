@@ -53,6 +53,18 @@ def post(payload: dict) -> None:
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             print("\n  Rejected: the webhook secret didn't match.")
+            print()
+            print("  This nearly always means TWO copies of the bot are involved.")
+            print("  Each project folder generates its own private secret in its")
+            print("  own .env file, so a bot started from a DIFFERENT folder will")
+            print("  reject signals sent from this one.")
+            print()
+            print("  Fix it:")
+            print("    1. Close every black console window running the bot.")
+            print("    2. Delete any older copies of the project folder.")
+            print("    3. Start the bot again from THIS folder:")
+            print(f"       {REPO_ROOT}")
+            print("    4. Run this test again from that same folder.")
         else:
             print(f"\n  The bot returned an error (HTTP {exc.code}).")
     except urllib.error.URLError:
