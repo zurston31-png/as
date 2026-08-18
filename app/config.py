@@ -15,6 +15,15 @@ class Settings(BaseSettings):
     # --- Core ---
     APP_ENV: str = "development"
     LIVE_TRADING: bool = False
+    # A second, explicit gate on top of LIVE_TRADING for execution backends
+    # whose sign-and-submit path has never been exercised against a funded
+    # wallet from this codebase's own tests (Jupiter, the EVM/1inch backend)
+    # - the math around them is unit-tested, the actual on-chain submission
+    # cannot be without moving real money. Requiring a second flag means
+    # arming one of those paths is a deliberate second decision, not a side
+    # effect of flipping LIVE_TRADING alone. Not required for EXECUTION_BACKEND=cex
+    # (ccxt is a mature, widely-used library, not code written for this project).
+    LIVE_EXECUTION_ACKNOWLEDGED: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     DATABASE_URL: str = "sqlite:///./data/memecoin_bot.db"
@@ -40,6 +49,11 @@ class Settings(BaseSettings):
     EVM_CHAIN_ID: int = 1
     ONEINCH_API_KEY: Optional[str] = None
     ONEINCH_API_BASE: str = "https://api.1inch.dev/swap/v6.0"
+    # An ERC20 stablecoin address (e.g. USDC) on your target chain. Required
+    # for live EVM execution - trades are sized in USD and this is what gets
+    # swapped against; native-currency-denominated buying isn't supported
+    # (see app/execution/evm.py for why).
+    EVM_QUOTE_TOKEN_ADDRESS: Optional[str] = None
 
     CEX_EXCHANGE: str = "binance"
     CEX_API_KEY: Optional[str] = None

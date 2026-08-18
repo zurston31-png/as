@@ -291,26 +291,46 @@ Set via `CHAIN` + `EXECUTION_BACKEND` in `.env`. **Whenever `LIVE_TRADING=false`
 the paper engine is used no matter what `EXECUTION_BACKEND` says** — this is
 enforced in `app/execution/__init__.py`, not just a default.
 
-- **`jupiter`** (Solana, default) — **live submission is currently
-  disabled.** Quoting works and paper trading is unaffected, but the entry
-  price was computed from raw base units, mixing USDC's 6 decimals with the
-  token's. That is only correct for a 6-decimal token; Solana memecoins
-  commonly use 9, and the resulting stop-loss and take-profit would be wrong
-  by a factor of 1000 — closing every position on the first monitor tick at a
-  fabricated profit. Rather than leave that armed, live submission returns an
-  explanatory error. Fixing it means tracking quantity in whole tokens and
-  price in USD while still passing base units to the swap; see the comment in
-  `app/execution/jupiter.py`.
+- **`jupiter`** (Solana, default) — quote, sign, and submit are all
+  implemented (`app/execution/jupiter.py`). A past version of this file
+  computed entry price from raw base units, mixing USDC's 6 decimals with
+  the token's own — correct only for a 6-decimal token, and Solana
+  memecoins commonly use 9, so the stop-loss/take-profit derived from it
+  would be wrong by 1000x. Fixed: every conversion between raw base units
+  and whole tokens/USD now goes through the mint's actual on-chain decimals
+  (`get_mint_decimals`, via Solana RPC `getAccountInfo`, cached per mint).
+  That math is unit-tested against mocked RPC responses
+  (`tests/test_jupiter_decimals.py`) but the sign-and-submit path itself has
+  never been exercised against a funded wallet or mainnet — see
+  `LIVE_EXECUTION_ACKNOWLEDGED` below before using this for real money.
 - **`cex`** — Binance/Coinbase/Kraken/etc. via `ccxt`. Use an API key with
-  **trade-only** permission (never enable withdrawals on it).
-- **`cex`** is currently the only backend wired for live execution.
-
-- **`evm_1inch`** — **experimental / incomplete.** Quote path works; actual
-  transaction signing is not implemented (see
-  `app/execution/evm.py` docstring). Do not enable `LIVE_TRADING` with
-  `CHAIN=evm` until you've completed and tested a signer.
+  **trade-only** permission (never enable withdrawals on it). The only
+  backend built on a mature, widely-used execution library rather than
+  code written for this project — `LIVE_EXECUTION_ACKNOWLEDGED` is not
+  required for it.
+- **`evm_1inch`** — quote, sign, and submit are implemented
+  (`app/execution/evm.py`) using standard EIP-1559 gas pricing and
+  `eth_getTransactionCount` nonce management. Deliberately does **not**
+  implement mempool resubmission/replacement or MEV-aware submission —
+  building those properly is its own project, and the file says so rather
+  than presenting a bare-minimum signer as production-grade. Same
+  never-tested-against-real-funds caveat as Jupiter applies; see
+  `LIVE_EXECUTION_ACKNOWLEDGED` below.
 - **`paper`** — force paper fills even with `LIVE_TRADING=true`, useful for
   extended live-data paper testing.
+
+### The second live-execution gate
+
+`LIVE_EXECUTION_ACKNOWLEDGED=true` is required in **addition** to
+`LIVE_TRADING=true` before `jupiter` or `evm_1inch` will submit anything —
+not because they're known to be broken (unlike the old Jupiter decimals
+bug, which returned an explanatory error instead of trading), but because
+their sign-and-submit code has only ever been run against mocked responses
+in this repo's tests, never a funded wallet. Requiring a second, separate
+flag makes arming one of them a deliberate decision rather than a side
+effect of flipping `LIVE_TRADING` alone. Read the relevant file yourself
+first, and start with a small trade size. `cex` doesn't need this flag —
+it's built on `ccxt`, a mature library this project didn't write.
 
 Live-only dependencies (`solders`, `solana`, `ccxt`, `web3`) live in
 `requirements-live.txt` so the base install for paper trading stays light:
