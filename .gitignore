@@ -15,7 +15,10 @@ env/
 !.env.example
 
 # runtime data
-data/
+# Anchored with a leading slash so this only matches the runtime database
+# directory at the repo root. An unanchored "data/" also matched app/data/,
+# silently excluding the entire market-data package from commits.
+/data/
 *.db
 *.db-journal
 *.sqlite
