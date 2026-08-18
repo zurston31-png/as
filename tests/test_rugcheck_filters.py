@@ -6,6 +6,7 @@ from app.rugcheck.filters import estimate_dev_holder_pct, evaluate_token_securit
 def _clean_solana_response(**overrides) -> dict:
     data = {
         "mint_authority": None,
+        "freeze_authority": None,
         "is_honeypot": "0",
         "creator_address": "DevWallet111",
         "lp_holders": [{"address": "LP1", "percent": "0.9", "is_locked": "1", "tag": "locked"}],
@@ -105,6 +106,72 @@ def test_thin_market_liquidity_still_rejected():
     report = evaluate_token_security("solana", data, liquidity_usd=50.0)
     assert not report.passed
     assert any("liquidity too thin" in r for r in report.reasons)
+
+
+def test_missing_mint_field_is_not_treated_as_safe():
+    """Regression: an absent mint field used to read as 'mint disabled' and
+    pass. Absence must be reported as unverifiable, never as safe."""
+    data = _clean_solana_response()
+    data.pop("mint_authority")
+
+    report = evaluate_token_security("solana", data)
+    assert not report.passed
+    assert report.mint_disabled is not True
+    assert any("could not verify" in r and "mint authority" in r for r in report.reasons)
+
+
+def test_missing_freeze_field_is_not_treated_as_safe():
+    data = _clean_solana_response()
+    data.pop("freeze_authority")
+
+    report = evaluate_token_security("solana", data)
+    assert not report.passed
+    assert any("could not verify" in r and "freeze authority" in r for r in report.reasons)
+
+
+def test_active_freeze_authority_rejected_on_solana():
+    """An active freeze authority lets the issuer block your sells - the
+    Solana equivalent of a honeypot."""
+    data = _clean_solana_response(freeze_authority="FreezeAuthorityAddr111")
+    report = evaluate_token_security("solana", data)
+    assert not report.passed
+    assert any("freeze authority is still active" in r for r in report.reasons)
+
+
+def test_solana_object_shaped_flags_are_understood():
+    """GoPlus uses {"status": "1"} objects on Solana as well as scalars."""
+    data = _clean_solana_response()
+    data.pop("mint_authority")
+    data["mintable"] = {"status": "0", "authority": []}
+    data["freezable"] = {"status": "0", "authority": []}
+
+    report = evaluate_token_security("solana", data, liquidity_usd=250_000.0)
+    assert report.passed, report.reasons
+    assert report.mint_disabled is True
+
+    data["mintable"] = {"status": "1", "authority": ["SomeAuthority"]}
+    bad = evaluate_token_security("solana", data, liquidity_usd=250_000.0)
+    assert not bad.passed
+    assert any("mint authority is still active" in r for r in bad.reasons)
+
+
+def test_missing_honeypot_field_is_not_treated_as_safe_on_evm():
+    report = evaluate_token_security("ethereum", {"is_mintable": "0"}, liquidity_usd=250_000.0)
+    assert not report.passed
+    assert any("could not verify" in r and "honeypot status" in r for r in report.reasons)
+
+
+def test_read_flag_distinguishes_absent_from_false():
+    from app.rugcheck.filters import read_flag
+
+    assert read_flag({}, "missing") is None                      # absent
+    assert read_flag({"a": None}, "a") is False                  # renounced
+    assert read_flag({"a": "0"}, "a") is False
+    assert read_flag({"a": "1"}, "a") is True
+    assert read_flag({"a": "SomeAddress"}, "a") is True          # live authority
+    assert read_flag({"a": {"status": "1"}}, "a") is True
+    assert read_flag({"a": {"status": "0"}}, "a") is False
+    assert read_flag({"b": "1"}, "a", "b") is True               # fallback key
 
 
 def test_estimate_dev_holder_pct_prefers_creator_address():

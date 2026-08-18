@@ -40,6 +40,50 @@ def _to_float(value, default=None):
         return default
 
 
+def read_flag(data: dict, *keys: str) -> bool | None:
+    """Read a boolean-ish scanner flag across the shapes GoPlus uses.
+
+    Returns None when none of `keys` is present, so a field this code does
+    not know the name of is never silently read as "safe". Using
+    data.get(key) directly is what made the Solana mint-authority and
+    honeypot checks pass vacuously: an absent key looked identical to an
+    explicit "no".
+
+    Handles the EVM scalar shape ("1"/"0"), the Solana object shape
+    ({"status": "1", ...}), and authority fields where null means the
+    authority has been renounced.
+    """
+    for key in keys:
+        if key not in data:
+            continue
+        value = data[key]
+
+        if isinstance(value, dict):
+            status = value.get("status")
+            if status is not None:
+                return str(status) == "1"
+            authority = value.get("authority")
+            if authority is not None:
+                return bool(authority)
+            continue
+
+        if value is None:
+            return False  # e.g. "mint_authority": null -> renounced
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, list):
+            return len(value) > 0
+
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes"):
+            return True
+        if text in ("0", "false", "no", "", "null", "none"):
+            return False
+        # A non-empty authority address, or any other truthy string.
+        return True
+    return None
+
+
 def estimate_dev_holder_pct(data: dict) -> float | None:
     """Best-effort 'dev wallet' identification: prefer the address GoPlus
     reports as the token creator; fall back to the largest holder that
@@ -84,29 +128,44 @@ def evaluate_token_security(
             reasons=["token not found by security scanner (too new / unindexed / invalid address)"],
         )
 
-    # --- mint authority / ownership ---
-    if chain.lower() == "solana":
-        mintable_field = data.get("mintable")
-        if isinstance(mintable_field, dict):
-            mintable = str(mintable_field.get("status")) == "1"
-        else:
-            mintable = data.get("mint_authority") not in (None, "", "null")
-    else:
-        mintable = str(data.get("is_mintable", "0")) == "1"
+    is_solana = chain.lower() == "solana"
+    unverifiable: list[str] = []
 
-    report.mint_disabled = not mintable
-    report.ownership_renounced = not mintable
-    if mintable:
+    # --- mint authority / ownership ---
+    if is_solana:
+        mintable = read_flag(data, "mintable", "mint_authority")
+    else:
+        mintable = read_flag(data, "is_mintable")
+
+    report.mint_disabled = mintable is False
+    report.ownership_renounced = mintable is False
+    if mintable is None:
+        unverifiable.append("mint authority")
+    elif mintable:
         reasons.append("mint authority is still active (supply can be inflated)")
 
-    # --- honeypot ---
-    is_honeypot = str(data.get("is_honeypot", "0")) == "1" or honeypot_flag
+    # --- honeypot / sellability ---
+    # On Solana an active freeze authority is the equivalent trap: the issuer
+    # can freeze your account so the position can never be sold.
+    scanner_honeypot = read_flag(data, "is_honeypot")
+    if is_solana:
+        freezable = read_flag(data, "freezable", "freeze_authority")
+        if freezable is None:
+            unverifiable.append("freeze authority")
+        elif freezable:
+            reasons.append("freeze authority is still active (issuer can block you from selling)")
+        # Solana responses need not carry is_honeypot; freeze authority covers it.
+        if scanner_honeypot is None:
+            scanner_honeypot = False
+    elif scanner_honeypot is None:
+        unverifiable.append("honeypot status")
+
+    is_honeypot = bool(scanner_honeypot) or honeypot_flag
     report.is_honeypot = is_honeypot
     if is_honeypot:
         reasons.append("token flagged as a honeypot (may not be sellable)")
 
-    cannot_sell_all = str(data.get("cannot_sell_all", "0")) == "1"
-    if cannot_sell_all:
+    if read_flag(data, "cannot_sell_all"):
         reasons.append("scanner reports the position cannot be fully sold")
 
     # --- liquidity locked ---
@@ -149,6 +208,15 @@ def evaluate_token_security(
     elif liquidity_usd < settings.MIN_LIQUIDITY_USD:
         reasons.append(
             f"liquidity too thin: ${liquidity_usd:,.0f} (minimum ${settings.MIN_LIQUIDITY_USD:,.0f})"
+        )
+
+    if unverifiable:
+        # Never treat "the scanner didn't tell us" as "it's fine". Naming the
+        # specific checks also reveals which field names this scanner uses
+        # for a given chain — run DIAGNOSE_TOKEN to see the raw response.
+        reasons.append(
+            "could not verify " + ", ".join(unverifiable)
+            + " - scanner returned no recognised field for this chain"
         )
 
     report.reasons = reasons
