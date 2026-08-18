@@ -172,6 +172,7 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
         token_address=signal.token_address,
         chain=signal.chain,
         qty=result.filled_qty,
+        initial_qty=result.filled_qty,
         entry_price=result.avg_price,
         stop_loss=sl,
         take_profit=tp,
@@ -180,6 +181,7 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
         dev_wallet_pct_at_entry=report.dev_wallet_pct,
         entry_trade_id=trade.id,
         opened_at=now,
+        highest_price_since_entry=result.avg_price,
     )
     db.add(position)
 
@@ -250,6 +252,85 @@ async def close_position(db: Session, position: models.Position, reason: str, si
         trade, extra=f"closed ({reason}) | exit ${result.avg_price:.8f} | P&L ${pnl_usd:,.2f} ({pnl_pct * 100:+.1f}%)"
     )
 
+    await _check_halt_conditions(db)
+
+
+async def partial_close_position(
+    db: Session, position: models.Position, fraction: float, reason: str, signal_id: int | None = None
+) -> None:
+    """Sell part of an open position and leave the rest open.
+
+    `fraction` is applied to the position's CURRENT qty. Today only one
+    partial exit ever fires per position (app/exits/manager.py sets
+    `partial_exit_taken` after the first), so current qty and initial qty
+    are the same at the moment this runs - but reading current qty rather
+    than `initial_qty` keeps this correct if that ever changes to allow more
+    than one partial exit.
+    """
+    fraction = max(0.0, min(fraction, 1.0))
+    qty_to_sell = position.qty * fraction
+    if qty_to_sell <= 0:
+        return
+
+    instrument = _instrument_id(position.symbol, position.token_address)
+    client = get_execution_client()
+    result = await client.sell(instrument, qty_to_sell, settings.SLIPPAGE_BPS)
+
+    trade = models.Trade(
+        signal_id=signal_id,
+        symbol=position.symbol,
+        token_address=position.token_address,
+        chain=position.chain,
+        side="sell",
+        mode=position.mode,
+        size_usd=qty_to_sell * position.entry_price,
+    )
+
+    if not result.success:
+        trade.status = models.TradeStatus.FAILED.value
+        trade.error = result.error
+        db.add(trade)
+        await notifier.notify_error(f"Partial sell failed for {position.symbol} ({reason}): {result.error}")
+        return
+
+    proceeds = result.filled_qty * result.avg_price
+    cost_basis = result.filled_qty * position.entry_price
+    pnl_usd = proceeds - cost_basis
+    pnl_pct = (result.avg_price / position.entry_price - 1) if position.entry_price else 0.0
+    now = dt.datetime.now(dt.timezone.utc)
+
+    trade.status = models.TradeStatus.FILLED.value
+    trade.qty = result.filled_qty
+    trade.exit_price = result.avg_price
+    trade.pnl_usd = pnl_usd
+    trade.pnl_pct = pnl_pct
+    trade.tx_hash = result.tx_hash
+    trade.closed_at = now
+    db.add(trade)
+
+    position.qty -= result.filled_qty
+    position.realized_pnl_usd = (position.realized_pnl_usd or 0.0) + pnl_usd
+
+    portfolio.adjust_cash_balance(db, proceeds)
+
+    await notifier.notify_trade_executed(
+        trade,
+        extra=(
+            f"partial exit ({reason}) | {fraction * 100:.0f}% sold | "
+            f"exit ${result.avg_price:.8f} | P&L ${pnl_usd:,.2f} ({pnl_pct * 100:+.1f}%)"
+        ),
+    )
+
+    if position.qty <= 1e-9:
+        position.status = models.PositionStatus.CLOSED.value
+        position.closed_at = now
+        position.close_reason = reason
+
+    await _check_halt_conditions(db)
+
+
+async def _check_halt_conditions(db: Session) -> None:
+    """Run the post-trade halt checks shared by full and partial exits."""
     daily = risk_manager.evaluate_daily_loss(db)
     if not daily.allowed:
         halt_trading(db, daily.reason)

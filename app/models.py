@@ -118,7 +118,13 @@ class Trade(Base):
 
 
 class Position(Base):
-    """An open (or recently closed) holding. One row per round-trip trade."""
+    """An open (or recently closed) holding. One row per round-trip trade.
+
+    `qty` shrinks in place when a partial profit-take fires; `initial_qty`
+    keeps the original size around so "sell 50% of the position" always
+    means 50% of what was actually bought, not 50% of whatever is left
+    after an earlier partial exit.
+    """
 
     __tablename__ = "positions"
 
@@ -127,6 +133,7 @@ class Position(Base):
     token_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
     chain: Mapped[str] = mapped_column(String(32), default="solana")
     qty: Mapped[float] = mapped_column(Float)
+    initial_qty: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_price: Mapped[float] = mapped_column(Float)
     stop_loss: Mapped[float] = mapped_column(Float)
     take_profit: Mapped[float] = mapped_column(Float)
@@ -137,6 +144,19 @@ class Position(Base):
     close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     opened_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- smart-exit tracking (Stage 4) ---
+    highest_price_since_entry: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trailing_stop_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    break_even_applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    partial_exit_taken: Mapped[bool] = mapped_column(Boolean, default=False)
+    realized_pnl_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    # Rolling buffer of [iso_timestamp, price] samples taken on each monitor
+    # tick, capped in app/exits/manager.py. This is what momentum-loss and
+    # trend-reversal exits read — the bot has no live intrabar OHLCV feed for
+    # memecoins wired in yet, so these are built from actual observed prices
+    # during the trade rather than invented indicator data.
+    recent_prices: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class RiskEvent(Base):

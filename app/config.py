@@ -62,6 +62,29 @@ class Settings(BaseSettings):
     MAX_DAILY_TRADES: int = 8
     TRADE_COOLDOWN_SECONDS: int = 900
 
+    # --- Smart exits (Stage 4) ---
+    TRAILING_STOP_ENABLED: bool = True
+    TRAILING_STOP_ACTIVATION_PCT: float = 0.15   # start trailing once up this much from entry
+    TRAILING_STOP_DISTANCE_PCT: float = 0.10     # trail this far behind the peak price
+
+    BREAK_EVEN_ENABLED: bool = True
+    BREAK_EVEN_TRIGGER_PCT: float = 0.10         # move stop to break-even once up this much
+    BREAK_EVEN_BUFFER_PCT: float = 0.01          # lock in a hair of profit, not exactly $0
+
+    PARTIAL_TAKE_PROFIT_ENABLED: bool = True
+    PARTIAL_TAKE_PROFIT_TRIGGER_PCT: float = 0.20  # take partial profit once up this much
+    PARTIAL_TAKE_PROFIT_SIZE_PCT: float = 0.50     # fraction of the position sold
+
+    MOMENTUM_EXIT_ENABLED: bool = True
+    MOMENTUM_EXIT_LOOKBACK_SAMPLES: int = 6        # recent monitor-tick samples considered
+    MOMENTUM_EXIT_DROP_PCT: float = 0.12           # exit if price fell this much off the recent peak
+
+    TREND_REVERSAL_EXIT_ENABLED: bool = True
+    TREND_REVERSAL_MIN_SAMPLES: int = 5            # samples needed before checking for reversal
+
+    TIME_BASED_EXIT_ENABLED: bool = False
+    MAX_POSITION_AGE_HOURS: float = 48.0
+
     # --- Rug-pull / scam filter ---
     RUGCHECK_ENABLED: bool = True
     MAX_TOP10_HOLDER_PCT: float = 0.35

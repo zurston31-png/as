@@ -196,6 +196,41 @@ sets a persisted `trading_halted` flag, sends a Telegram/Discord alert, and
 ("Resume trading" button) or via `POST /api/halt` / `POST /api/resume`
 (Basic Auth).
 
+## Smart exits
+
+The background monitor loop (`app/monitor/position_monitor.py`) checks
+every open position on each tick against `app/exits/manager.py`, layered on
+top of the fixed stop-loss/take-profit set at entry:
+
+- **Break-even stop** — once up `BREAK_EVEN_TRIGGER_PCT`, the stop moves to
+  entry + `BREAK_EVEN_BUFFER_PCT`, so the trade can no longer turn into a
+  loser from there even if it fully reverses.
+- **Trailing stop** — once up `TRAILING_STOP_ACTIVATION_PCT`, the stop
+  starts trailing `TRAILING_STOP_DISTANCE_PCT` behind the peak price and
+  ratchets up with it; it never loosens on a pullback.
+- **Partial profit-take** — once, at `PARTIAL_TAKE_PROFIT_TRIGGER_PCT` gain,
+  sells `PARTIAL_TAKE_PROFIT_SIZE_PCT` of the position and lets the rest run
+  under the remaining rules.
+- **Momentum-loss exit** — exits if price falls `MOMENTUM_EXIT_DROP_PCT` off
+  its peak within the last `MOMENTUM_EXIT_LOOKBACK_SAMPLES` monitor ticks,
+  catching a sharp reversal faster than the trailing stop's own distance
+  would.
+- **Trend-reversal exit** — exits on two consecutive lower highs after the
+  position's peak, read from the same recent-tick samples.
+- **Time-based exit** — off by default; when enabled
+  (`TIME_BASED_EXIT_ENABLED=true`), force-exits a position after
+  `MAX_POSITION_AGE_HOURS` regardless of price.
+
+All of these are built from prices this specific position actually traded
+through since entry, not a live indicator feed — the bot doesn't have live
+OHLCV wired in for on-chain memecoins yet (see `app/data/`, which today only
+feeds the backtester). The fixed stop-loss and take-profit from the risk
+manager always take priority and fire even if every rule above is disabled.
+Every close records the exact reason (`Position.close_reason` /
+`Trade.pnl_usd`) — e.g. `"trailing stop hit at $0.00123 (peak $0.00145)"` —
+so the trade journal can show why each trade actually ended, not just that
+it did.
+
 ## Rug-pull / scam filter
 
 Runs before every buy (`app/rugcheck/filters.py`), fail-closed (missing

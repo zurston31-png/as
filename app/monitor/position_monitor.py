@@ -12,13 +12,15 @@ import logging
 from app import models
 from app.config import settings
 from app.database import SessionLocal
+from app.exits.manager import ExitManager
 from app.monitor.devwallet import check_dev_wallet_exit
 from app.services import price_feed
-from app.services.trading_service import close_position
+from app.services.trading_service import close_position, partial_close_position
 
 logger = logging.getLogger(__name__)
 
 _stop_event = asyncio.Event()
+exit_manager = ExitManager()
 
 
 async def _evaluate_position(db, pos: models.Position) -> None:
@@ -27,12 +29,14 @@ async def _evaluate_position(db, pos: models.Position) -> None:
 
     price = await price_feed.get_price_usd(pos.token_address)
     if price is not None:
-        if price <= pos.stop_loss:
-            await close_position(db, pos, reason=f"stop-loss hit at ${price:.8f}")
+        action = exit_manager.evaluate(pos, price)
+        if action.kind == "full":
+            await close_position(db, pos, reason=action.reason)
             return
-        if price >= pos.take_profit:
-            await close_position(db, pos, reason=f"take-profit hit at ${price:.8f}")
-            return
+        if action.kind == "partial":
+            await partial_close_position(db, pos, action.fraction, reason=action.reason)
+            if pos.status != models.PositionStatus.OPEN.value:
+                return
 
     exit_reason = await check_dev_wallet_exit(pos)
     if exit_reason:
