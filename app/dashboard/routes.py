@@ -12,6 +12,13 @@ from fastapi.templating import Jinja2Templates
 
 from app import models
 from app.analysis.funnel import build_funnel
+from app.analysis.calibration import HORIZONS_MINUTES, build_calibration
+from app.analysis.forward_returns import coverage as forward_coverage
+from app.analysis.research_report import build_research_report
+from app.analysis.score_distribution import build_score_distribution
+from app.analysis.stage_funnel import build_stage_funnel
+from app.pipeline import MARKET_QUALITY, SECURITY, TECHNICAL_SCORE
+from app.safety import killswitch
 from app.analysis.report import build_performance_report
 from app.analysis.token_detail import build_token_detail
 from app.analysis.trade_analytics import MIN_TRADES_FOR_A_MEANINGFUL_BUCKET
@@ -386,7 +393,15 @@ async def pipeline(request: Request, hours: float = 24.0, user: str = Depends(ch
         api_health.persist(db)
         db.commit()
 
-        funnel = build_funnel(db, window_hours=hours if hours > 0 else None)
+        window = hours if hours > 0 else None
+        funnel = build_funnel(db, window_hours=window)
+        # The stage funnel is the newer, per-token instrumented view. It
+        # sits alongside the RiskEvent-derived one rather than replacing it
+        # because the older view still covers databases recorded before the
+        # pipeline log existed, and a page that silently showed zero for
+        # that history would read as a broken scanner.
+        stages = build_stage_funnel(db, window_hours=window)
+        integrity = await killswitch.may_open_position(db)
         recent = (
             db.query(models.ScannedToken)
             .order_by(models.ScannedToken.last_evaluated_at.desc())
@@ -398,6 +413,8 @@ async def pipeline(request: Request, hours: float = 24.0, user: str = Depends(ch
             "pipeline.html",
             {
                 "funnel": funnel,
+                "stages": stages,
+                "integrity": integrity,
                 "health": [h.as_dict() for h in api_health.snapshot()],
                 "recent_tokens": recent,
                 "hours": hours,
@@ -430,8 +447,56 @@ async def api_pipeline(hours: float = 24.0, user: str = Depends(check_auth)):
     try:
         return JSONResponse({
             "funnel": build_funnel(db, window_hours=hours if hours > 0 else None).as_dict(),
+            "stages": build_stage_funnel(db, window_hours=hours if hours > 0 else None).as_dict(),
             "health": [h.as_dict() for h in api_health.snapshot()],
             "scanner_blocked": scanner_blocked_reason(),
+        })
+    finally:
+        db.close()
+
+
+@router.get("/research")
+async def research(request: Request, user: str = Depends(check_auth)):
+    """Is this strategy any good, and how would we know?
+
+    Deliberately a separate page from /performance. That one shows what the
+    portfolio DID; this one shows how much of it can be believed. Putting
+    the two on one screen makes the return the headline and the sample size
+    a footnote, which is the reading order that gets people hurt.
+    """
+    db = SessionLocal()
+    try:
+        report = build_research_report(db)
+        distributions = [
+            build_score_distribution(db, stage=stage)
+            for stage in (TECHNICAL_SCORE, MARKET_QUALITY, SECURITY)
+        ]
+        calibrations = [build_calibration(db, horizon_minutes=h) for h in HORIZONS_MINUTES]
+        return templates.TemplateResponse(
+            request,
+            "research.html",
+            {
+                "report": report,
+                "distributions": distributions,
+                "calibrations": calibrations,
+                "coverage": forward_coverage(db),
+            },
+        )
+    finally:
+        db.close()
+
+
+@router.get("/api/research")
+async def api_research(user: str = Depends(check_auth)):
+    db = SessionLocal()
+    try:
+        return JSONResponse({
+            "report": build_research_report(db).as_dict(),
+            "distribution": build_score_distribution(db).as_dict(),
+            "calibration": [
+                build_calibration(db, horizon_minutes=h).as_dict() for h in HORIZONS_MINUTES
+            ],
+            "forward_return_coverage": forward_coverage(db),
         })
     finally:
         db.close()

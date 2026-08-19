@@ -305,3 +305,101 @@ def test_token_page_shows_the_mint_as_the_identity(sample_rows):
     resp = client.get("/token/CompletelyUnknownMint999", auth=AUTH)
     assert "CompletelyUnknownMint999" in resp.text
     assert "keyed on the mint address, never the symbol" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# research page and the upgraded pipeline funnel
+# ---------------------------------------------------------------------------
+
+def test_the_research_page_renders_with_real_data():
+    """Rendering an empty page proves little - templates break on the
+    branches that only fire once there is something to show."""
+    from app import models, pipeline
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        for i in range(40):
+            pipeline.record(
+                db, stage=pipeline.TECHNICAL_SCORE, symbol=f"RS{i}",
+                token_address=f"MintRS{i}", passed=i % 4 == 0,
+                score=45.0 + i, detail={"reliable": True},
+            )
+        db.commit()
+
+        resp = client.get("/research", auth=AUTH)
+        assert resp.status_code == 200
+        assert "Validation status" in resp.text
+        assert "Score distribution" in resp.text
+        # The histogram and survival columns only render with a sample.
+        assert "≥65" in resp.text
+    finally:
+        for row in db.query(models.PipelineEvent).all():
+            db.delete(row)
+        db.commit()
+        db.close()
+
+
+def test_the_research_page_never_claims_validation_on_a_thin_record():
+    resp = client.get("/research", auth=AUTH)
+    assert resp.status_code == 200
+    assert "NOT VALIDATED" in resp.text or "INSUFFICIENT" in resp.text
+
+
+def test_the_pipeline_page_shows_the_stage_funnel_and_prescreen_breakdown():
+    from app import models, pipeline
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        for i in range(12):
+            pipeline.record(db, stage=pipeline.DISCOVERED, symbol=f"PF{i}",
+                            token_address=f"MintPF{i}", passed=True)
+            pipeline.record(
+                db, stage=pipeline.PRESCREEN, symbol=f"PF{i}",
+                token_address=f"MintPF{i}", passed=i < 2,
+                reason="liquidity below scanner minimum",
+                detail={"checks": [
+                    {"name": "liquidity", "passed": i < 2},
+                    {"name": "volume", "passed": True},
+                ]},
+            )
+        db.commit()
+
+        resp = client.get("/pipeline", auth=AUTH)
+        assert resp.status_code == 200
+        assert "Stage funnel" in resp.text
+        assert "Pre-screen breakdown" in resp.text
+        assert "liquidity" in resp.text
+        # The bottleneck must be named, not left for the reader to spot.
+        assert "bottleneck" in resp.text
+    finally:
+        for row in db.query(models.PipelineEvent).all():
+            db.delete(row)
+        db.commit()
+        db.close()
+
+
+def test_the_api_research_endpoint_is_json_safe():
+    """An all-winners record produces an infinite profit factor, and
+    Infinity is not valid JSON - this endpoint returned a 500 in exactly
+    the early state it most needs to describe."""
+    import json
+
+    resp = client.get("/api/research", auth=AUTH)
+    assert resp.status_code == 200
+    json.dumps(resp.json(), allow_nan=False)
+    assert "report" in resp.json()
+    assert "forward_return_coverage" in resp.json()
+
+
+def test_every_page_links_to_the_research_page():
+    for path in ("/", "/pipeline", "/performance", "/journal"):
+        resp = client.get(path, auth=AUTH)
+        assert resp.status_code == 200
+        assert '/research' in resp.text, f"{path} does not link to /research"
+
+
+def test_the_research_page_requires_auth():
+    assert client.get("/research").status_code == 401
+    assert client.get("/api/research").status_code == 401

@@ -52,6 +52,7 @@
     <a class="navlink" href="/">&larr; Dashboard</a>
     &nbsp;&nbsp;<a class="navlink" href="/performance">Performance</a>
     &nbsp;&nbsp;<a class="navlink" href="/journal">Journal</a>
+    &nbsp;&nbsp;<a class="navlink" href="/research">Research</a>
   </div>
 </header>
 <main>
@@ -59,6 +60,77 @@
 {% if scanner_blocked %}
 <div class="card"><div class="warn">Scanner is not running: {{ scanner_blocked }}</div></div>
 {% endif %}
+
+{% if not integrity.may_trade %}
+<div class="card">
+  <div class="warn">
+    <strong>ENTRIES BLOCKED</strong> — {{ integrity.reason }}
+    <div class="note" style="margin-top:8px">
+      Open positions are unaffected and remain managed by the monitor. The kill switch stops
+      new entries only; force-liquidating a book because a feed hiccuped would turn a data
+      problem into a realised loss.
+    </div>
+  </div>
+</div>
+{% elif integrity.disabled %}
+<div class="card">
+  <div class="warn">
+    <strong>Kill switch is OFF</strong> — integrity was not checked before entries.
+    “All checks passed” and “nobody checked” are different facts.
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Stage funnel — last {{ '%g' % hours }}h</h2>
+  <p class="note" style="margin-top:0">{{ stages.explain() }}</p>
+  {% if stages.discovered %}
+  <table style="margin-top:12px">
+    <tr>
+      <th>stage</th><th class="num">entered</th><th class="num">passed</th>
+      <th class="num">rejected</th><th class="num">pass rate</th>
+    </tr>
+    {% for st in stages.stages %}
+    <tr>
+      <td>{{ st.stage }}{% if st.stage == stages.bottleneck %} <span class="pill down">bottleneck</span>{% endif %}</td>
+      <td class="num">{{ st.entered }}</td>
+      <td class="num">{{ st.passed }}</td>
+      <td class="num">{{ st.rejected }}</td>
+      <td class="num">{% if st.pass_rate is not none %}{{ '%.1f%%' % (st.pass_rate * 100) }}{% else %}<span class="muted">no data</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    Pass rate is measured against what <em>reached</em> each stage, not against the top of the
+    funnel — “2% of discovered tokens got scored” and “80% of scored tokens passed” describe
+    different systems, and only the second says whether the threshold is the bottleneck.
+    A stage nothing reached shows “no data” rather than 0%, which would mean it rejected
+    everything.
+  </p>
+  {% else %}
+  <div class="empty">No pipeline events recorded in this window.</div>
+  {% endif %}
+
+  {% if stages.prescreen.evaluated %}
+  <h2 style="margin-top:22px">Pre-screen breakdown — {{ stages.prescreen.evaluated }} tokens</h2>
+  <table>
+    <tr><th>check</th><th class="num">passed</th><th class="num">failed</th><th class="num">pass rate</th></tr>
+    {% for c in stages.prescreen.as_dict()['checks'] %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td class="num">{{ c.passed }}</td>
+      <td class="num">{{ c.failed }}</td>
+      <td class="num">{% if c.pass_rate_pct is not none %}{{ '%.1f%%' % c.pass_rate_pct }}{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    Every check runs on every token, so counts overlap where one token failed several. This is
+    the table to tune the scanner from: “497 failed pre-screen” says nothing, “480 failed
+    liquidity” names the number to change.
+  </p>
+  {% endif %}
+</div>
 
 <div class="card">
   <h2>Funnel — last {{ '%g' % hours }}h</h2>
