@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.dashboard.routes import router as dashboard_router
+from app import backup
 from app.database import SessionLocal, init_db
 from app.early import loop as early_loop
 from app.monitor import forward_return_worker, position_monitor
@@ -35,12 +36,45 @@ _monitor_task: asyncio.Task | None = None
 _scanner_task: asyncio.Task | None = None
 _forward_task: asyncio.Task | None = None
 _early_task: asyncio.Task | None = None
+_backup_task: asyncio.Task | None = None
+
+
+async def _snapshot_forever() -> None:
+    """Take a verified snapshot every BACKUP_INTERVAL_MINUTES.
+
+    Sleeps first. Startup has just restored or opened the database and a
+    snapshot taken one second later would only duplicate the shutdown
+    snapshot from the previous run, spending a rotation slot on it.
+    """
+    interval = max(settings.BACKUP_INTERVAL_MINUTES, 1) * 60
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            backup.take_snapshot(reason="scheduled")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Never let a failed backup stop the next one from being tried.
+            logger.exception("scheduled snapshot failed - will retry next interval")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _monitor_task, _scanner_task, _forward_task, _early_task
+    global _monitor_task, _scanner_task, _forward_task, _early_task, _backup_task
+
+    # BEFORE init_db(). A wiped disk leaves no database at all, and
+    # init_db() would create an empty one - after which the restore has
+    # nothing obviously-empty to recognise and a schema it must not
+    # overwrite. Restoring first means the migration then runs over the
+    # recovered data, which is exactly the right order.
+    if backup.restore_if_empty():
+        logger.warning("recovered the database from a snapshot after an empty start")
+
     init_db()
+
+    pointless = backup.warn_if_backups_are_pointless()
+    if pointless:
+        logger.warning("BACKUPS MAY NOT SURVIVE A RESET: %s", pointless)
 
     mode = "LIVE" if settings.LIVE_TRADING else "PAPER"
     logger.info(
@@ -76,6 +110,8 @@ async def lifespan(app: FastAPI):
     _monitor_task = asyncio.create_task(position_monitor.run_forever())
     _forward_task = asyncio.create_task(forward_return_worker.run_forever())
     _early_task = asyncio.create_task(early_loop.run_forever())
+    if settings.BACKUP_ENABLED:
+        _backup_task = asyncio.create_task(_snapshot_forever())
 
     scanner_blocked = scanner_loop.scanner_blocked_reason()
     if scanner_blocked:
@@ -94,6 +130,15 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Snapshot on the way out. A graceful shutdown is the one moment the
+    # database is guaranteed quiet, and on a redeploy it is the last chance
+    # to capture everything since the previous scheduled snapshot.
+    if settings.BACKUP_ENABLED:
+        try:
+            backup.take_snapshot(reason="shutdown")
+        except Exception:
+            logger.exception("shutdown snapshot failed")
+
     position_monitor.stop()
     scanner_loop.stop()
     forward_return_worker.stop()
@@ -107,6 +152,8 @@ async def lifespan(app: FastAPI):
         _forward_task.cancel()
     if _early_task:
         _early_task.cancel()
+    if _backup_task:
+        _backup_task.cancel()
 
 
 app = FastAPI(title="Memecoin Trading Bot", lifespan=lifespan)

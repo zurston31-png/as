@@ -21,7 +21,7 @@ RUN pip install -r requirements.txt \
 COPY app ./app
 COPY scripts ./scripts
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/backups
 
 EXPOSE 8000
 

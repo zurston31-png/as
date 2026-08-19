@@ -6,11 +6,11 @@ import datetime as dt
 import secrets
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
-from app import models
+from app import backup, models
 from app.analysis.funnel import build_funnel
 from app.analysis.calibration import HORIZONS_MINUTES, build_calibration
 from app.analysis.forward_returns import coverage as forward_coverage
@@ -659,3 +659,62 @@ async def api_resume(user: str = Depends(check_auth), _csrf: None = Depends(chec
         return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# database snapshots
+# ---------------------------------------------------------------------------
+
+@router.get("/backup")
+async def backup_status(user: str = Depends(check_auth)):
+    """What snapshots exist, and whether they will survive a reset."""
+    snapshots = backup.list_snapshots()
+    return JSONResponse({
+        "enabled": settings.BACKUP_ENABLED,
+        "directory": str(backup.backup_dir()),
+        "interval_minutes": settings.BACKUP_INTERVAL_MINUTES,
+        "keep": settings.BACKUP_KEEP,
+        "restore_on_empty": settings.BACKUP_RESTORE_ON_EMPTY,
+        "warning": backup.warn_if_backups_are_pointless(),
+        "snapshots": [s.as_dict() for s in snapshots],
+        "download": "/backup/download",
+    })
+
+
+@router.post("/backup/now")
+async def backup_now(user: str = Depends(check_auth)):
+    """Take a snapshot immediately.
+
+    POST rather than GET: it writes a file and rotates old ones, so it must
+    not be something a browser prefetch or a link crawler can trigger.
+    """
+    snapshot = backup.take_snapshot(reason="manual")
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="snapshot failed - see the logs. Nothing was rotated.",
+        )
+    return JSONResponse(snapshot.as_dict())
+
+
+@router.get("/backup/download")
+async def backup_download(user: str = Depends(check_auth)):
+    """Download the newest snapshot.
+
+    The escape hatch for a host with no persistent disk: when BACKUP_DIR is
+    wiped on every deploy, pulling the file through the browser is the only
+    way the dataset leaves the box. Takes a fresh snapshot first so the
+    download is current rather than up to an hour stale.
+    """
+    snapshot = backup.snapshot_for_download()
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no snapshot available - backups may be disabled, or the database "
+                   "may not be SQLite (Postgres has its own backup tooling).",
+        )
+    return FileResponse(
+        snapshot.path,
+        media_type="application/vnd.sqlite3",
+        filename=snapshot.path.name,
+    )

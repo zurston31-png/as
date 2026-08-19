@@ -19,6 +19,10 @@ env/
 # directory at the repo root. An unanchored "data/" also matched app/data/,
 # silently excluding the entire market-data package from commits.
 /data/
+# Database snapshots. Anchored for the same reason as /data/ above, and
+# excluded because a snapshot is the entire trade history - committing one
+# would publish it and bloat the repository on every backup.
+/backups/
 *.db
 *.db-journal
 *.sqlite

@@ -15,6 +15,10 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      # Snapshots. Mounted separately from ./data on purpose: if the two
+      # shared a volume, anything that wiped the database directory would
+      # take the backups with it - which is the failure this is for.
+      - ./backups:/app/backups
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

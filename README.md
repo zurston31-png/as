@@ -1150,6 +1150,78 @@ A failed security lookup raises `LookupFailed` rather than returning empty.
 about a security screen, and collapsing them would let a provider outage
 read as a clean bill of health.
 
+## Surviving a reset
+
+The code is in git. **A month of observed forward returns is not** — the
+research dataset is the only thing here that cannot be rebuilt, and every
+INSUFFICIENT DATA verdict in `/research` is waiting on it.
+
+The bot snapshots its own database on a timer, on shutdown, and on demand,
+and restores automatically after a wipe.
+
+```bash
+python scripts/backup.py status     # what exists, and will it survive
+python scripts/backup.py now        # take one immediately
+python scripts/backup.py restore    # bring the newest one back
+```
+
+or from the dashboard: `GET /backup`, `POST /backup/now`,
+`GET /backup/download`.
+
+### The setting that decides whether any of this works
+
+```
+BACKUP_DIR=./backups
+```
+
+On Railway, Render, Fly, or a plain Heroku dyno the **entire filesystem is
+replaced on every deploy**. A snapshot written next to the database is
+wiped along with it — taken, verified, logged, and then thrown away with
+everything it was protecting. Point `BACKUP_DIR` at a mounted volume. The
+app logs a warning at startup when it looks like the backups are sitting on
+the disk they are supposed to survive.
+
+With no persistent disk at all, `GET /backup/download` is the escape hatch:
+it hands you the current database through the browser, so pull one before
+each deploy. (It reuses a snapshot younger than a minute, so refreshing the
+page cannot rotate away your backup history.)
+
+`docker compose` mounts `./backups` as its own volume, separate from
+`./data` — sharing one would mean anything that wiped the database took the
+snapshots with it.
+
+### Why a plain file copy is not what this does
+
+The bot writes continuously: the position monitor, the scanner, the
+watchlist loop and the forward-return worker all commit on their own
+schedules. `cp` on a live SQLite file produces something that opens fine
+and is corrupt in the middle — the worst possible backup, because it looks
+like it worked and only turns out to be worthless on the day it is needed.
+Snapshots use SQLite's online backup API, which copies page by page under
+the database's own locking, and **every one is `PRAGMA integrity_check`ed
+before it counts**. An unverified snapshot is a file, not a backup.
+
+Rotation runs only *after* a verified snapshot succeeds, never before —
+pruning first would mean a failed backup had already deleted one of the
+good copies it was meant to replace.
+
+### Restore is deliberately hard to trigger by accident
+
+Startup restores automatically **only** when the database is missing or has
+no tables. It will never overwrite a database that already holds rows.
+
+That guard is the point. A bot that quietly rolled its own history back to
+last night because of a transient read error would destroy exactly the data
+the snapshots exist to protect, and no amount of subsequent backing-up
+recovers it. Overwriting live data is a deliberate act:
+
+```bash
+python scripts/backup.py restore --force
+```
+
+Postgres and MySQL are left alone — they have real backup tooling, and
+half-reimplementing it here would be worse than not doing it.
+
 ## Configuration reference
 
 Every variable is documented inline in [`.env.example`](.env.example) —

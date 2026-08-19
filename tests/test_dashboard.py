@@ -488,3 +488,29 @@ def test_every_page_links_to_early_signals():
         resp = client.get(path, auth=AUTH)
         assert resp.status_code == 200
         assert "/early" in resp.text, f"{path} does not link to /early"
+
+
+# ---------------------------------------------------------------------------
+# backup endpoints
+# ---------------------------------------------------------------------------
+
+def test_backup_status_reports_where_snapshots_go():
+    resp = client.get("/backup", auth=AUTH)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "directory" in body and "snapshots" in body
+    assert body["download"] == "/backup/download"
+
+
+def test_backup_endpoints_require_auth():
+    """A snapshot is the entire research dataset. Leaving the download
+    unauthenticated would publish every trade the bot has ever made."""
+    for path in ("/backup", "/backup/download"):
+        assert client.get(path).status_code == 401
+    assert client.post("/backup/now").status_code == 401
+
+
+def test_taking_a_snapshot_is_a_post_not_a_get():
+    """It writes a file and rotates old ones, so a browser prefetch or a
+    link crawler must not be able to trigger it."""
+    assert client.get("/backup/now", auth=AUTH).status_code == 405

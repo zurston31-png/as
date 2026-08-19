@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     DATABASE_URL: str = "sqlite:///./data/memecoin_bot.db"
+
+    # --- database snapshots (app/backup.py) ---
+    # The research dataset is the only thing here that cannot be rebuilt.
+    # Code is in git; a month of observed forward returns is not.
+    BACKUP_ENABLED: bool = True
+    # WHERE THIS POINTS IS THE WHOLE POINT. A backup written next to the
+    # database dies with it on any host that replaces the filesystem on
+    # deploy. Point it at a mounted volume; the app warns at startup when
+    # it looks like it is on the same disk it is protecting against.
+    BACKUP_DIR: str = "./backups"
+    BACKUP_INTERVAL_MINUTES: int = 60
+    BACKUP_KEEP: int = 24
+    # Restore automatically when the database is missing or has no tables.
+    # Never over a database that already holds rows - see app/backup.py.
+    BACKUP_RESTORE_ON_EMPTY: bool = True
     LOG_LEVEL: str = "INFO"
 
     # --- Webhook ---
