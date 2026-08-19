@@ -111,7 +111,19 @@ class Settings(BaseSettings):
     # logged, same pattern as RUGCHECK_ENABLED=false) - entries then run on
     # the TradingView alert + rug check alone, same as before this existed.
     LIVE_SIGNAL_SCORE_ENABLED: bool = True
-    MIN_SIGNAL_SCORE_TO_ENTER: float = 75.0
+    # Measured, not guessed. The score is a weighted average of 14 factors,
+    # so it regresses toward 50 by construction and its practical ceiling is
+    # nowhere near 100. Across 120 synthetic runs spanning every regime the
+    # median was 58 and the 95th percentile 74, giving these qualifying
+    # rates: 60 -> ~43%, 65 -> ~26%, 70 -> ~10%, 75 -> ~3%, 80 -> ~1%.
+    #
+    # This defaulted to 75 (from the original spec's "only enter if score
+    # >= 75"), which turns out to be the ~97th percentile of this engine's
+    # own output - so once the rug check took its cut too, the bot traded
+    # essentially never. 65 still rejects three out of four setups, which is
+    # the "reject weak setups" intent, while letting it actually trade.
+    # Raise it if paper trading shows too many marginal entries.
+    MIN_SIGNAL_SCORE_TO_ENTER: float = 65.0
     SIGNAL_SCORE_TIMEFRAME: str = "15m"
     SIGNAL_SCORE_CANDLE_LIMIT: int = 300
     # Fewer live candles than this and the score is treated the same as no
@@ -146,7 +158,14 @@ class Settings(BaseSettings):
     SCANNER_MAX_SELL_SHARE: float = 0.70
     # Skip the first hours of a pool's life - the highest-risk rug window,
     # and too little history for the signal engine to read anyway.
-    SCANNER_MIN_TOKEN_AGE_HOURS: float = 6.0
+    #
+    # MUST be at least SIGNAL_SCORE_MIN_CANDLES x SIGNAL_SCORE_TIMEFRAME
+    # (currently 60 x 15m = 15h) or the two gates contradict each other:
+    # younger tokens clear the pre-screen and are then guaranteed to fail
+    # the score gate for lack of history, forever, while the logs look
+    # completely normal. app/startup_checks.py warns loudly if this drifts
+    # out of sync again.
+    SCANNER_MIN_TOKEN_AGE_HOURS: float = 16.0
     SCANNER_MAX_TOKEN_AGE_HOURS: float = 720.0   # 30 days; 0 disables the ceiling
     # How long before a rejected token is worth re-evaluating. Without this
     # the scanner re-analyses the same few hundred tokens every cycle.

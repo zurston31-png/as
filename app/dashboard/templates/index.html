@@ -57,6 +57,17 @@
   </div>
 </header>
 <main>
+  {% if config_warnings %}
+  <section style="border-color: rgba(245,195,68,.4);">
+    <h2 style="color: var(--amber);">⚠ Config warnings — these may stop the bot trading</h2>
+    <div style="padding: 12px 16px; font-size: 13px; line-height: 1.6;">
+      {% for w in config_warnings %}
+      <div style="margin-bottom: 8px; color: var(--amber);">• {{ w }}</div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <div class="stats">
     <div class="stat"><div class="label">Portfolio Value</div><div class="value">${{ "%.2f"|format(stats.portfolio_value) }}</div></div>
     <div class="stat"><div class="label">Total P&amp;L</div><div class="value {{ 'pos' if stats.total_pnl >= 0 else 'neg' }}">${{ "%.2f"|format(stats.total_pnl) }}</div></div>

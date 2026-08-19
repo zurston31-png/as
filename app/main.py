@@ -20,6 +20,7 @@ from app.monitor import position_monitor
 from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
 from app.security import verify_webhook_secret
+from app.startup_checks import log_config_coherence
 from app.services.reporting import send_daily_summary
 from app.services.trading_service import handle_alert
 
@@ -43,6 +44,12 @@ async def lifespan(app: FastAPI):
     )
     if settings.LIVE_TRADING:
         logger.warning("LIVE_TRADING=true — the bot WILL submit real on-chain/exchange orders.")
+
+    # Catch config combinations that make trading impossible (e.g. a score
+    # threshold above what the engine produces, or a minimum token age below
+    # the history the score needs). Silent at runtime otherwise - the bot
+    # just never trades and the logs look fine.
+    log_config_coherence()
 
     _monitor_task = asyncio.create_task(position_monitor.run_forever())
 

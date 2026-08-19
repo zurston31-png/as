@@ -18,6 +18,7 @@ from app.database import SessionLocal
 from app.risk.manager import halt_trading, is_trading_halted, resume_trading
 from app.scanner.loop import scanner_blocked_reason
 from app.services import portfolio, price_feed
+from app.startup_checks import check_config_coherence
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/dashboard/templates")
@@ -187,6 +188,10 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
             "blocked_reason": scanner_blocked_reason(),
         }
 
+        # Surfaced on the page, not just at boot: "why isn't it trading" is
+        # asked while looking at the dashboard, not while reading startup logs.
+        config_warnings = check_config_coherence()
+
         all_trades = db.query(models.Trade).all()
         portfolio_stats = compute_portfolio_stats(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
         equity_curve = compute_equity_curve(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
@@ -246,6 +251,7 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
                 "equity_svg": equity_svg,
                 "scanned_tokens": scanned_tokens,
                 "scanner": scanner_summary,
+                "config_warnings": config_warnings,
             },
         )
     finally:

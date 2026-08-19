@@ -455,6 +455,50 @@ your actual deployment (step 4/4) before trusting this gate's verdicts
 unattended; it fetches the exact same pool-resolution and OHLCV endpoints
 this module uses and tells you plainly if the shape doesn't match.
 
+## "It never trades" — how to diagnose
+
+```bash
+python scripts/why_no_trades.py
+```
+
+Reads the bot's own database and walks the funnel — config sanity, halt
+state, what was discovered, where candidates died, what the risk gates
+rejected — and names the most likely cause. Read-only; it never places or
+cancels anything.
+
+This exists because "the bot never trades" and "the market had no good
+setups" produce *identical* logs, and the shipped defaults used to be
+silently incapable of trading at all. Two of them contradicted each other:
+
+- `MIN_SIGNAL_SCORE_TO_ENTER` was **75**, which measurement showed is
+  roughly the **97th percentile** of what the scoring engine actually
+  produces. The score is a weighted average of 14 factors, so it regresses
+  toward 50 by construction and its practical ceiling is nowhere near 100.
+  Only ~8% of setups reached 75 *before* the rug check took its cut.
+- `SCANNER_MIN_TOKEN_AGE_HOURS` was **6**, but the score gate needs
+  `SIGNAL_SCORE_MIN_CANDLES × SIGNAL_SCORE_TIMEFRAME` = 60 × 15m = **15
+  hours** of history. Every token between those two ages passed the
+  pre-screen and was then guaranteed to fail the score gate, forever.
+
+Both are fixed (65 and 16h), and `app/startup_checks.py` now validates
+config coherence at boot — logging loud warnings and surfacing them on the
+dashboard — so this class of mistake is loud instead of silent. The checks
+only ever warn; they never override a value you set deliberately.
+
+Measured threshold behavior, if you want to tune it:
+
+| Threshold | Setups qualifying | Of those, genuinely trending |
+|---|---|---|
+| 60 | ~53% | 89% |
+| **65 (default)** | **~40%** | **89%** |
+| 70 | ~21% | 93% |
+| 75 | ~8% | 100% |
+
+Raise it toward 70 if paper trading shows too many marginal entries; lower
+it toward 60 for more activity. A regression test
+(`test_shipped_defaults_can_actually_trade`) fails if a future change
+pushes the defaults back into never-trading territory.
+
 ## Operational notes
 
 **Upgrading an existing deployment.** `init_db()` runs an additive schema
