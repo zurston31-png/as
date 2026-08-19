@@ -397,6 +397,26 @@ def restore_if_empty() -> bool:
     return restore(snapshot)
 
 
+def _nearest_existing(path: Path) -> Path:
+    """The closest ancestor of `path` that exists on disk.
+
+    Neither directory necessarily exists yet. On a fresh install the
+    database directory is created by init_db() and the backup directory by
+    the first snapshot, so on the very first run both are absent - and
+    stat() on a missing path raises, which the caller reads as "cannot
+    tell" and stays silent. That is the wrong answer for the one run where
+    the warning matters most.
+
+    A directory that does not exist will be created on the filesystem of
+    its nearest existing ancestor, so that ancestor's device is the right
+    thing to compare. The walk terminates at the root, which always exists.
+    """
+    for candidate in (path, *path.parents):
+        if candidate.exists():
+            return candidate
+    return Path(path.anchor or "/")
+
+
 def warn_if_backups_are_pointless() -> str | None:
     """Is BACKUP_DIR going to be wiped by the same event as the database?
 
@@ -424,11 +444,13 @@ def warn_if_backups_are_pointless() -> str | None:
         return None                      # the operator has said otherwise
 
     directory = backup_dir()
-    probe = directory if directory.exists() else directory.parent
     try:
         if os.path.ismount(directory):
             return None                  # a mounted volume: exactly right
-        same_device = probe.stat().st_dev == source.parent.stat().st_dev
+        same_device = (
+            _nearest_existing(directory).stat().st_dev
+            == _nearest_existing(source.parent).stat().st_dev
+        )
     except OSError:
         return None                      # cannot tell; do not cry wolf
 

@@ -297,6 +297,34 @@ def test_the_shipped_defaults_warn(monkeypatch):
     assert backup.warn_if_backups_are_pointless() is not None
 
 
+def test_the_warning_fires_before_either_directory_exists(tmp_path, monkeypatch):
+    """The first run is when this matters most, and it is the run where
+    neither directory is there yet.
+
+    data/ is created by init_db() and backups/ by the first snapshot, so on
+    a fresh checkout both are absent. stat() on a missing path raises, and
+    the caller reads that as "cannot tell" and says nothing. CI found this
+    the hard way: the repository gitignores data/, so the runner had no
+    such directory and the warning silently did not fire.
+    """
+    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{tmp_path}/data/bot.db")
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setattr(settings, "BACKUP_ENABLED", True)
+    monkeypatch.setattr(settings, "BACKUP_DIR_IS_PERSISTENT", False)
+
+    assert not (tmp_path / "data").exists()
+    assert not (tmp_path / "backups").exists()
+    assert backup.warn_if_backups_are_pointless() is not None
+
+
+def test_the_nearest_existing_ancestor_walk_terminates(tmp_path):
+    """It has to return something for a path many levels below anything
+    real - the root always exists, so the walk cannot fall off the end."""
+    deep = tmp_path / "a" / "b" / "c" / "d" / "e"
+    assert backup._nearest_existing(deep) == tmp_path
+    assert backup._nearest_existing(tmp_path) == tmp_path
+
+
 def test_an_operator_can_say_the_disk_persists(sandbox, monkeypatch):
     """The heuristic is deliberately noisy, so it needs an off switch -
     otherwise the first thing anyone on a real VPS does is stop reading
