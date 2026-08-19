@@ -21,6 +21,7 @@ from app.execution import get_execution_client
 from app.identity import describe, instrument_key
 from app.notifications.notifier import notifier
 from app.risk.manager import RiskManager, halt_trading
+from app.safety import killswitch
 from app.rugcheck.filters import run_rug_checks
 from app.schemas import TradingViewAlert
 from app.data.staleness import check_snapshot_freshness
@@ -167,6 +168,21 @@ def _stage(db: Session, signal: models.Signal, stage: str, passed: bool,
 
 
 async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
+    # The global gate first: before asking whether THIS trade is within
+    # limits, ask whether the bot's own state can be trusted to answer
+    # that. Sizing a position off a wrong cash balance, or off prices that
+    # stopped updating an hour ago, produces trades that look fine and a
+    # record nobody can interpret. See app/safety/killswitch.py.
+    integrity = await killswitch.may_open_position(db)
+    if not integrity.may_trade:
+        _stage(db, signal, pipeline.RISK, False, f"kill switch: {integrity.reason}")
+        db.add(models.RiskEvent(
+            event_type="kill_switch_blocked", details=integrity.reason, signal_id=signal.id
+        ))
+        logger.error("entry blocked by the kill switch: %s", integrity.reason)
+        await notifier.notify_rejection(signal, f"kill switch: {integrity.reason}")
+        return
+
     gate = risk_manager.check_can_open_position(
         db, symbol=signal.symbol, token_address=signal.token_address
     )

@@ -184,6 +184,25 @@ class Settings(BaseSettings):
     FORWARD_RETURN_RESOLVE_INTERVAL_SECONDS: int = 300
     FORWARD_RETURN_BATCH_LIMIT: int = 200
 
+    # --- global entry kill switch (app/safety/killswitch.py) ---
+    # Stops NEW positions when the bot cannot trust its own state. It never
+    # closes existing ones: halting entries is safe, force-liquidating a
+    # book because a price feed hiccuped turns a data problem into a
+    # realised loss.
+    # The two failures this exists for are the silent ones - trading on a
+    # feed that stopped updating, and sizing positions off a cash balance
+    # that is wrong. Both look completely normal in the logs.
+    KILL_SWITCH_ENABLED: bool = True
+    # A critical data source that has not succeeded in this long is treated
+    # as down, not merely slow.
+    KILL_SWITCH_MAX_DATA_AGE_SECONDS: float = 900.0
+    KILL_SWITCH_MAX_CONSECUTIVE_FAILURES: int = 5
+    # Position size is a fraction of portfolio value, and portfolio value
+    # includes open positions. Once this share of the book is being valued
+    # at cost (because no live price came back), that fraction is computed
+    # from a number that no longer means anything.
+    KILL_SWITCH_MAX_STALE_VALUATION_SHARE: float = 0.50
+
     # --- Automatic token scanner (Stage 9) ---
     # Finds newly listed tokens itself instead of waiting for a TradingView
     # alert to name one. Discovered tokens go through the SAME pipeline a

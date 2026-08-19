@@ -154,3 +154,38 @@ def _reset_api_health():
     api_health.reset()
     yield
     api_health.reset()
+
+
+@pytest.fixture(autouse=True)
+def _coherent_cash_ledger():
+    """Keep the test database's books balanced before each test.
+
+    Many tests fabricate Trade rows directly to set up a scenario, without
+    going through the buy/sell path that moves the cash ledger. That leaves
+    the ledger genuinely inconsistent with the trade record - and the
+    kill switch (app/safety/killswitch.py) correctly refuses to open
+    positions when the books do not balance, so every downstream
+    integration test would fail on an artefact of the fixtures.
+
+    Syncing the ledger here rather than DISABLING the kill switch is the
+    deliberate choice: the switch stays armed in every integration test, so
+    a regression that breaks accounting or staleness in the real code path
+    is still caught. Only the fixture-made discrepancy is removed.
+
+    Accounting itself is covered directly by tests/test_kill_switch.py,
+    which builds its own inconsistencies and asserts they are detected.
+    """
+    from app.safety import reconcile as reconcile_mod
+    from app.services import portfolio
+
+    db = SessionLocal()
+    try:
+        result = reconcile_mod.reconcile(db)
+        if not result.balanced:
+            portfolio.set_state(db, portfolio.CASH_KEY, result.expected_cash)
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+    yield

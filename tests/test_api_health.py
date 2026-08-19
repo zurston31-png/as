@@ -231,11 +231,21 @@ def test_reloading_an_empty_table_is_a_no_op(db):
 # it must never change what the bot does
 # ---------------------------------------------------------------------------
 
-def test_health_tracking_never_influences_trading():
-    """A degraded API must not relax a gate. Health that fed back into
-    trading decisions would be a way for a broken upstream to lower the
-    bar, which is exactly backwards - so nothing outside the dashboard,
-    scripts and the HTTP helper may read this module."""
+def test_health_tracking_can_only_ever_tighten_a_gate():
+    """A degraded API must never RELAX a gate.
+
+    Health feeding back into trading would let a broken upstream lower the
+    bar, which is exactly backwards. The constraint is directional, not a
+    blanket ban on reading this module: blocking entries because a price
+    feed went silent is the correct use, and refusing to let any gate see
+    health at all would mean the bot cheerfully trades on data that stopped
+    updating an hour ago.
+
+    So the allowlist below names every module permitted to read health, and
+    each entry states which direction it may push. The behavioural half of
+    this invariant - that a degraded service blocks and never unblocks - is
+    asserted in tests/test_kill_switch.py.
+    """
     import subprocess
 
     out = subprocess.run(
@@ -245,8 +255,9 @@ def test_health_tracking_never_influences_trading():
     allowed = {
         "app/services/api_health.py",     # itself
         "app/services/http.py",           # records
-        "app/dashboard/routes.py",        # reports
+        "app/dashboard/routes.py",        # reports, does not decide
         "app/main.py",                    # loads at startup
         "app/models.py",                  # defines the table
+        "app/safety/killswitch.py",       # BLOCKS entries only - never permits one
     }
     assert set(out) <= allowed, f"api_health reached somewhere it must not: {set(out) - allowed}"
