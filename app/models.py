@@ -419,7 +419,12 @@ class ForwardReturn(Base):
     # than recomputed, because the whole point of ablation is to ask what
     # the engine could have known when it decided - re-extracting features
     # later would score the token on candles that had not happened yet.
-    early_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # none_as_null so a row with no features is SQL NULL rather than the JSON
+    # value `null`. Without it `early_features IS NOT NULL` matches every row
+    # and any count of "rows that stored features" is silently the row count.
+    early_features: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
 
 
 class TokenObservation(Base):

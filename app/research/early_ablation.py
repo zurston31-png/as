@@ -154,11 +154,7 @@ def load_samples(db: Session, *, horizon_minutes: int) -> list[Sample]:
     """
     rows = (
         db.query(models.ForwardReturn)
-        .filter(
-            models.ForwardReturn.horizon_minutes == horizon_minutes,
-            models.ForwardReturn.return_pct.isnot(None),
-            models.ForwardReturn.early_features.isnot(None),
-        )
+        .filter(*_usable_filter(horizon_minutes))
         .all()
     )
     samples = []
@@ -167,6 +163,35 @@ def load_samples(db: Session, *, horizon_minutes: int) -> list[Sample]:
         if features.features:
             samples.append(Sample(features=features, return_pct=row.return_pct))
     return samples
+
+
+def _usable_filter(horizon_minutes: int):
+    return (
+        models.ForwardReturn.horizon_minutes == horizon_minutes,
+        models.ForwardReturn.return_pct.isnot(None),
+        models.ForwardReturn.early_features.isnot(None),
+    )
+
+
+def count_samples(db: Session, *, horizon_minutes: int) -> int:
+    """How many rows the ablation will ACTUALLY use.
+
+    Exists so the readiness report cannot promise a sample the ablation
+    then declines. Counting in SQL alone gets this wrong twice over: a
+    Python None written to a JSON column becomes the JSON value `null`
+    rather than SQL NULL, and an empty `{}` payload is non-null but parses
+    to no features. Both are excluded here by parsing, exactly as
+    load_samples does.
+
+    Only the one column is fetched, so this stays cheaper than loading the
+    rows even though it does the same parse.
+    """
+    rows = (
+        db.query(models.ForwardReturn.early_features)
+        .filter(*_usable_filter(horizon_minutes))
+        .all()
+    )
+    return sum(1 for (payload,) in rows if EarlyFeatures.from_dict(payload).features)
 
 
 def separation_pct(samples: list[Sample], weights: dict[str, float], cost_pct: float) -> float | None:

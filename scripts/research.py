@@ -9,6 +9,7 @@
     python scripts/research.py ablate      <symbol>    which factors earn their weight
     python scripts/research.py sweep       <symbol> <param> <v1,v2,...>
 
+    python scripts/research.py readiness               how much data is still needed
     python scripts/research.py early                   the Early Signal Engine
     python scripts/research.py early-ablate            which early factors earn it
     python scripts/research.py early-walkforward       is the early threshold stable?
@@ -217,6 +218,23 @@ def cmd_sweep(args) -> int:
     return 0
 
 
+def cmd_readiness(args) -> int:
+    from app.analysis.readiness import build_readiness
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" DATA READINESS - what can be answered yet, and what is still accumulating")
+        print(RULE)
+        report = build_readiness(db, horizon_minutes=args.horizon)
+        print(report.table())
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
 def cmd_early(args) -> int:
     from app.analysis.early_calibration import (
         build_early_calibration, build_false_positives, build_lead_time,
@@ -373,6 +391,11 @@ def main() -> int:
     p.add_argument("param", help="BacktestConfig field name")
     p.add_argument("values", help="comma-separated values, e.g. 60,62.5,65,67.5,70")
     p.set_defaults(func=cmd_sweep)
+
+    p = sub.add_parser("readiness", help="how much data each question still needs")
+    p.add_argument("--horizon", type=int, default=60)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_readiness)
 
     p = sub.add_parser("early", help="Early Signal Engine: calibration, lead time, false positives")
     p.add_argument("--horizons", type=int, nargs="+", default=[15, 30, 60, 120],

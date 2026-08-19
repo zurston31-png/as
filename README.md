@@ -1014,6 +1014,45 @@ edge exists. The full accounting is in
 the items that are honestly INSUFFICIENT DATA and the two defects that
 made the engine unreachable until integration tests caught them.
 
+### Collecting the data — the actual next step
+
+Nothing in this section is validated, and none of it can be until the bot
+has run. The way to change that is to leave it running in paper mode and
+let the dataset build. **Do not tune anything first** — every threshold in
+here is a prior, and adjusting a prior to make early results look better
+is how a system stops being testable.
+
+```bash
+python scripts/init_db.py
+uvicorn app.main:app --port 8000          # leave it running
+```
+
+Requires outbound access to `api.dexscreener.com` (discovery) and
+`api.geckoterminal.com` (candles). Both are read-only public endpoints,
+and no key, wallet or private key is involved.
+
+Then check progress whenever you like:
+
+```bash
+python scripts/research.py readiness
+```
+
+```
+  early calibration      [##########..............]     13/30  ~26h at the current rate
+  lead time              [######..................]      8/30  ~44h at the current rate
+  early ablation         [#####...................]      9/40  ~3.4 days at the current rate
+```
+
+Each row turns to `READY` exactly when the tool beside it stops saying
+INSUFFICIENT DATA — the report counts what the tool itself will accept, so
+it cannot promise an answer that then fails to appear. The ETAs
+extrapolate the rate observed so far; a quiet weekend halves it. They are
+for deciding when to look again, not dates.
+
+The sample floors are not adjustable from the report, deliberately. Below
+them the answers are noise, and a shortcut past them would be the most
+damaging thing in this repository.
+
 ### What the engine genuinely cannot see
 
 Named explicitly in `app/early/features.py` rather than approximated:
