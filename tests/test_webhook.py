@@ -20,7 +20,7 @@ def _patch_network(monkeypatch):
         return 0.001234
 
     async def fake_rug_check(chain, token_address):
-        return RugCheckReport(passed=True, reasons=[], liquidity_usd=50000.0, dev_wallet_pct=0.05)
+        return RugCheckReport(passed=True, reasons=[], liquidity_usd=150_000.0, dev_wallet_pct=0.05)
 
     async def fake_signal_score(chain, token_address, symbol):
         return SignalScore(

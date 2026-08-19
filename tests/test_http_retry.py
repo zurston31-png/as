@@ -9,7 +9,9 @@ import httpx
 import pytest
 
 import app.services.http as http_helper
-from app.services.http import MAX_ATTEMPTS, _backoff_seconds, _parse_retry_after, get_json
+from app.services.http import (
+    MAX_ATTEMPTS, _backoff_seconds, _parse_retry_after, get_json, post_json,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -60,6 +62,22 @@ def _client_returning(responses):
         async def __aexit__(self, *a):
             return False
 
+        async def request(self, method, url, headers=None, params=None, json=None):
+            # app/services/http.py issues every call through request(), so one
+            # retry/backoff/health loop covers GET and POST alike. Delegates to
+            # whichever verb method this double defines, passing only the
+            # arguments that method actually accepts.
+            import inspect
+
+            fn = self.post if method == "POST" else self.get
+            accepted = inspect.signature(fn).parameters
+            kwargs = {
+                name: value
+                for name, value in (("headers", headers), ("params", params), ("json", json))
+                if name in accepted and value is not None
+            }
+            return await fn(url, **kwargs)
+
         async def get(self, url, headers=None, params=None):
             index = min(calls["n"], len(responses) - 1)
             calls["n"] += 1
@@ -67,6 +85,9 @@ def _client_returning(responses):
             if isinstance(result, Exception):
                 raise result
             return result
+
+        async def post(self, url, headers=None, params=None, json=None):
+            return await self.get(url, headers=headers, params=params)
 
     return FakeAsyncClient, calls
 
@@ -193,3 +214,105 @@ def test_backoff_never_exceeds_the_cap():
     from app.services.http import MAX_BACKOFF_SECONDS
 
     assert all(_backoff_seconds(n) <= MAX_BACKOFF_SECONDS for n in range(1, 12))
+
+
+# ---------------------------------------------------------------------------
+# POST: retrying one is not automatically safe
+# ---------------------------------------------------------------------------
+
+async def test_a_non_idempotent_post_is_not_retried_after_a_network_error(monkeypatch):
+    """A POST that failed mid-flight may already have been processed.
+
+    Repeating it can submit the same thing twice, and nothing in the
+    failure tells you which happened. Not retrying is the fail-safe
+    direction, and it is the default so a caller that has not thought
+    about it gets the cautious policy.
+    """
+    client, calls = _client_returning([httpx.ConnectError("dropped")])
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    assert await post_json("https://example.test", json={"x": 1}) is None
+    assert calls["n"] == 1, "a non-idempotent POST was retried after a network error"
+
+
+async def test_a_non_idempotent_post_still_retries_a_rate_limit(monkeypatch):
+    """429 is the one response that says the server explicitly declined to
+    process the request, so repeating it cannot duplicate anything - and
+    rate limiting is what these callers actually hit."""
+    client, calls = _client_returning([_Response(429), _Response(200, {"ok": True})])
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    assert await post_json("https://example.test", json={"x": 1}) == {"ok": True}
+    assert calls["n"] == 2
+
+
+async def test_a_non_idempotent_post_does_not_retry_a_503(monkeypatch):
+    """Ambiguous: the server may have processed it and then failed to
+    reply. A GET would retry this; a POST must not."""
+    client, calls = _client_returning([_Response(503)])
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    assert await post_json("https://example.test", json={"x": 1}) is None
+    assert calls["n"] == 1
+
+
+async def test_an_idempotent_post_retries_like_a_get(monkeypatch):
+    """A quote, an eth_call, an unsigned-transaction build: running it
+    twice changes nothing, so it gets the full retry policy."""
+    client, calls = _client_returning([_Response(503), httpx.ConnectError("x"), _Response(200, {"ok": 1})])
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+
+    assert await post_json("https://example.test", json={"x": 1}, idempotent=True) == {"ok": 1}
+    assert calls["n"] == 3
+
+
+# ---------------------------------------------------------------------------
+# a mapped status is an answer, not an outage
+# ---------------------------------------------------------------------------
+
+async def test_a_mapped_status_returns_its_value_and_counts_as_healthy(monkeypatch):
+    """A 404 from a token-report API means "not indexed", which is
+    information. Treating it as a failure would mark a working provider
+    unhealthy every time it was asked about an unknown token."""
+    from app.services import api_health
+
+    client, calls = _client_returning([_Response(404)])
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    recorded = []
+    monkeypatch.setattr(api_health, "record_success", lambda service: recorded.append(service))
+
+    sentinel = object()
+    result = await get_json(
+        "https://example.test", service="rugcheck_xyz", on_status={404: sentinel}
+    )
+
+    assert result is sentinel
+    assert calls["n"] == 1, "a mapped status must not be retried"
+    assert recorded == ["rugcheck_xyz"]
+
+
+# ---------------------------------------------------------------------------
+# nothing bypasses the wrapper
+# ---------------------------------------------------------------------------
+
+def test_no_module_opens_its_own_http_client():
+    """Six modules used to, and every one of them was a gap.
+
+    A raw client gets no backoff, so a rate limit on a SECURITY scanner
+    became an immediate failure; and it never registers with
+    app/services/api_health.py, so the kill switch could not tell a dead
+    provider from a quiet market. Both are invisible until the day they
+    matter, which is why this is a test and not a convention.
+    """
+    import pathlib
+
+    offenders = []
+    for path in pathlib.Path("app").rglob("*.py"):
+        if path == pathlib.Path("app/services/http.py"):
+            continue     # the wrapper itself
+        if "httpx.AsyncClient" in path.read_text():
+            offenders.append(str(path))
+
+    assert offenders == [], (
+        "these modules bypass the shared retry/health wrapper: " + ", ".join(offenders)
+    )

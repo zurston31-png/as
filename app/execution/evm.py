@@ -49,6 +49,7 @@ import logging
 import httpx
 
 from app.config import settings
+from app.services import http
 from app.execution.base import ExecutionClient, SwapResult
 from app.services import price_feed
 
@@ -114,16 +115,19 @@ async def get_erc20_decimals(token_address: str, rpc_url: str | None = None) -> 
     if not rpc_url:
         raise ValueError("EVM_RPC_URL not configured")
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(
-            rpc_url,
-            json={
-                "jsonrpc": "2.0", "id": 1, "method": "eth_call",
-                "params": [{"to": token_address, "data": ERC20_DECIMALS_SELECTOR}, "latest"],
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    # idempotent: eth_call is a read against a block. Repeating it changes
+    # no state, so it retries on network errors like a GET would.
+    data = await http.post_json(
+        rpc_url,
+        json={
+            "jsonrpc": "2.0", "id": 1, "method": "eth_call",
+            "params": [{"to": token_address, "data": ERC20_DECIMALS_SELECTOR}, "latest"],
+        },
+        timeout=10, label=f"evm rpc decimals {token_address}", service="evm_rpc",
+        idempotent=True,
+    )
+    if data is None:
+        raise ValueError(f"could not read decimals for {token_address}: RPC did not answer")
 
     result_hex = data.get("result")
     if not result_hex or result_hex == "0x":
@@ -138,21 +142,22 @@ async def _get_1inch_swap_tx(src: str, dst: str, amount: int, from_address: str,
     if not settings.ONEINCH_API_KEY:
         raise ValueError("ONEINCH_API_KEY is not set - api.1inch.dev requires an API key")
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(
-            f"{settings.ONEINCH_API_BASE}/{settings.EVM_CHAIN_ID}/swap",
-            params={
-                "src": src,
-                "dst": dst,
-                "amount": str(amount),
-                "from": from_address,
-                "slippage": slippage_bps / 100,  # 1inch wants a percent, not bps
-                "disableEstimate": "true",
-            },
-            headers={"Authorization": f"Bearer {settings.ONEINCH_API_KEY}"},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    data = await http.get_json(
+        f"{settings.ONEINCH_API_BASE}/{settings.EVM_CHAIN_ID}/swap",
+        params={
+            "src": src,
+            "dst": dst,
+            "amount": str(amount),
+            "from": from_address,
+            "slippage": slippage_bps / 100,  # 1inch wants a percent, not bps
+            "disableEstimate": "true",
+        },
+        headers={"Authorization": f"Bearer {settings.ONEINCH_API_KEY}"},
+        timeout=20, label="1inch swap", service="oneinch",
+    )
+    if data is None:
+        raise http.LookupFailed("1inch did not return swap calldata")
+    return data
 
 
 class EvmExecutionClient(ExecutionClient):
@@ -182,7 +187,7 @@ class EvmExecutionClient(ExecutionClient):
         try:
             src_decimals = await get_erc20_decimals(src)
             dst_decimals = await get_erc20_decimals(dst)
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
             return SwapResult(success=False, error=f"could not read token decimals: {exc}")
 
         w3 = AsyncWeb3(AsyncHTTPProvider(settings.EVM_RPC_URL))
@@ -241,7 +246,7 @@ class EvmExecutionClient(ExecutionClient):
             return SwapResult(success=False, error=str(exc))
         try:
             quote_decimals = await get_erc20_decimals(quote_token)
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
             return SwapResult(success=False, error=f"could not read decimals for quote token: {exc}")
 
         amount_units = to_base_units(usd_amount, quote_decimals)
@@ -254,7 +259,7 @@ class EvmExecutionClient(ExecutionClient):
             return SwapResult(success=False, error=str(exc))
         try:
             instrument_decimals = await get_erc20_decimals(instrument)
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
             return SwapResult(success=False, error=f"could not read decimals for {instrument}: {exc}")
 
         amount_units = to_base_units(qty, instrument_decimals)

@@ -1069,6 +1069,87 @@ missing-data budget; above `MAX_UNAVAILABLE_WEIGHT` (40%) the whole score
 is marked unreliable. It is never silently replaced with a zero or an
 average.
 
+## Two more things between a signal and a position
+
+Both of these were built, tested, and then left disconnected — the modules
+passed their unit tests while protecting nothing in the running bot.
+
+### Data cross-check — when two sources disagree, don't trade
+
+The DexScreener snapshot and the security scanner both report a pool's
+liquidity, and both readings are already in hand by the time the buy path
+needs one. When they disagree beyond tolerance, **at least one is wrong and
+there is no way to tell which.** The dangerous instinct is to pick the
+convenient number — the higher liquidity permits a bigger position — which
+is selection bias with extra steps, and it biases every result toward
+trading more. So the trade is skipped and the disagreement logged with both
+values.
+
+When they agree, sizing still uses the **more conservative** figure, never
+an average. Agreement within 30% leaves a real gap, and the thinner pool is
+what decides the cost of getting out.
+
+Liquidity only, deliberately. The only second "price" available is the one
+the alert fired at, which is not another provider's reading of the same
+instant — a memecoin routinely moves more than any sane tolerance between
+the alert and the evaluation, so comparing them would reject constantly on
+normal movement. That is a staleness check, and staleness has its own gate.
+
+### Correlation risk — five memecoins are not five positions
+
+The per-token and total exposure caps are both satisfied by a book that is
+really *one bet at five times the intended size*. This caps the bet.
+
+The gate and the report deliberately disagree about unmeasured pairs:
+
+| | unmeasured pair | why |
+|---|---|---|
+| **Report** (dashboard) | counted as fully correlated | a book whose correlations are unknown must not be *described* as diversified |
+| **Gate** (blocks a trade) | ignored | on a fresh install every pair is unmeasured, so blocking would refuse a second position forever — and never collect the data proving otherwise |
+
+That is not the check being softened. Describing risk should assume the
+worst; refusing a trade needs a reason. A risk check that halts all trading
+before measuring anything is indistinguishable from a broken bot, and the
+sensible-looking response is to switch it off — which is worse than not
+having it.
+
+Return history comes from the position monitor, which already fetches a
+price for every open position on every pass and used to discard it. It is
+the only price history the bot has for tokens it *holds*: the early engine
+watches candidates, and a candidate stops being watched the moment it
+becomes a position.
+
+```
+CORRELATION_RISK_ENABLED=true
+MAX_CORRELATED_CLUSTER_PCT=0.30
+CROSS_CHECK_ENABLED=true
+CROSS_CHECK_LIQUIDITY_TOLERANCE=0.30
+```
+
+## Every outbound call goes through one wrapper
+
+`app/services/http.py` owns retry, backoff, `Retry-After`, and API-health
+recording. Nine modules use it and nothing else opens its own client —
+enforced by a test, because a raw client gets no backoff (so a rate limit
+on a *security* scanner becomes an immediate failure) and never registers
+with the health tracker (so the kill switch cannot tell a dead provider
+from a quiet market). Both are invisible until the day they matter.
+
+POST is not simply GET with a body. A GET can always be repeated; a POST
+that times out may already have been processed, and repeating it can submit
+the same thing twice:
+
+| | retries on |
+|---|---|
+| `get_json` | any transient status, any network error |
+| `post_json(idempotent=True)` | same — for endpoints that only *build* or *read* (a quote, an `eth_call`, an unsigned transaction) |
+| `post_json()` **default** | **429 only** — the one response that says the server definitely did not process the request |
+
+A failed security lookup raises `LookupFailed` rather than returning empty.
+"We checked and found nothing" and "we could not check" are different facts
+about a security screen, and collapsing them would let a provider outage
+read as a clean bill of health.
+
 ## Configuration reference
 
 Every variable is documented inline in [`.env.example`](.env.example) —

@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.exits.manager import ExitManager
 from app.monitor.devwallet import check_dev_wallet_exit
+from app.early import watchlist
 from app.services import price_feed
 from app.services.trading_service import close_position, partial_close_position
 
@@ -29,6 +30,13 @@ async def _evaluate_position(db, pos: models.Position) -> None:
 
     price = await price_feed.get_price_usd(pos.token_address)
     if price is not None:
+        # Keep the reading. This loop is the only place the bot observes a
+        # token it HOLDS - the early engine watches candidates, and a
+        # candidate stops being watched the moment it becomes a position.
+        # Correlation risk (app/risk/correlation.py) has no other source of
+        # return history for the open book.
+        watchlist.store_price_point(db, pos.symbol, pos.token_address, price)
+
         action = exit_manager.evaluate(pos, price)
         if action.kind == "full":
             await close_position(db, pos, reason=action.reason)

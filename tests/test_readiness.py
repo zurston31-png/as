@@ -210,3 +210,89 @@ def test_the_report_never_suggests_lowering_a_threshold(clean_db):
     for phrase in ("lower the", "reduce the threshold", "min_bucket_sample=", "instead of 30"):
         assert phrase not in text
     assert "not negotiable" in text
+
+
+# ---------------------------------------------------------------------------
+# the early-look valve
+# ---------------------------------------------------------------------------
+
+def _rejected_score(db, score):
+    from app import pipeline
+
+    db.add(models.PipelineEvent(
+        stage=pipeline.TECHNICAL_SCORE, symbol="T", token_address="M",
+        chain="solana", passed=False, score=score, reason="below threshold",
+        occurred_at=dt.datetime.now(dt.timezone.utc),
+    ))
+
+
+@pytest.fixture()
+def clean_events(clean_db):
+    for row in clean_db.query(models.PipelineEvent).all():
+        clean_db.delete(row)
+    clean_db.commit()
+    yield clean_db
+    for row in clean_db.query(models.PipelineEvent).all():
+        clean_db.delete(row)
+    clean_db.commit()
+
+
+def test_the_early_look_valve_splits_rejections_at_the_floor(clean_events):
+    from app.analysis.readiness import early_look_coverage
+    from app.config import settings
+
+    floor = settings.MIN_SIGNAL_SCORE_TO_ENTER - settings.EARLY_SIGNAL_TECHNICAL_MARGIN
+    for _ in range(3):
+        _rejected_score(clean_events, floor + 5)      # shown to the early engine
+    for _ in range(7):
+        _rejected_score(clean_events, floor - 5)      # dropped before it
+    clean_events.commit()
+
+    coverage = early_look_coverage(clean_events)
+    assert coverage.rejected == 10
+    assert coverage.admitted == 3
+    assert coverage.dropped == 7
+    assert coverage.admitted_share == pytest.approx(0.3)
+
+
+def test_a_starving_margin_says_so(clean_events):
+    """The margin is the valve on the early dataset. If it is shut, early
+    calibration will take far longer than the ETA suggests, and the report
+    has to say that rather than let the ETA quietly mislead."""
+    from app.analysis.readiness import early_look_coverage
+    from app.config import settings
+
+    floor = settings.MIN_SIGNAL_SCORE_TO_ENTER - settings.EARLY_SIGNAL_TECHNICAL_MARGIN
+    _rejected_score(clean_events, floor + 1)
+    for _ in range(99):
+        _rejected_score(clean_events, floor - 1)
+    clean_events.commit()
+
+    note = early_look_coverage(clean_events).note()
+    assert "starving the early dataset" in note
+
+
+def test_a_margin_that_filters_nothing_says_so_too(clean_events):
+    from app.analysis.readiness import early_look_coverage
+    from app.config import settings
+
+    floor = settings.MIN_SIGNAL_SCORE_TO_ENTER - settings.EARLY_SIGNAL_TECHNICAL_MARGIN
+    for _ in range(20):
+        _rejected_score(clean_events, floor + 1)
+    clean_events.commit()
+
+    assert "barely filtering" in early_look_coverage(clean_events).note()
+
+
+def test_passing_candidates_are_not_counted_as_rejections(clean_events):
+    from app import pipeline
+    from app.analysis.readiness import early_look_coverage
+
+    clean_events.add(models.PipelineEvent(
+        stage=pipeline.TECHNICAL_SCORE, symbol="T", token_address="M",
+        chain="solana", passed=True, score=90.0, reason="cleared",
+        occurred_at=dt.datetime.now(dt.timezone.utc),
+    ))
+    clean_events.commit()
+
+    assert early_look_coverage(clean_events).rejected == 0

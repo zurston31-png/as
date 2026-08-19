@@ -10,11 +10,15 @@ API: https://api.rugcheck.xyz/v1/tokens/{mint}/report
 """
 import logging
 
-import httpx
 
 from app.config import settings
+from app.services import http
 
 logger = logging.getLogger(__name__)
+
+# Sentinel for "the API answered, and it has never heard of this token".
+# A plain {} could not be told apart from a transport failure.
+_NOT_INDEXED = object()
 
 
 # Send an explicit User-Agent. Some public APIs sit behind a WAF that
@@ -35,13 +39,17 @@ async def fetch_token_report(mint: str) -> dict:
     server failure.
     """
     url = f"{settings.RUGCHECK_API_BASE}/tokens/{mint}/report"
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        resp = await client.get(url, headers=HEADERS)
-        if resp.status_code == 404:
-            logger.info("RugCheck has no record of %s", mint)
-            return {}
-        resp.raise_for_status()
-        data = resp.json()
+    data = await http.get_json(
+        url, headers=HEADERS, timeout=20,
+        label=f"rugcheck.xyz {mint}", service="rugcheck_xyz",
+        on_status={404: _NOT_INDEXED},
+    )
+    if data is _NOT_INDEXED:
+        logger.info("RugCheck has no record of %s", mint)
+        return {}
+    if data is None:
+        # Distinct from the 404 above: that was an answer, this is silence.
+        raise http.LookupFailed(f"RugCheck did not answer for {mint}")
 
     if not isinstance(data, dict):
         logger.warning("RugCheck returned a %s for %s, expected an object", type(data).__name__, mint)

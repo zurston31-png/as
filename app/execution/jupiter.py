@@ -29,6 +29,7 @@ import logging
 import httpx
 
 from app.config import settings
+from app.services import http
 from app.execution.base import ExecutionClient, SwapResult
 
 logger = logging.getLogger(__name__)
@@ -70,16 +71,19 @@ async def get_mint_decimals(mint: str, rpc_url: str | None = None) -> int:
         return USDC_DECIMALS
 
     rpc_url = rpc_url or settings.SOLANA_RPC_URL
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(
-            rpc_url,
-            json={
-                "jsonrpc": "2.0", "id": 1, "method": "getAccountInfo",
-                "params": [mint, {"encoding": "jsonParsed"}],
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    # idempotent: getAccountInfo is a read. Repeating it changes nothing,
+    # so it retries on network errors like a GET would.
+    data = await http.post_json(
+        rpc_url,
+        json={
+            "jsonrpc": "2.0", "id": 1, "method": "getAccountInfo",
+            "params": [mint, {"encoding": "jsonParsed"}],
+        },
+        timeout=10, label=f"solana rpc decimals {mint}", service="solana_rpc",
+        idempotent=True,
+    )
+    if data is None:
+        raise ValueError(f"could not read decimals for mint {mint}: RPC did not answer")
 
     try:
         decimals = data["result"]["value"]["data"]["parsed"]["info"]["decimals"]
@@ -109,26 +113,29 @@ class JupiterExecutionClient(ExecutionClient):
         self.quote_mint = settings.QUOTE_MINT
 
     async def get_price(self, instrument: str) -> float | None:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{self.price_base}/price", params={"ids": instrument})
-            resp.raise_for_status()
-            data = resp.json()
+        data = await http.get_json(
+            f"{self.price_base}/price", params={"ids": instrument},
+            timeout=10, label=f"jupiter price {instrument}", service="jupiter",
+        )
+        if data is None:
+            return None
         entry = (data.get("data") or {}).get(instrument)
         return float(entry["price"]) if entry else None
 
     async def _get_quote(self, input_mint: str, output_mint: str, amount: int, slippage_bps: int) -> dict:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{self.base}/quote",
-                params={
-                    "inputMint": input_mint,
-                    "outputMint": output_mint,
-                    "amount": int(amount),
-                    "slippageBps": slippage_bps,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
+        quote = await http.get_json(
+            f"{self.base}/quote",
+            params={
+                "inputMint": input_mint,
+                "outputMint": output_mint,
+                "amount": int(amount),
+                "slippageBps": slippage_bps,
+            },
+            timeout=15, label="jupiter quote", service="jupiter",
+        )
+        if quote is None:
+            raise http.LookupFailed("Jupiter did not return a quote")
+        return quote
 
     async def _execute_swap(self, quote: dict, input_decimals: int, output_decimals: int) -> SwapResult:
         if not settings.LIVE_TRADING:
@@ -152,19 +159,23 @@ class JupiterExecutionClient(ExecutionClient):
 
         keypair = Keypair.from_base58_string(settings.SOLANA_PRIVATE_KEY)
 
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                f"{self.base}/swap",
-                json={
-                    "quoteResponse": quote,
-                    "userPublicKey": str(keypair.pubkey()),
-                    "wrapAndUnwrapSol": True,
-                    "dynamicComputeUnitLimit": True,
-                    "prioritizationFeeLamports": "auto",
-                },
-            )
-            resp.raise_for_status()
-            swap_data = resp.json()
+        # idempotent: /swap BUILDS an unsigned transaction, it does not
+        # submit one. Nothing reaches the chain until the signed bytes are
+        # sent separately, so asking twice cannot double-spend.
+        swap_data = await http.post_json(
+            f"{self.base}/swap",
+            json={
+                "quoteResponse": quote,
+                "userPublicKey": str(keypair.pubkey()),
+                "wrapAndUnwrapSol": True,
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto",
+            },
+            timeout=20, label="jupiter swap build", service="jupiter",
+            idempotent=True,
+        )
+        if swap_data is None:
+            return SwapResult(success=False, error="Jupiter did not return a swap transaction")
 
         tx_bytes = base64.b64decode(swap_data["swapTransaction"])
         unsigned_tx = VersionedTransaction.from_bytes(tx_bytes)
@@ -183,13 +194,13 @@ class JupiterExecutionClient(ExecutionClient):
     async def buy(self, instrument: str, usd_amount: float, slippage_bps: int) -> SwapResult:
         try:
             output_decimals = await get_mint_decimals(instrument)
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
             return SwapResult(success=False, error=f"could not read decimals for {instrument}: {exc}")
 
         amount_units = to_base_units(usd_amount, USDC_DECIMALS)
         try:
             quote = await self._get_quote(self.quote_mint, instrument, amount_units, slippage_bps)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, http.LookupFailed) as exc:
             return SwapResult(success=False, error=f"Jupiter quote failed: {exc}")
         if "error" in quote:
             return SwapResult(success=False, error=f"Jupiter quote error: {quote['error']}")
@@ -198,13 +209,13 @@ class JupiterExecutionClient(ExecutionClient):
     async def sell(self, instrument: str, qty: float, slippage_bps: int) -> SwapResult:
         try:
             input_decimals = await get_mint_decimals(instrument)
-        except (httpx.HTTPError, ValueError) as exc:
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
             return SwapResult(success=False, error=f"could not read decimals for {instrument}: {exc}")
 
         amount_units = to_base_units(qty, input_decimals)
         try:
             quote = await self._get_quote(instrument, self.quote_mint, amount_units, slippage_bps)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, http.LookupFailed) as exc:
             return SwapResult(success=False, error=f"Jupiter quote failed: {exc}")
         if "error" in quote:
             return SwapResult(success=False, error=f"Jupiter quote error: {quote['error']}")

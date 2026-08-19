@@ -60,6 +60,10 @@ HISTORY = "HISTORY"
 TECHNICAL_SCORE = "TECHNICAL_SCORE"
 MARKET_QUALITY = "MARKET_QUALITY"
 SECURITY = "SECURITY"
+# Two independent sources agreeing about the token's liquidity and price.
+# Runs after SECURITY because it reads the security scanner's own liquidity
+# figure as the second opinion.
+DATA_QUALITY = "DATA_QUALITY"
 RISK = "RISK"
 PAPER_EXECUTION = "PAPER_EXECUTION"
 OPEN_POSITION = "OPEN_POSITION"
@@ -77,6 +81,7 @@ STAGE_ORDER: tuple[str, ...] = (
     TECHNICAL_SCORE,
     MARKET_QUALITY,
     SECURITY,
+    DATA_QUALITY,
     PAPER_EXECUTION,
     OPEN_POSITION,
     EXIT,

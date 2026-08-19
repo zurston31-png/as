@@ -8,9 +8,9 @@ in `RugCheckResult` / logs against the current GoPlus docs first.
 """
 import logging
 
-import httpx
 
 from app.config import settings
+from app.services import http
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +33,39 @@ def _headers() -> dict:
     return headers
 
 
+async def _security(url: str, token_address: str, key: str) -> dict:
+    """One GoPlus lookup through the shared retry/health wrapper.
+
+    Raises LookupFailed rather than returning {} when the API cannot be
+    reached. The caller distinguishes "no record" from "could not check"
+    in the audit trail, and collapsing the two would let a provider outage
+    read as a clean bill of health for the token.
+    """
+    data = await http.get_json(
+        url,
+        params={"contract_addresses": token_address},
+        headers=_headers(),
+        label=f"goplus {token_address}",
+        service="goplus",
+    )
+    if data is None:
+        raise http.LookupFailed(f"GoPlus did not answer for {token_address}")
+    return (data.get("result") or {}).get(key, {})
+
+
 async def fetch_evm_token_security(chain: str, token_address: str) -> dict:
     chain_id = EVM_CHAIN_IDS.get(chain.lower(), str(settings.EVM_CHAIN_ID))
-    url = f"{settings.GOPLUS_API_BASE}/token_security/{chain_id}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url, params={"contract_addresses": token_address}, headers=_headers())
-        resp.raise_for_status()
-        data = resp.json()
-    return (data.get("result") or {}).get(token_address.lower(), {})
+    return await _security(
+        f"{settings.GOPLUS_API_BASE}/token_security/{chain_id}",
+        token_address, token_address.lower(),
+    )
 
 
 async def fetch_solana_token_security(token_address: str) -> dict:
-    url = f"{settings.GOPLUS_API_BASE}/solana/token_security"
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url, params={"contract_addresses": token_address}, headers=_headers())
-        resp.raise_for_status()
-        data = resp.json()
-    return (data.get("result") or {}).get(token_address, {})
+    return await _security(
+        f"{settings.GOPLUS_API_BASE}/solana/token_security",
+        token_address, token_address,
+    )
 
 
 async def fetch_token_security(chain: str, token_address: str) -> dict:

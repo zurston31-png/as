@@ -96,6 +96,28 @@ class Settings(BaseSettings):
     PORTFOLIO_STARTING_BALANCE_USD: float = 1000.0
     MAX_EXPOSURE_PER_TOKEN_PCT: float = 0.10
     MAX_TOTAL_EXPOSURE_PCT: float = 0.60
+    # --- correlation risk (app/risk/book.py) ---
+    # Five memecoins are not five independent positions. The per-token and
+    # total exposure caps above are both satisfied by a book that is really
+    # one bet at five times the intended size; this caps the bet itself.
+    CORRELATION_RISK_ENABLED: bool = True
+    # Largest share of the portfolio allowed in one MEASURABLY correlated
+    # cluster. Only pairs with enough overlapping observations and a
+    # correlation at or above 0.70 count - an unmeasured pair is reported
+    # but never blocks, because on a fresh install every pair is unmeasured
+    # and blocking on that would stop the bot opening a second position
+    # before it could ever collect the data proving otherwise.
+    MAX_CORRELATED_CLUSTER_PCT: float = 0.30
+    # --- data cross-check (app/data/cross_check.py) ---
+    # Two providers reporting different liquidity for the same token means
+    # one of them is wrong, and there is no way to tell which. Sizing off
+    # the wrong one costs the position, so the trade is skipped instead.
+    CROSS_CHECK_ENABLED: bool = True
+    # Require a second source to have answered at all. Off by default: a
+    # provider being down is a reason to be careful, not automatically a
+    # reason to stop trading, and the disagreement check still applies.
+    CROSS_CHECK_REQUIRE_TWO_SOURCES: bool = False
+    CROSS_CHECK_LIQUIDITY_TOLERANCE: float = 0.30
     MAX_CONSECUTIVE_LOSSES: int = 4
     MAX_DAILY_TRADES: int = 8
     TRADE_COOLDOWN_SECONDS: int = 900

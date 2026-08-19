@@ -77,7 +77,13 @@ def make_market_snapshot(**overrides):
     now = _dt.datetime.now(_dt.timezone.utc)
     defaults = dict(
         price_usd=0.005,
-        liquidity_usd=250_000.0,
+        # Matches the liquidity the rug-check stubs report for the same
+        # token. The cross-check gate compares those two numbers, so a
+        # fixture that described one token with two different pool depths
+        # would fail every integration test - and would have been quietly
+        # wrong before the gate existed, since price-impact sizing read one
+        # of them while market quality read the other.
+        liquidity_usd=150_000.0,
         volume_24h_usd=400_000.0,
         buys_24h=1_200,
         sells_24h=900,

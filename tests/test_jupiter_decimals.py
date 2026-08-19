@@ -59,6 +59,10 @@ async def test_get_mint_decimals_parses_a_realistic_rpc_response(monkeypatch):
     calls = []
 
     class FakeResponse:
+        # app/services/http.py inspects status_code before calling
+        # raise_for_status, so a double without one never gets that far.
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -90,6 +94,22 @@ async def test_get_mint_decimals_parses_a_realistic_rpc_response(monkeypatch):
         async def __aexit__(self, *a):
             return False
 
+        async def request(self, method, url, headers=None, params=None, json=None):
+            # app/services/http.py issues every call through request(), so one
+            # retry/backoff/health loop covers GET and POST alike. Delegates to
+            # whichever verb method this double defines, passing only the
+            # arguments that method actually accepts.
+            import inspect
+
+            fn = self.post if method == "POST" else self.get
+            accepted = inspect.signature(fn).parameters
+            kwargs = {
+                name: value
+                for name, value in (("headers", headers), ("params", params), ("json", json))
+                if name in accepted and value is not None
+            }
+            return await fn(url, **kwargs)
+
         async def post(self, url, json):
             calls.append((url, json))
             return FakeResponse()
@@ -106,6 +126,10 @@ async def test_get_mint_decimals_caches_after_first_lookup(monkeypatch):
     call_count = 0
 
     class FakeResponse:
+        # app/services/http.py inspects status_code before calling
+        # raise_for_status, so a double without one never gets that far.
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -121,6 +145,22 @@ async def test_get_mint_decimals_caches_after_first_lookup(monkeypatch):
 
         async def __aexit__(self, *a):
             return False
+
+        async def request(self, method, url, headers=None, params=None, json=None):
+            # app/services/http.py issues every call through request(), so one
+            # retry/backoff/health loop covers GET and POST alike. Delegates to
+            # whichever verb method this double defines, passing only the
+            # arguments that method actually accepts.
+            import inspect
+
+            fn = self.post if method == "POST" else self.get
+            accepted = inspect.signature(fn).parameters
+            kwargs = {
+                name: value
+                for name, value in (("headers", headers), ("params", params), ("json", json))
+                if name in accepted and value is not None
+            }
+            return await fn(url, **kwargs)
 
         async def post(self, url, json):
             nonlocal call_count
@@ -142,6 +182,10 @@ async def test_get_mint_decimals_short_circuits_for_the_quote_mint():
 
 async def test_get_mint_decimals_raises_a_clear_error_on_an_unrecognised_shape(monkeypatch):
     class FakeResponse:
+        # app/services/http.py inspects status_code before calling
+        # raise_for_status, so a double without one never gets that far.
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -157,6 +201,22 @@ async def test_get_mint_decimals_raises_a_clear_error_on_an_unrecognised_shape(m
 
         async def __aexit__(self, *a):
             return False
+
+        async def request(self, method, url, headers=None, params=None, json=None):
+            # app/services/http.py issues every call through request(), so one
+            # retry/backoff/health loop covers GET and POST alike. Delegates to
+            # whichever verb method this double defines, passing only the
+            # arguments that method actually accepts.
+            import inspect
+
+            fn = self.post if method == "POST" else self.get
+            accepted = inspect.signature(fn).parameters
+            kwargs = {
+                name: value
+                for name, value in (("headers", headers), ("params", params), ("json", json))
+                if name in accepted and value is not None
+            }
+            return await fn(url, **kwargs)
 
         async def post(self, url, json):
             return FakeResponse()

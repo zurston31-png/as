@@ -328,6 +328,56 @@ def store_observation(db: Session, symbol: str, token_address: str, market) -> m
     return observation
 
 
+def store_price_point(
+    db: Session, symbol: str, token_address: str, price: float | None
+) -> models.TokenObservation | None:
+    """Persist one price reading with no surrounding snapshot.
+
+    The position monitor already fetches a price for every open position
+    on every pass and then throws it away. Keeping it costs nothing and is
+    the only price history the bot has for tokens it HOLDS - the early
+    engine only observes tokens it is scanning, and a position stops being
+    scanned the moment it is opened. Correlation risk needs the held ones.
+
+    Reuses TokenObservation rather than adding a table, so the existing
+    OBSERVATION_RETENTION_HOURS pruning applies unchanged. Every field but
+    the price is left NULL, which is accurate: nothing else was measured.
+    """
+    if price is None or price <= 0:
+        return None
+    observation = models.TokenObservation(
+        token_address=token_address,
+        symbol=symbol,
+        observed_at=dt.datetime.now(dt.timezone.utc),
+        price_usd=price,
+    )
+    db.add(observation)
+    return observation
+
+
+def price_series(
+    db: Session, token_address: str, *, limit: int = 500
+) -> list[float]:
+    """Stored prices for one token, oldest first.
+
+    Returns the raw prices; the caller differences them into returns.
+    Correlating price LEVELS would find that two tokens both drifting
+    upward are correlated almost by definition, which is not the question
+    - what matters for risk is whether they fall together.
+    """
+    rows = (
+        db.query(models.TokenObservation.price_usd, models.TokenObservation.observed_at)
+        .filter(
+            models.TokenObservation.token_address == token_address,
+            models.TokenObservation.price_usd.isnot(None),
+        )
+        .order_by(models.TokenObservation.observed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [price for price, _ in reversed(rows)]
+
+
 def recent_observations(db: Session, token_address: str, *, limit: int = 12) -> list:
     """The last few stored snapshots for a token, oldest first."""
     rows = (

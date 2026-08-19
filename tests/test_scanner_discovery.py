@@ -71,6 +71,22 @@ def _fake_client(get_impl):
         async def __aexit__(self, *a):
             return False
 
+        async def request(self, method, url, headers=None, params=None, json=None):
+            # app/services/http.py issues every call through request(), so one
+            # retry/backoff/health loop covers GET and POST alike. Delegates to
+            # whichever verb method this double defines, passing only the
+            # arguments that method actually accepts.
+            import inspect
+
+            fn = self.post if method == "POST" else self.get
+            accepted = inspect.signature(fn).parameters
+            kwargs = {
+                name: value
+                for name, value in (("headers", headers), ("params", params), ("json", json))
+                if name in accepted and value is not None
+            }
+            return await fn(url, **kwargs)
+
         async def get(self, url, headers=None, params=None):
             return FakeResponse(get_impl(url, headers, params))
 

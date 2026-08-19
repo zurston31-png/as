@@ -4,21 +4,38 @@ a notification failure never blocks or fails a trade.
 """
 import logging
 
-import httpx
-
 from app.config import settings
+from app.services import http
 
 logger = logging.getLogger(__name__)
 
 
 class Notifier:
+    """Both sends go through app/services/http.py for RATE LIMITING, not
+    for reliability.
+
+    Telegram and Discord both rate-limit aggressively, and a burst of
+    rejections during a busy scan is exactly the situation the shared
+    backoff exists for. But posting a message is NOT idempotent: a send
+    that times out may already have been delivered, and retrying it would
+    double-post. So `idempotent=False` - only a 429 retries, because that
+    is the one response that says the message was definitely not sent.
+
+    A duplicate alert is only annoying, not dangerous. It is still not
+    worth having, and getting it wrong here would teach the same reflex in
+    a place where it does matter.
+    """
+
     async def _send_telegram(self, text: str) -> None:
         if not (settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID):
             return
         url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(url, json={"chat_id": settings.TELEGRAM_CHAT_ID, "text": text})
+            await http.post_json(
+                url,
+                json={"chat_id": settings.TELEGRAM_CHAT_ID, "text": text},
+                timeout=10, label="telegram sendMessage", service="telegram",
+            )
         except Exception:
             logger.exception("failed to send Telegram notification")
 
@@ -26,8 +43,11 @@ class Notifier:
         if not settings.DISCORD_WEBHOOK_URL:
             return
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(settings.DISCORD_WEBHOOK_URL, json={"content": text[:2000]})
+            await http.post_json(
+                settings.DISCORD_WEBHOOK_URL,
+                json={"content": text[:2000]},
+                timeout=10, label="discord webhook", service="discord",
+            )
         except Exception:
             logger.exception("failed to send Discord notification")
 

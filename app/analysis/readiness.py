@@ -32,6 +32,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
+from app.config import settings
 from app.analysis.calibration import MIN_BUCKET_SAMPLE as MIN_TECHNICAL_BUCKET
 from app.analysis.early_calibration import (
     EARLY_BUCKETS, MIN_BUCKET_SAMPLE as MIN_EARLY_BUCKET, early_bucket,
@@ -107,8 +108,93 @@ class Requirement:
 
 
 @dataclass
+class EarlyLookCoverage:
+    """How many technically-rejected candidates the early engine got to see.
+
+    EARLY_SIGNAL_TECHNICAL_MARGIN is an unvalidated choice, and it is the
+    valve on the early dataset: candidates more than that many points below
+    the entry threshold are dropped before the early engine ever looks at
+    them. Set too tight, the engine sees almost nothing and its calibration
+    never fills; set too loose, every scanned token costs a security lookup
+    and a candle fetch.
+
+    Nothing new is written to answer this. Every scored candidate already
+    leaves a TECHNICAL_SCORE row carrying its score, so the split is a
+    query over history the bot was keeping anyway - which also means it
+    answers retrospectively, for a margin that was never in force.
+    """
+    rejected: int = 0
+    admitted: int = 0
+    dropped: int = 0
+    floor: float = 0.0
+
+    @property
+    def admitted_share(self) -> float | None:
+        return self.admitted / self.rejected if self.rejected else None
+
+    def note(self) -> str:
+        if not self.rejected:
+            return "no technically-rejected candidates recorded yet"
+        share = self.admitted_share
+        line = (
+            f"{self.admitted} of {self.rejected} technically-rejected candidates "
+            f"({share:.0%}) scored at or above the early-look floor of {self.floor:.0f} "
+            f"and were shown to the early engine; {self.dropped} were dropped before it."
+        )
+        if share is not None and share < 0.10:
+            line += (
+                " Under 10% - EARLY_SIGNAL_TECHNICAL_MARGIN is starving the early dataset, "
+                "and early calibration will take far longer than the ETA above suggests."
+            )
+        elif share is not None and share > 0.90:
+            line += (
+                " Over 90% - the margin is barely filtering, so nearly every scanned token "
+                "is paying for a security lookup and a candle fetch."
+            )
+        return line
+
+    def as_dict(self) -> dict:
+        return {
+            "rejected": self.rejected,
+            "admitted": self.admitted,
+            "dropped": self.dropped,
+            "floor": self.floor,
+            "admitted_share_pct": (
+                round(self.admitted_share * 100, 1) if self.admitted_share is not None else None
+            ),
+            "note": self.note(),
+        }
+
+
+def early_look_coverage(db: Session) -> EarlyLookCoverage:
+    """Split recorded technical rejections by the early-look floor."""
+    from app import pipeline
+
+    floor = settings.MIN_SIGNAL_SCORE_TO_ENTER - settings.EARLY_SIGNAL_TECHNICAL_MARGIN
+    coverage = EarlyLookCoverage(floor=floor)
+
+    scores = (
+        db.query(models.PipelineEvent.score)
+        .filter(
+            models.PipelineEvent.stage == pipeline.TECHNICAL_SCORE,
+            models.PipelineEvent.passed.is_(False),
+            models.PipelineEvent.score.isnot(None),
+        )
+        .all()
+    )
+    for (score,) in scores:
+        coverage.rejected += 1
+        if score >= floor:
+            coverage.admitted += 1
+        else:
+            coverage.dropped += 1
+    return coverage
+
+
+@dataclass
 class Readiness:
     requirements: list[Requirement] = field(default_factory=list)
+    early_look: EarlyLookCoverage = field(default_factory=EarlyLookCoverage)
     scored_candidates: int = 0
     first_observation: dt.datetime | None = None
     last_observation: dt.datetime | None = None
@@ -155,6 +241,7 @@ class Readiness:
             "candidates_per_hour": round(rate, 2) if rate else None,
             "ready": len(self.ready),
             "total": len(self.requirements),
+            "early_look": self.early_look.as_dict(),
             "requirements": [r.as_dict(hours) for r in self.requirements],
         }
 
@@ -178,6 +265,8 @@ class Readiness:
             "  again, not as dates. The sample floors are not negotiable - below them the\n"
             "  answers are noise."
         )
+        lines.append("")
+        lines.append(f"  Early-look valve: {self.early_look.note()}")
         lines.append("")
         lines.append("  Run the command beside a question once it reads READY:")
         for r in self.requirements:
@@ -254,6 +343,7 @@ def build_readiness(db: Session, *, horizon_minutes: int = 60) -> Readiness:
         .scalar() or 0
     )
 
+    report.early_look = early_look_coverage(db)
     report.requirements = [
         Requirement(
             question="technical calibration",

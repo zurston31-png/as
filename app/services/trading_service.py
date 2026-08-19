@@ -20,10 +20,12 @@ from app.concurrency import AlreadyReserved, reserve_entry
 from app.execution import get_execution_client
 from app.identity import describe, instrument_key
 from app.notifications.notifier import notifier
+from app.risk import book
 from app.risk.manager import RiskManager, halt_trading
 from app.safety import killswitch
 from app.rugcheck.filters import run_rug_checks
 from app.schemas import TradingViewAlert
+from app.data import cross_check
 from app.data.staleness import check_snapshot_freshness
 from app.services import portfolio, price_feed
 from app.signals.market_quality import score_market_quality
@@ -285,6 +287,10 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     # Separate from the signal score on purpose. A token can print a
     # textbook breakout on volume that is entirely wash-traded; the signal
     # engine reads price/volume shape and has no way to tell. This does.
+    # Hoisted: the cross-check below reads this snapshot too, and fetching
+    # it twice would double the request cost for one number.
+    market = None
+
     if settings.MARKET_QUALITY_ENABLED:
         market = await price_feed.get_market_snapshot(signal.token_address) if signal.token_address else None
 
@@ -361,6 +367,54 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         await notifier.notify_rejection(signal, reason)
         return
 
+    # --- cross-check: do two sources agree about this token? -------------
+    # Both readings are already in hand - the DexScreener snapshot from the
+    # market-quality gate and the security scanner's own liquidity figure -
+    # so this costs no extra request. When they disagree materially, at
+    # least one is wrong and there is no way to tell which; the trade is
+    # skipped rather than sized off a coin flip.
+    #
+    # LIQUIDITY ONLY, deliberately. Price is not cross-checkable here: the
+    # only second price available is signal.price, which is the price the
+    # ALERT fired at, not a second provider's reading of the same instant.
+    # A memecoin routinely moves more than any sane price tolerance between
+    # the alert and this evaluation, so comparing them would reject
+    # constantly on normal movement - a staleness check wearing a
+    # cross-check costume, and staleness already has its own gate above.
+    # Liquidity is a real cross-check: two providers measuring the same
+    # pool depth, and a disagreement means one of them is wrong.
+    trusted_liquidity = report.liquidity_usd
+    if settings.CROSS_CHECK_ENABLED:
+        check = cross_check.compare(
+            liquidity=(
+                market.liquidity_usd if market else None,
+                report.liquidity_usd,
+            ),
+            liquidity_tolerance=settings.CROSS_CHECK_LIQUIDITY_TOLERANCE,
+            primary_source="dexscreener",
+            secondary_source=report.source or "security scanner",
+            require_two_sources=settings.CROSS_CHECK_REQUIRE_TWO_SOURCES,
+        )
+        _stage(
+            db, signal, pipeline.DATA_QUALITY, check.trustworthy, check.reason,
+            detail=check.as_dict(),
+        )
+        if not check.trustworthy:
+            reason = f"data sources disagree: {check.reason}"
+            db.add(models.RiskEvent(
+                event_type="cross_check_rejected", details=reason, signal_id=signal.id
+            ))
+            await notifier.notify_rejection(signal, reason)
+            return
+
+        # Sources agree: size off the more conservative liquidity anyway.
+        # Agreement within 30% still leaves a real gap, and the thinner
+        # pool is the one that decides what a position actually costs to
+        # get out of.
+        for agreement in check.agreements:
+            if agreement.field == "liquidity":
+                trusted_liquidity = agreement.conservative(prefer="low") or trusted_liquidity
+
     # --- early signal: a technical rejection is not always a discard ----
     # Runs after security and market quality have both passed, so nothing
     # here can rescue a token that failed either. Its only power is to put
@@ -398,13 +452,35 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         await notifier.notify_rejection(signal, reason)
         return
 
-    if report.liquidity_usd and size_usd > report.liquidity_usd * settings.MAX_PRICE_IMPACT_PCT:
+    if trusted_liquidity and size_usd > trusted_liquidity * settings.MAX_PRICE_IMPACT_PCT:
         reason = (
             f"position size ${size_usd:,.0f} would exceed max price-impact budget "
-            f"vs ${report.liquidity_usd:,.0f} liquidity"
+            f"vs ${trusted_liquidity:,.0f} liquidity"
         )
         db.add(models.RiskEvent(event_type="liquidity_depth_rejected", details=reason, signal_id=signal.id))
         await notifier.notify_rejection(signal, reason)
+        return
+
+    # --- correlation: is this a new bet, or more of an existing one? -----
+    # The per-token and total exposure caps above are both satisfied by a
+    # book that is really one position at five times the intended size.
+    # Only MEASURED correlation blocks here; see app/risk/book.py for why
+    # an unmeasured pair must not.
+    cluster = book.gate(
+        db,
+        symbol=signal.symbol,
+        token_address=signal.token_address,
+        portfolio_value_usd=portfolio_value,
+        proposed_size_usd=size_usd,
+    )
+    if cluster.blocked:
+        db.add(models.RiskEvent(
+            event_type="correlated_cluster_rejected",
+            details=cluster.reason,
+            signal_id=signal.id,
+        ))
+        _stage(db, signal, pipeline.RISK, False, cluster.reason, detail=cluster.as_dict())
+        await notifier.notify_rejection(signal, cluster.reason)
         return
 
     instrument = _instrument_id(signal.symbol, signal.token_address)
