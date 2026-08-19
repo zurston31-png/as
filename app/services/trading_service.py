@@ -13,7 +13,8 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app import models
+from app import models, pipeline
+from app.analysis import forward_returns
 from app.config import settings
 from app.concurrency import AlreadyReserved, reserve_entry
 from app.execution import get_execution_client
@@ -155,22 +156,37 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
         db.add(models.RiskEvent(event_type="duplicate_entry_blocked", details=reason, signal_id=signal.id))
 
 
+def _stage(db: Session, signal: models.Signal, stage: str, passed: bool,
+           reason: str = "", score: float | None = None, detail: dict | None = None) -> None:
+    """Record one pipeline stage for this signal. See app/pipeline.py."""
+    pipeline.record(
+        db, stage=stage, symbol=signal.symbol, token_address=signal.token_address,
+        chain=signal.chain, passed=passed, reason=reason, score=score,
+        detail=detail, signal_id=signal.id,
+    )
+
+
 async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     gate = risk_manager.check_can_open_position(
         db, symbol=signal.symbol, token_address=signal.token_address
     )
     if not gate.allowed:
+        _stage(db, signal, pipeline.RISK, False, gate.reason)
         db.add(models.RiskEvent(event_type="buy_blocked", details=gate.reason, signal_id=signal.id))
         await notifier.notify_rejection(signal, gate.reason)
         return
 
     existing = _open_position_for(db, signal.symbol, signal.token_address)
     if existing:
+        reason = f"position already open (id={existing.id})"
+        _stage(db, signal, pipeline.RISK, False, reason)
         logger.info(
-            "ignoring buy signal for %s: position already open (id=%s)",
-            describe(signal.symbol, signal.token_address), existing.id,
+            "ignoring buy signal for %s: %s",
+            describe(signal.symbol, signal.token_address), reason,
         )
         return
+
+    _stage(db, signal, pipeline.RISK, True, "within every portfolio limit")
 
     if settings.LIVE_SIGNAL_SCORE_ENABLED:
         score = await evaluate_live_entry_signal(signal.chain, signal.token_address, signal.symbol)
@@ -179,13 +195,48 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
                 f"live signal score unavailable for {signal.symbol} - no trustworthy candle data "
                 f"(need >={settings.SIGNAL_SCORE_MIN_CANDLES} live {settings.SIGNAL_SCORE_TIMEFRAME} candles)"
             )
+            _stage(db, signal, pipeline.HISTORY, False, reason)
             db.add(models.RiskEvent(event_type="signal_score_unavailable", details=reason, signal_id=signal.id))
             await notifier.notify_rejection(signal, reason)
             return
 
+        _stage(db, signal, pipeline.HISTORY, True, "enough trustworthy candles to score")
+
         signal.signal_score = score.score
         signal.signal_score_reliable = score.reliable
         signal.signal_score_factors = score.as_dict()["factors"]
+
+        # Recorded BEFORE the threshold test, and recorded whether or not
+        # it passes. A dataset of only the setups that cleared the bar
+        # cannot say whether the bar is in the right place.
+        scored_event = pipeline.record(
+            db, stage=pipeline.TECHNICAL_SCORE, symbol=signal.symbol,
+            token_address=signal.token_address, chain=signal.chain,
+            passed=score.score >= settings.MIN_SIGNAL_SCORE_TO_ENTER and score.reliable,
+            reason=f"scored {score.score:.1f}/100 (threshold {settings.MIN_SIGNAL_SCORE_TO_ENTER:.1f})",
+            score=score.score, signal_id=signal.id,
+            detail={
+                "reliable": score.reliable,
+                "threshold": settings.MIN_SIGNAL_SCORE_TO_ENTER,
+                "direction": score.direction,
+                "factors": score.as_dict()["factors"],
+            },
+        )
+
+        # Follow this candidate's price forward whether or not it is about
+        # to be rejected. Tracking only the winners of the threshold test
+        # would make it impossible to ever learn that the threshold is
+        # wrong - see app/analysis/forward_returns.py.
+        if scored_event is not None and forward_returns.enabled():
+            db.flush()
+            forward_returns.schedule(
+                db,
+                pipeline_event_id=scored_event.id,
+                token_address=signal.token_address,
+                symbol=signal.symbol,
+                score=score.score,
+                price_at_signal=signal.price or 0.0,
+            )
 
         if score.score < settings.MIN_SIGNAL_SCORE_TO_ENTER or not score.reliable:
             reason = (
@@ -216,6 +267,14 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         quality = score_market_quality(market, min_liquidity_usd=settings.MIN_LIQUIDITY_USD)
         signal.market_quality_score = quality.score
         signal.market_quality_factors = quality.as_dict()["factors"]
+
+        _stage(
+            db, signal, pipeline.MARKET_QUALITY,
+            passed=quality.reliable and quality.score >= settings.MIN_MARKET_QUALITY_SCORE,
+            reason=f"scored {quality.score:.1f}/100 (threshold {settings.MIN_MARKET_QUALITY_SCORE:.1f})",
+            score=quality.score,
+            detail={"reliable": quality.reliable, "factors": quality.as_dict()["factors"]},
+        )
 
         if not quality.reliable or quality.score < settings.MIN_MARKET_QUALITY_SCORE:
             concerns = "; ".join(f.reason for f in quality.concerns[:3]) or "; ".join(quality.warnings)
@@ -249,6 +308,20 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
             rug_risk_level=report.rug_risk_level,
             rug_risk_factors=report.rug_risk_factors,
         )
+    )
+
+    _stage(
+        db, signal, pipeline.SECURITY, report.passed,
+        "; ".join(report.reasons) or ("passed every security check" if report.passed else "rug check failed"),
+        score=report.rug_risk_score,
+        detail={
+            "source": report.source,
+            "rug_risk_level": report.rug_risk_level,
+            "liquidity_usd": report.liquidity_usd,
+            "top10_holder_pct": report.top10_holder_pct,
+            "dev_wallet_pct": report.dev_wallet_pct,
+            "lookup_outcomes": report.lookup_outcomes,
+        },
     )
 
     if not report.passed:
@@ -305,6 +378,12 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         trade.status = models.TradeStatus.FAILED.value
         trade.error = result.error
         db.add(trade)
+        # A reverted swap is a real, common outcome and a real cost. It is
+        # recorded as a pipeline stage so the funnel shows how much of the
+        # gap between "signals" and "positions" is execution rather than
+        # filtering.
+        _stage(db, signal, pipeline.PAPER_EXECUTION, False, result.error or "fill failed",
+               detail={"size_usd": size_usd})
         await notifier.notify_error(f"Buy failed for {signal.symbol}: {result.error}")
         return
 
@@ -342,6 +421,27 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     db.add(position)
     db.flush()
     trade.position_id = position.id
+
+    _stage(
+        db, signal, pipeline.PAPER_EXECUTION, True,
+        f"filled {result.filled_qty:,.4f} @ ${result.avg_price:.8f}",
+        detail={
+            "size_usd": size_usd,
+            "signal_price": signal.price,
+            "fill_price": result.avg_price,
+            "slippage_vs_signal_pct": (
+                (result.avg_price / signal.price - 1) * 100 if signal.price else None
+            ),
+            "fee_usd": result.fee_usd,
+            "execution_cost_pct": result.execution_cost_pct,
+            "fill_delay_seconds": result.fill_delay_seconds,
+        },
+    )
+    _stage(
+        db, signal, pipeline.OPEN_POSITION, True,
+        f"position {position.id} open",
+        detail={"position_id": position.id, "stop_loss": sl, "take_profit": tp},
+    )
 
     portfolio.adjust_cash_balance(db, -size_usd)
 
@@ -408,6 +508,25 @@ async def close_position(db: Session, position: models.Position, reason: str, si
     position.status = models.PositionStatus.CLOSED.value
     position.closed_at = now
     position.close_reason = reason
+
+    pipeline.record(
+        db, stage=pipeline.EXIT, symbol=position.symbol,
+        token_address=position.token_address, chain=position.chain,
+        passed=pnl_usd > 0, reason=reason, signal_id=signal_id,
+        detail={
+            "position_id": position.id,
+            "entry_price": position.entry_price,
+            "exit_price": result.avg_price,
+            "pnl_usd": pnl_usd,
+            "pnl_pct": pnl_pct * 100,
+            "fee_usd": result.fee_usd,
+            "held_hours": (
+                (now - position.opened_at.replace(tzinfo=dt.timezone.utc)).total_seconds() / 3600
+                if position.opened_at and position.opened_at.tzinfo is None
+                else (now - position.opened_at).total_seconds() / 3600 if position.opened_at else None
+            ),
+        },
+    )
 
     portfolio.adjust_cash_balance(db, proceeds)
 

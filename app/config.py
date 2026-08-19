@@ -171,6 +171,19 @@ class Settings(BaseSettings):
     # (decimals bugs, thin-pool prints, feed glitches), not volatility.
     MAX_PRICE_JUMP_FACTOR: float = 20.0
 
+    # --- score calibration research (app/analysis/forward_returns.py) ---
+    # Follow the price of every SCORED candidate - traded or rejected - so
+    # the bot can eventually answer whether a higher score actually precedes
+    # a better outcome. Judging the score from trades alone cannot answer
+    # that: the bot only trades what it already liked, so the rejected 55s
+    # never get to disagree.
+    # Costs one price lookup per distinct mint per resolution pass, which is
+    # why it is a switch. Turning it off stops the bot ever being able to
+    # validate or falsify its own scoring engine.
+    FORWARD_RETURNS_ENABLED: bool = True
+    FORWARD_RETURN_RESOLVE_INTERVAL_SECONDS: int = 300
+    FORWARD_RETURN_BATCH_LIMIT: int = 200
+
     # --- Automatic token scanner (Stage 9) ---
     # Finds newly listed tokens itself instead of waiting for a TradingView
     # alert to name one. Discovered tokens go through the SAME pipeline a

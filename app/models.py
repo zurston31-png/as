@@ -320,3 +320,82 @@ class BotState(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class PipelineEvent(Base):
+    """One token's passage through one pipeline stage. APPEND ONLY.
+
+    ScannedToken already tracks each token's CURRENT state, which is what
+    the scanner list needs. This is the opposite: an immutable log of what
+    happened and when, which is what research needs. Overwriting
+    `last_stage` answers "where is this token now?" and destroys "how many
+    tokens died at each stage last Tuesday, and why?" - and the second
+    question is the one that tells you which filter to change.
+
+    The row carries the SCORE where the stage produced one, including for
+    tokens that were then rejected. That is deliberate and it is the whole
+    basis of the score-distribution and score-calibration analyses: a
+    dataset of only the setups that passed the threshold cannot tell you
+    whether the threshold is in the right place. Recording the score of
+    every token the engine scored - and only then filtering - is what makes
+    the question answerable.
+
+    `detail` holds the stage's inputs and computed values as JSON so a
+    decision can be re-read months later without re-fetching data that no
+    longer exists.
+    """
+
+    __tablename__ = "pipeline_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    occurred_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    # Canonical identity is the mint; the symbol is carried alongside for
+    # display only. See app/identity.py.
+    token_address: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    chain: Mapped[str] = mapped_column(String(32), default="solana")
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    passed: Mapped[bool] = mapped_column(Boolean, index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The 0-100 score this stage produced, where it produced one. NULL means
+    # the stage does not score, never "scored zero".
+    score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    signal_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class ForwardReturn(Base):
+    """What a scored candidate actually did afterwards, whether or not it
+    was traded.
+
+    This is the answer key for score calibration. A score is only useful if
+    higher scores precede better outcomes, and that cannot be measured from
+    trades alone: the bot only trades what it already believed in, so the
+    trade record is a censored sample by construction. Measuring the
+    forward return of REJECTED candidates too is what turns "the score is
+    complicated" into "the score does, or does not, predict anything".
+
+    One row per (candidate, horizon). `price_at_horizon` is NULL when the
+    horizon has not elapsed yet or the price could not be fetched - never
+    zero, and never back-filled with the last known price.
+    """
+
+    __tablename__ = "forward_returns"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pipeline_event_id: Mapped[int] = mapped_column(Integer, index=True)
+    token_address: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    price_at_signal: Mapped[float] = mapped_column(Float)
+    horizon_minutes: Mapped[int] = mapped_column(Integer, index=True)
+    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    price_at_horizon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    filled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Why the horizon could not be measured, when it could not be. Kept so a
+    # gap in the calibration dataset is explained rather than mysterious.
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

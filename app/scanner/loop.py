@@ -31,7 +31,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app import models
+from app import models, pipeline
 from app.config import settings
 from app.database import SessionLocal
 from app.scanner.discovery import DiscoveredToken, discover_tokens
@@ -134,7 +134,33 @@ async def scan_once(db: Session | None = None) -> dict:
                 summary["skipped_recent"] += 1
                 continue
 
+            # Every discovered mint gets a DISCOVERED row, including ones
+            # about to be rejected - the denominator of every conversion
+            # rate in the funnel is "how many did we actually see?".
+            pipeline.record(
+                db, stage=pipeline.DISCOVERED, symbol=token.symbol,
+                token_address=token.token_address, chain=token.chain, passed=True,
+                reason=f"listed by {token.source}",
+                detail={
+                    "source": token.source,
+                    "liquidity_usd": token.liquidity_usd,
+                    "volume_24h_usd": token.volume_24h_usd,
+                    "age_hours": token.age_hours,
+                    "buys_24h": token.buys_24h,
+                    "sells_24h": token.sells_24h,
+                    "price_usd": token.price_usd,
+                },
+            )
+
             verdict = prescreen(token)
+            # The full per-check breakdown, not just the first failure, so
+            # the funnel can say WHICH threshold rejected the token.
+            pipeline.record(
+                db, stage=pipeline.PRESCREEN, symbol=token.symbol,
+                token_address=token.token_address, chain=token.chain,
+                passed=verdict.passed, reason=verdict.reason,
+                detail=verdict.as_dict(),
+            )
             if not verdict.passed:
                 _record(db, token, stage=STAGE_PRESCREEN, reason=verdict.reason)
                 summary["prescreen_rejected"] += 1
