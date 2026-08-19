@@ -229,3 +229,58 @@ def test_the_funnel_serialises(clean_events):
     _emit(clean_events, pipeline.DISCOVERED, True)
     clean_events.commit()
     json.dumps(build_stage_funnel(clean_events, window_hours=None).as_dict(), allow_nan=False)
+
+
+# ---------------------------------------------------------------------------
+# EXIT is an outcome, not a filter
+# ---------------------------------------------------------------------------
+
+def test_the_stage_order_matches_the_order_the_buy_path_runs_them(clean_events):
+    """The funnel attributes losses by position in this sequence, so an
+    order that does not match execution silently blames the wrong gate.
+    RISK runs BEFORE scoring, because rejecting on a portfolio limit is
+    free while scoring costs a pool resolution and a candle fetch."""
+    order = list(pipeline.STAGE_ORDER)
+    assert order.index("RISK") < order.index("TECHNICAL_SCORE")
+    assert order.index("PRESCREEN") < order.index("RISK")
+    assert order.index("SECURITY") < order.index("PAPER_EXECUTION")
+    assert order[-1] == "EXIT"
+
+
+def test_exit_is_never_named_as_the_bottleneck(clean_events):
+    """Every position reaching EXIT has already been opened, so it cannot
+    be why few positions opened. Naming it would also imply the wrong fix -
+    loosen a filter - for a problem about losing trades."""
+    for i in range(10):
+        _emit(clean_events, pipeline.DISCOVERED, True, mint=f"M{i}")
+        _emit(clean_events, pipeline.PRESCREEN, i < 6, mint=f"M{i}")   # 4 rejected
+    for i in range(6):
+        _emit(clean_events, pipeline.EXIT, False, mint=f"M{i}")        # 6 losers
+    clean_events.commit()
+
+    funnel = build_stage_funnel(clean_events, window_hours=None)
+    assert funnel.bottleneck.stage == "PRESCREEN"
+    assert "EXIT" not in funnel.explain().split("largest single loss is at")[1][:20]
+
+
+def test_exit_outcomes_are_reported_separately_as_profitability(clean_events):
+    for i in range(10):
+        _emit(clean_events, pipeline.DISCOVERED, True, mint=f"M{i}")
+        _emit(clean_events, pipeline.PRESCREEN, i < 4, mint=f"M{i}")
+    for i in range(4):
+        _emit(clean_events, pipeline.EXIT, i < 3, mint=f"M{i}")        # 3 winners
+    clean_events.commit()
+
+    funnel = build_stage_funnel(clean_events, window_hours=None)
+    exits = funnel.exit_stats
+    assert exits.terminal is True
+    assert exits.meaning == "profitable"
+    assert exits.passed == 3 and exits.entered == 4
+    assert "3 of 4 closed position(s) were profitable" in funnel.explain()
+    assert "an outcome, not a funnel stage" in funnel.explain()
+
+
+def test_a_filter_stage_is_labelled_as_advancing_not_profiting(clean_events):
+    _emit(clean_events, pipeline.PRESCREEN, True)
+    clean_events.commit()
+    assert build_stage_funnel(clean_events, window_hours=None).stage("PRESCREEN").meaning == "advanced"

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.pipeline import STAGE_ORDER
+from app.pipeline import STAGE_ORDER, TERMINAL_STAGES
 
 
 @dataclass
@@ -40,6 +40,16 @@ class StageStats:
     stage: str
     entered: int
     passed: int
+
+    @property
+    def terminal(self) -> bool:
+        """EXIT is an outcome, not a filter.
+
+        Its `passed` flag records whether the trade was PROFITABLE, so
+        reading it as a conversion rate would report the loss rate as a
+        rejection rate.
+        """
+        return self.stage in TERMINAL_STAGES
 
     @property
     def rejected(self) -> int:
@@ -51,8 +61,15 @@ class StageStats:
 
         None when nothing reached it - which is a different fact from 0%
         and must not be rendered as one.
+
+        On a terminal stage this is the WIN RATE, not a conversion rate.
+        `meaning` below says which.
         """
         return (self.passed / self.entered) if self.entered else None
+
+    @property
+    def meaning(self) -> str:
+        return "profitable" if self.terminal else "advanced"
 
     @property
     def reached(self) -> bool:
@@ -66,6 +83,8 @@ class StageStats:
             "rejected": self.rejected,
             "pass_rate_pct": round(self.pass_rate * 100, 1) if self.pass_rate is not None else None,
             "reached": self.reached,
+            "terminal": self.terminal,
+            "meaning": self.meaning,
         }
 
 
@@ -139,13 +158,24 @@ class StageFunnel:
 
     @property
     def bottleneck(self) -> StageStats | None:
-        """The reached stage that rejected the largest NUMBER of tokens.
+        """The FILTER stage that rejected the largest NUMBER of tokens.
 
         Deliberately the count and not the rate: a stage that rejects 100%
         of the four tokens that reached it is not the reason 500 became 3.
+
+        Terminal stages are excluded. EXIT's "failures" are losing trades,
+        and every position reaching it has already been opened - calling it
+        the pipeline's bottleneck would be both wrong and actively
+        misleading, since the fix it implies (loosen the filter) has nothing
+        to do with the problem it names.
         """
-        candidates = [s for s in self.stages if s.reached and s.rejected > 0]
+        candidates = [s for s in self.stages if s.reached and s.rejected > 0 and not s.terminal]
         return max(candidates, key=lambda s: s.rejected) if candidates else None
+
+    @property
+    def exit_stats(self) -> StageStats | None:
+        """The EXIT stage, reported separately from the funnel proper."""
+        return next((s for s in self.stages if s.terminal and s.reached), None)
 
     def explain(self) -> str:
         """One-paragraph answer to 'why so few trades?'."""
@@ -162,13 +192,20 @@ class StageFunnel:
             f"({self.overall_conversion * 100:.2f}% conversion)."
         )
         if neck is None:
-            return head + " No stage rejected anything - every discovered token is still in flight."
-        return (
+            return head + " No filter rejected anything - every discovered token is still in flight."
+        text = (
             head
             + f" The largest single loss is at {neck.stage}, which rejected {neck.rejected} of the "
             f"{neck.entered} tokens that reached it"
             + (f" ({(1 - neck.pass_rate) * 100:.0f}%)." if neck.pass_rate is not None else ".")
         )
+        exits = self.exit_stats
+        if exits:
+            text += (
+                f" Separately, {exits.passed} of {exits.entered} closed position(s) were "
+                "profitable - an outcome, not a funnel stage."
+            )
+        return text
 
     def as_dict(self) -> dict:
         return {
@@ -179,6 +216,7 @@ class StageFunnel:
                 round(self.overall_conversion * 100, 3) if self.overall_conversion is not None else None
             ),
             "bottleneck": self.bottleneck.stage if self.bottleneck else None,
+            "exit": self.exit_stats.as_dict() if self.exit_stats else None,
             "explain": self.explain(),
             "stages": [s.as_dict() for s in self.stages],
             "prescreen": self.prescreen.as_dict(),

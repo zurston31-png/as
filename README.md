@@ -803,6 +803,85 @@ breakout structure), not four independently-coded trading systems — keeping
 everything else identical is what makes the comparison isolate what the
 signal weighting itself contributes.
 
+## Strategy research — is this thing any good?
+
+Everything above builds a bot that trades. This part answers whether it
+*should*, and it is deliberately capable of saying no.
+
+Open **`/research`** in the dashboard, or run:
+
+```bash
+python scripts/research.py report          # the validation verdict
+python scripts/research.py distribution    # what the scorer actually produces
+python scripts/research.py calibration     # does a higher score predict better?
+python scripts/research.py funnel          # where discovered tokens die
+```
+
+### The validation report
+
+Every question gets one of exactly three grades — `PASS`, `FAIL`, or
+`INSUFFICIENT DATA` — and the third does most of the work early on. That is
+the honest output: a report that resolved everything into pass or fail
+would be inventing confidence, and the confidence it invents is always
+"this looks fine", because a small sample of a random strategy usually
+does.
+
+**FAIL is a successful outcome.** Learning a strategy has no edge is worth
+more than suspecting it might — it stops you spending months tuning
+something that cannot work.
+
+### Score calibration — the measurement that can falsify the engine
+
+The bot records what **every scored candidate** did over the next 15m / 30m
+/ 1h / 2h / 4h / 8h / 24h, **including the ones it rejected**, and groups
+those outcomes by score bucket.
+
+Following the rejects is the whole point. The bot only trades what it
+already scored highly, so judging the score from trades alone asks "did the
+setups we liked do well?" — a question a completely random score would also
+pass. Letting the rejected 55s disagree is what turns the score from an
+assertion into a measurement.
+
+If 75-rated setups do not out-perform 65-rated ones, the report says so.
+
+Unmeasurable outcomes are never zero-filled: a token whose feed went quiet
+is recorded as unmeasurable with a reason, because calling it a 0% return
+would turn a dead token into evidence.
+
+### Threshold, ablation and robustness research
+
+```bash
+python scripts/research.py thresholds <mint>   # the 55 → 75 ladder
+python scripts/research.py ablate     <mint>   # does each factor earn its weight?
+python scripts/research.py sweep      <mint> min_score_to_enter 60,62.5,65,67.5,70
+```
+
+All three judge on **out-of-sample** performance over a chronological
+split, penalised for the train-to-out-of-sample gap and for drawdown.
+Ranking on in-sample P&L would just select whichever variant fitted the
+training noise hardest.
+
+- **thresholds** reports trade frequency, after-cost expectancy, profit
+  factor, drawdown and the overfit gap for each value — and can conclude
+  *"NO EDGE AT ANY THRESHOLD"*. More trades is never treated as better.
+- **ablate** removes one scoring factor at a time. A factor can come back
+  as *helping*, *no measurable effect*, or **HURTS**. "Trading bots
+  commonly use it" is not evidence.
+- **sweep** looks for a **plateau**, not a peak, and recommends the centre
+  of the widest stable region. An isolated high value is reported as
+  *"NO STABLE REGION — what an overfit parameter looks like."*
+
+### Safety: the entry kill switch
+
+Before every entry the bot asks whether its own state can be trusted:
+does the cash ledger reconcile against the trade record, is the open book
+structurally sound, has the price feed responded recently, and can enough
+of the book be priced to size a trade off it.
+
+It **fails closed** — a check that cannot run counts as a failure — and it
+**never closes existing positions**. Halting entries is safe; liquidating
+a book because a feed hiccuped turns a data problem into a real loss.
+
 ## Configuration reference
 
 Every variable is documented inline in [`.env.example`](.env.example) —

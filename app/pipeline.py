@@ -5,14 +5,20 @@ of stages, and every stage records what it decided and why:
 
     DISCOVERED       a listing source returned this mint
     PRESCREEN        liquidity / volume / age / transactions / sell pressure
+    RISK             kill switch, portfolio limits, exposure, cooldowns
     HISTORY          enough trustworthy candles exist to score it
     TECHNICAL_SCORE  the 0-100 signal score  (recorded even when rejected)
     MARKET_QUALITY   the 0-100 tradeability score  (likewise)
     SECURITY         the rug engine's verdict and 0-100 risk score
-    RISK             portfolio limits, exposure, cooldowns
     PAPER_EXECUTION  the simulated fill - which can fail
     OPEN_POSITION    a position now exists
     EXIT             the position closed, and why
+
+The order above is the order the buy path actually runs them in, and the
+funnel relies on that: RISK comes before scoring because rejecting a
+candidate on a portfolio limit costs nothing, while scoring it costs a pool
+resolution and a candle fetch. A funnel listing the stages in any other
+order would misattribute where candidates died.
 
 Two design decisions carry the weight here.
 
@@ -59,18 +65,32 @@ PAPER_EXECUTION = "PAPER_EXECUTION"
 OPEN_POSITION = "OPEN_POSITION"
 EXIT = "EXIT"
 
+# Pipeline order, and it must match the order app/services/trading_service.py
+# actually evaluates them in - the funnel computes stage-to-stage conversion
+# from this sequence, so a wrong order silently misreports which gate is
+# costing candidates.
 STAGE_ORDER: tuple[str, ...] = (
     DISCOVERED,
     PRESCREEN,
+    RISK,
     HISTORY,
     TECHNICAL_SCORE,
     MARKET_QUALITY,
     SECURITY,
-    RISK,
     PAPER_EXECUTION,
     OPEN_POSITION,
     EXIT,
 )
+
+# EXIT is an OUTCOME, not a filter. Its `passed` flag means "this trade was
+# profitable", so counting it as a funnel step would report the loss rate as
+# a rejection rate and name it the pipeline's bottleneck - which it can
+# never be, since every position that reaches it has already been opened.
+TERMINAL_STAGES: tuple[str, ...] = (EXIT,)
+
+# Stages that actually filter candidates. Conversion and bottleneck analysis
+# use these.
+FILTER_STAGES: tuple[str, ...] = tuple(s for s in STAGE_ORDER if s not in TERMINAL_STAGES)
 
 # Stages that produce a 0-100 score worth analysing a distribution over.
 SCORED_STAGES: tuple[str, ...] = (TECHNICAL_SCORE, MARKET_QUALITY, SECURITY)
