@@ -273,8 +273,53 @@ def test_backups_beside_the_database_are_flagged_as_pointless(sandbox, monkeypat
     assert "wiped along with the database" in warning
 
 
-def test_a_backup_dir_on_another_path_is_not_flagged(sandbox, tmp_path, monkeypatch):
+def test_a_sibling_directory_on_the_same_disk_is_still_flagged(sandbox, tmp_path, monkeypatch):
+    """This is the SHIPPED default - ./data next to ./backups.
+
+    An earlier version compared paths and warned only when BACKUP_DIR sat
+    inside the database's directory, so `commonpath` of ./data and
+    ./backups was the repo root and the warning never fired in the one
+    configuration it was written for. Being a sibling is not protection: a
+    deploy that replaces the filesystem takes both.
+    """
     monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path / "elsewhere"))
+    assert backup.warn_if_backups_are_pointless() is not None
+
+
+def test_the_shipped_defaults_warn(monkeypatch):
+    """Whatever the heuristic is, it has to fire for the config people
+    actually run - which is the one in .env.example."""
+    monkeypatch.setattr(settings, "DATABASE_URL", "sqlite:///./data/memecoin_bot.db")
+    monkeypatch.setattr(settings, "BACKUP_DIR", "./backups")
+    monkeypatch.setattr(settings, "BACKUP_ENABLED", True)
+    monkeypatch.setattr(settings, "BACKUP_DIR_IS_PERSISTENT", False)
+
+    assert backup.warn_if_backups_are_pointless() is not None
+
+
+def test_an_operator_can_say_the_disk_persists(sandbox, monkeypatch):
+    """The heuristic is deliberately noisy, so it needs an off switch -
+    otherwise the first thing anyone on a real VPS does is stop reading
+    startup warnings."""
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(sandbox.parent / "backups"))
+    monkeypatch.setattr(settings, "BACKUP_DIR_IS_PERSISTENT", True)
+
+    assert backup.warn_if_backups_are_pointless() is None
+
+
+def test_a_mounted_volume_is_not_flagged(sandbox, monkeypatch):
+    """A Docker/Railway/Fly volume shows up as a mount point, and that is
+    exactly the configuration the warning is asking for."""
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(sandbox.parent / "backups"))
+    monkeypatch.setattr(backup.os.path, "ismount", lambda path: True)
+
+    assert backup.warn_if_backups_are_pointless() is None
+
+
+def test_the_warning_is_silent_when_backups_are_off(sandbox, monkeypatch):
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(sandbox.parent / "backups"))
+    monkeypatch.setattr(settings, "BACKUP_ENABLED", False)
+
     assert backup.warn_if_backups_are_pointless() is None
 
 

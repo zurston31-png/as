@@ -1166,7 +1166,10 @@ python scripts/backup.py restore    # bring the newest one back
 ```
 
 or from the dashboard: `GET /backup`, `POST /backup/now`,
-`GET /backup/download`.
+`GET /backup/download`. All three need the dashboard credentials, and
+`POST /backup/now` also needs the CSRF token the dashboard renders into its
+forms - it rotates snapshots, so a page the operator merely visits must not
+be able to trigger it. Use the CLI for scripted snapshots.
 
 ### The setting that decides whether any of this works
 
@@ -1177,9 +1180,18 @@ BACKUP_DIR=./backups
 On Railway, Render, Fly, or a plain Heroku dyno the **entire filesystem is
 replaced on every deploy**. A snapshot written next to the database is
 wiped along with it — taken, verified, logged, and then thrown away with
-everything it was protecting. Point `BACKUP_DIR` at a mounted volume. The
-app logs a warning at startup when it looks like the backups are sitting on
-the disk they are supposed to survive.
+everything it was protecting. Point `BACKUP_DIR` at a mounted volume.
+
+The app warns at startup whenever `BACKUP_DIR` shares a filesystem with the
+database and is not a mounted volume. That heuristic is tuned to false
+alarms on purpose: nothing on disk records "this host wipes itself on
+deploy", and the two mistakes are not symmetric — a spurious log line costs
+nothing, missing the real case costs the whole dataset. On a VPS or
+bare-metal box where the disk genuinely survives, silence it:
+
+```
+BACKUP_DIR_IS_PERSISTENT=true
+```
 
 With no persistent disk at all, `GET /backup/download` is the escape hatch:
 it hands you the current database through the browser, so pull one before

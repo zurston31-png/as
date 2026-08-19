@@ -50,7 +50,11 @@ async def _snapshot_forever() -> None:
     while True:
         try:
             await asyncio.sleep(interval)
-            backup.take_snapshot(reason="scheduled")
+            # In a worker thread: the page copy plus integrity_check is
+            # seconds of blocking IO on a database of any size, and on the
+            # event loop it freezes the position monitor - stop-loss and
+            # take-profit checks - along with every HTTP request.
+            await asyncio.to_thread(backup.take_snapshot, reason="scheduled")
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -130,15 +134,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Snapshot on the way out. A graceful shutdown is the one moment the
-    # database is guaranteed quiet, and on a redeploy it is the last chance
-    # to capture everything since the previous scheduled snapshot.
-    if settings.BACKUP_ENABLED:
-        try:
-            backup.take_snapshot(reason="shutdown")
-        except Exception:
-            logger.exception("shutdown snapshot failed")
-
     position_monitor.stop()
     scanner_loop.stop()
     forward_return_worker.stop()
@@ -154,6 +149,23 @@ async def lifespan(app: FastAPI):
         _early_task.cancel()
     if _backup_task:
         _backup_task.cancel()
+
+    # cancel() only schedules the cancellation; the loops are still between
+    # await points until control returns here. Wait for them before the
+    # shutdown snapshot, otherwise it races the writes it exists to capture.
+    pending = [t for t in (_monitor_task, _scanner_task, _forward_task,
+                           _early_task, _backup_task) if t is not None]
+    if pending:
+        await asyncio.wait(pending, timeout=10)
+
+    # Snapshot on the way out, now that the writers really are quiet. On a
+    # redeploy this is the last chance to capture everything since the
+    # previous scheduled snapshot.
+    if settings.BACKUP_ENABLED:
+        try:
+            await asyncio.to_thread(backup.take_snapshot, reason="shutdown")
+        except Exception:
+            logger.exception("shutdown snapshot failed")
 
 
 app = FastAPI(title="Memecoin Trading Bot", lifespan=lifespan)

@@ -2,6 +2,7 @@
 performance stats, and manual halt/resume controls. Protected by HTTP
 Basic Auth (DASHBOARD_USERNAME/DASHBOARD_PASSWORD).
 """
+import asyncio
 import datetime as dt
 import secrets
 
@@ -682,13 +683,19 @@ async def backup_status(user: str = Depends(check_auth)):
 
 
 @router.post("/backup/now")
-async def backup_now(user: str = Depends(check_auth)):
+async def backup_now(user: str = Depends(check_auth), _csrf: None = Depends(check_csrf)):
     """Take a snapshot immediately.
 
     POST rather than GET: it writes a file and rotates old ones, so it must
     not be something a browser prefetch or a link crawler can trigger.
+
+    CSRF-guarded for the same reason as halt/resume: browsers attach cached
+    Basic credentials to cross-origin form posts, and this endpoint rotates
+    snapshots. BACKUP_KEEP submissions from a page the operator merely
+    visits would prune every real snapshot and leave copies of the current
+    database in their place.
     """
-    snapshot = backup.take_snapshot(reason="manual")
+    snapshot = await asyncio.to_thread(backup.take_snapshot, reason="manual")
     if snapshot is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -706,7 +713,9 @@ async def backup_download(user: str = Depends(check_auth)):
     way the dataset leaves the box. Takes a fresh snapshot first so the
     download is current rather than up to an hour stale.
     """
-    snapshot = backup.snapshot_for_download()
+    # In a worker thread: this may take a full snapshot, which is seconds of
+    # blocking IO and would otherwise stall the whole event loop.
+    snapshot = await asyncio.to_thread(backup.snapshot_for_download)
     if snapshot is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

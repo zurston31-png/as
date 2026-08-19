@@ -41,6 +41,7 @@ import datetime as dt
 import logging
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +51,10 @@ logger = logging.getLogger(__name__)
 
 BACKUP_SUFFIX = ".db"
 BACKUP_PREFIX = "snapshot-"
+
+# _row_count() could not read the database. Distinct from 0 ("definitely
+# nothing to lose") so the restore guard can refuse rather than assume.
+ROW_COUNT_UNKNOWN = -1
 
 
 def is_sqlite() -> bool:
@@ -124,7 +129,7 @@ def _verify(path: Path) -> bool:
     A snapshot that has not been checked is not a backup, it is a file.
     """
     try:
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as con:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as con:
             result = con.execute("PRAGMA integrity_check").fetchone()
             tables = con.execute(
                 "SELECT count(*) FROM sqlite_master WHERE type='table'"
@@ -190,8 +195,8 @@ def take_snapshot(*, reason: str = "scheduled") -> Snapshot | None:
     partial = final.with_suffix(".partial")
 
     try:
-        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src, \
-                sqlite3.connect(partial) as dst:
+        with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as src, \
+                closing(sqlite3.connect(partial)) as dst:
             # The online backup API, not a file copy: it holds the same
             # locks the database uses, so a write in flight cannot tear the
             # snapshot in half.
@@ -258,8 +263,17 @@ def database_is_empty() -> bool:
             tables = con.execute(
                 "SELECT count(*) FROM sqlite_master WHERE type='table'"
             ).fetchone()[0]
-    except sqlite3.Error:
-        return True
+    except sqlite3.Error as exc:
+        # Fail CLOSED. A lock, an exhausted fd table or a permissions hiccup
+        # says nothing about whether the database holds data - and answering
+        # "empty" here is what makes restore_if_empty() overwrite a live
+        # dataset because of a transient read error, the one loss this
+        # module cannot undo.
+        logger.error(
+            "could not read %s to decide whether it is empty (%s) - assuming "
+            "it holds data and leaving it alone", source, exc,
+        )
+        return False
     return tables == 0
 
 
@@ -282,10 +296,16 @@ def _row_count() -> int:
                           "trades", "positions", "token_observations", "watchlist"):
                 try:
                     total += con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-                except sqlite3.Error:
-                    continue      # table not present in an older schema
-    except sqlite3.Error:
-        return 0
+                except sqlite3.OperationalError as exc:
+                    if "no such table" in str(exc):
+                        continue  # not present in an older schema
+                    raise         # a lock or an IO error is NOT "zero rows"
+    except sqlite3.Error as exc:
+        # ROW_COUNT_UNKNOWN, never 0: telling restore() there are no rows
+        # here would let it overwrite a database that merely could not be
+        # read.
+        logger.error("could not count rows in %s: %s", source, exc)
+        return ROW_COUNT_UNKNOWN
     return total
 
 
@@ -308,12 +328,19 @@ def restore(snapshot: Snapshot | None = None, *, force: bool = False) -> bool:
         return False
 
     existing = _row_count()
-    if existing and not force:
-        logger.error(
-            "refusing to restore over a database holding %d rows - "
-            "run `python scripts/backup.py restore --force` if that is really intended",
-            existing,
-        )
+    if existing != 0 and not force:
+        if existing == ROW_COUNT_UNKNOWN:
+            logger.error(
+                "refusing to restore: could not read the existing database to check "
+                "whether it holds rows - run `python scripts/backup.py restore --force` "
+                "if overwriting it is really intended"
+            )
+        else:
+            logger.error(
+                "refusing to restore over a database holding %d rows - "
+                "run `python scripts/backup.py restore --force` if that is really intended",
+                existing,
+            )
         return False
 
     if not _verify(snapshot.path):
@@ -325,8 +352,8 @@ def restore(snapshot: Snapshot | None = None, *, force: bool = False) -> bool:
         # Copy through SQLite again rather than moving the file, so the
         # snapshot survives the restore and can be restored a second time
         # if this one turns out to be the wrong choice.
-        with sqlite3.connect(f"file:{snapshot.path}?mode=ro", uri=True) as src, \
-                sqlite3.connect(target) as dst:
+        with closing(sqlite3.connect(f"file:{snapshot.path}?mode=ro", uri=True)) as src, \
+                closing(sqlite3.connect(target)) as dst:
             src.backup(dst)
     except (sqlite3.Error, OSError) as exc:
         logger.error("restore from %s failed: %s", snapshot.path.name, exc)
@@ -371,27 +398,48 @@ def restore_if_empty() -> bool:
 
 
 def warn_if_backups_are_pointless() -> str | None:
-    """Is BACKUP_DIR on the same disk that gets wiped?
+    """Is BACKUP_DIR going to be wiped by the same event as the database?
 
-    A backup written next to the database dies with it on any host whose
-    filesystem is replaced on deploy - which is the single most common way
-    people lose this data, and it fails silently: the snapshots are taken,
-    verified, logged, and then thrown away with everything else.
+    Nothing on the filesystem records "this disk is replaced on deploy", so
+    this is a heuristic and it is tuned deliberately toward false alarms.
+    The two errors are not symmetric: a spurious line in a local dev log
+    costs nothing, while missing the real case costs the entire dataset,
+    silently, on a host where the snapshots were being taken and verified
+    right up to the moment they were deleted.
+
+    The signal is: BACKUP_DIR sits on the SAME FILESYSTEM as the database
+    and is not itself a mount point. A persistent disk - a Docker volume, a
+    Railway or Fly volume, an attached EBS - shows up as a separate device
+    or as a mount point, and neither warns.
+
+    An earlier version compared paths instead, warning only when BACKUP_DIR
+    was nested INSIDE the database's directory. The shipped default puts
+    them side by side (./data and ./backups), so the warning never fired in
+    the one configuration it was written for.
     """
     source = database_path()
     if source is None or not settings.BACKUP_ENABLED:
         return None
+    if settings.BACKUP_DIR_IS_PERSISTENT:
+        return None                      # the operator has said otherwise
+
     directory = backup_dir()
+    probe = directory if directory.exists() else directory.parent
     try:
-        same_disk = os.path.commonpath([directory, source.parent]) == str(source.parent)
-    except ValueError:
-        same_disk = False
-    if same_disk:
-        return (
-            f"BACKUP_DIR ({directory}) is inside the database's own directory "
-            f"({source.parent}). On a host that replaces the filesystem on deploy - "
-            "Railway, Render, Fly, a plain Heroku dyno - the snapshots are wiped along "
-            "with the database they were protecting. Point BACKUP_DIR at a mounted "
-            "volume, or download snapshots from /backup/download."
-        )
-    return None
+        if os.path.ismount(directory):
+            return None                  # a mounted volume: exactly right
+        same_device = probe.stat().st_dev == source.parent.stat().st_dev
+    except OSError:
+        return None                      # cannot tell; do not cry wolf
+
+    if not same_device:
+        return None
+
+    return (
+        f"BACKUP_DIR ({directory}) is on the same filesystem as the database "
+        f"({source.parent}) and is not a mounted volume. On a host that replaces the "
+        "filesystem on deploy - Railway, Render, Fly, a plain Heroku dyno - the snapshots "
+        "are wiped along with the database they were protecting. Point BACKUP_DIR at a "
+        "mounted volume, or download snapshots from /backup/download. Set "
+        "BACKUP_DIR_IS_PERSISTENT=true to silence this if the disk really does survive."
+    )

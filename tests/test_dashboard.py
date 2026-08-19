@@ -113,13 +113,13 @@ def test_halt_and_resume_round_trip():
 def test_state_changing_endpoints_reject_missing_csrf_token():
     """Browsers attach cached Basic Auth to cross-origin form posts, so auth
     alone would let a visited page resume a bot the risk manager halted."""
-    for path in ("/api/halt", "/api/resume"):
+    for path in ("/api/halt", "/api/resume", "/backup/now"):
         resp = client.post(path, auth=AUTH, follow_redirects=False)
         assert resp.status_code == 403, f"{path} accepted a request with no CSRF token"
 
 
 def test_state_changing_endpoints_reject_wrong_csrf_token():
-    for path in ("/api/halt", "/api/resume"):
+    for path in ("/api/halt", "/api/resume", "/backup/now"):
         resp = client.post(path, auth=AUTH, data={"csrf_token": "not-the-token"},
                            follow_redirects=False)
         assert resp.status_code == 403

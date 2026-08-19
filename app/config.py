@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # Restore automatically when the database is missing or has no tables.
     # Never over a database that already holds rows - see app/backup.py.
     BACKUP_RESTORE_ON_EMPTY: bool = True
+    # Silences the startup warning about snapshots sharing a disk with the
+    # database. Set it only if that disk genuinely survives a redeploy - a
+    # VPS, a bare-metal box, a mounted volume. The warning is deliberately
+    # noisy because a false alarm costs a log line and a miss costs the
+    # whole dataset.
+    BACKUP_DIR_IS_PERSISTENT: bool = False
     LOG_LEVEL: str = "INFO"
 
     # --- Webhook ---
