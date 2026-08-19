@@ -346,6 +346,18 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         await notifier.notify_rejection(signal, reason)
         return
 
+    # --- early signal: a technical rejection is not always a discard ----
+    # Runs after security and market quality have both passed, so nothing
+    # here can rescue a token that failed either. Its only power is to put
+    # a candidate the technical gate turned down onto the WATCH list
+    # instead of throwing it away - which is the whole point of having a
+    # third state.
+    if settings.EARLY_SIGNAL_ENABLED and signal.token_address:
+        try:
+            await _consider_for_watchlist(db, signal, report)
+        except Exception:
+            logger.exception("early-signal evaluation failed for %s - continuing", signal.symbol)
+
     portfolio_value = await portfolio.get_portfolio_value_usd(db)
     total_exposure = await portfolio.get_open_positions_value_usd(db)
     symbol_exposure = await portfolio.get_token_exposure_usd(
@@ -462,6 +474,62 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     portfolio.adjust_cash_balance(db, -size_usd)
 
     await notifier.notify_trade_executed(trade, extra=f"entry ${result.avg_price:.8f} | SL ${sl:.8f} / TP ${tp:.8f}")
+
+
+async def _consider_for_watchlist(db: Session, signal: models.Signal, report) -> None:
+    """Score a candidate on the early engine and record the verdict.
+
+    Never opens a position and never blocks one. It records a WATCH entry
+    so a token that is promising but unconfirmed stays under observation,
+    and it stores the observation that makes flow features measurable next
+    time. The actual entry decision stays entirely with the code below
+    this call.
+    """
+    from app.early import watchlist as wl
+    from app.early.engine import evaluate as evaluate_early
+
+    market = await price_feed.get_market_snapshot(signal.token_address)
+    if market is None:
+        return
+
+    wl.store_observation(db, signal.symbol, signal.token_address, market)
+    observations = wl.recent_observations(db, signal.token_address)
+
+    series = None
+    try:
+        from app.data.candles import Timeframe
+        from app.data.live_provider import fetch_live_series
+
+        series = await fetch_live_series(signal.chain, signal.token_address, Timeframe.M5, limit=300)
+    except Exception:
+        logger.debug("no candle history for early scoring of %s", signal.symbol, exc_info=True)
+
+    verdict = evaluate_early(
+        series=series,
+        market=market,
+        observations=observations,
+        security_passed=report.passed,
+        security_reason="; ".join(report.reasons),
+        security_score=report.rug_risk_score,
+        technical_score=signal.signal_score,
+        market_quality_score=signal.market_quality_score,
+    )
+
+    entry = wl.record(
+        db,
+        token_address=signal.token_address,
+        symbol=signal.symbol,
+        chain=signal.chain,
+        verdict=verdict,
+        price=signal.price,
+    )
+    if entry is not None:
+        logger.info(
+            "early signal %s: %s (early %.0f, late risk %.0f, %s)",
+            signal.symbol, verdict.decision.value,
+            verdict.early_score or 0, verdict.late_risk or 0,
+            verdict.stage.value if verdict.stage else "unstaged",
+        )
 
 
 async def _handle_sell_signal(db: Session, signal: models.Signal) -> None:

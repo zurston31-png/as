@@ -42,6 +42,8 @@ class TokenDetail:
     trades: list[models.Trade] = field(default_factory=list)
     rejections: list[models.RiskEvent] = field(default_factory=list)
     timeline: list[TokenEvent] = field(default_factory=list)
+    watchlist: "models.WatchlistEntry | None" = None
+    observations: list = field(default_factory=list)
 
     @property
     def found(self) -> bool:
@@ -96,6 +98,21 @@ def _aware(moment: dt.datetime | None) -> dt.datetime:
 def build_token_detail(db: Session, token_address: str) -> TokenDetail:
     """Gather every record touching one mint address."""
     detail = TokenDetail(token_address=token_address)
+
+    # The early-signal watchlist entry, if this token was ever watched. Its
+    # score history is the only place the bot records how a candidate's
+    # assessment CHANGED over time, which is what makes "was it improving?"
+    # answerable at all.
+    detail.watchlist = (
+        db.query(models.WatchlistEntry).filter_by(token_address=token_address).first()
+    )
+    detail.observations = (
+        db.query(models.TokenObservation)
+        .filter(models.TokenObservation.token_address == token_address)
+        .order_by(models.TokenObservation.observed_at.asc())
+        .limit(200)
+        .all()
+    )
 
     detail.scanned = (
         db.query(models.ScannedToken).filter_by(token_address=token_address).first()

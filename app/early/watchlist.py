@@ -154,6 +154,12 @@ def record(
             score_history=[], features={},
         )
         db.add(entry)
+        # Flush immediately. The session runs with autoflush=False, so
+        # without this a second evaluation of the same token in the same
+        # session would not find this row and would insert a duplicate,
+        # failing the UNIQUE constraint at commit and taking the whole
+        # transaction - including unrelated work - down with it.
+        db.flush()
 
     entry.symbol = symbol
     entry.last_evaluated_at = now

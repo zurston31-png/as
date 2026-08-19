@@ -403,3 +403,88 @@ def test_every_page_links_to_the_research_page():
 def test_the_research_page_requires_auth():
     assert client.get("/research").status_code == 401
     assert client.get("/api/research").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# early signals page
+# ---------------------------------------------------------------------------
+
+def test_the_early_page_says_it_cannot_trade_while_the_switch_is_off():
+    """The most important thing on the page. A live list of high-scoring
+    tokens next to nothing saying "this is unvalidated" is an invitation."""
+    resp = client.get("/early", auth=AUTH)
+    assert resp.status_code == 200
+    assert "Research mode" in resp.text
+    assert "cannot open a position" in resp.text
+    assert "unvalidated priors" in resp.text
+
+
+def test_the_early_page_renders_a_populated_watchlist():
+    import datetime as dt
+
+    from app import models
+    from app.database import SessionLocal
+
+    now = dt.datetime.now(dt.timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add(models.WatchlistEntry(
+            token_address="MintWatchUI", symbol="WATCHUI", chain="solana",
+            state="WATCH", stage="DEVELOPING", early_score=72.0, technical_score=58.0,
+            security_score=20.0, market_quality_score=71.0, late_entry_risk=18.0,
+            momentum_class="BREAKOUT", reason="promising but unconfirmed",
+            best_early_score=74.0, evaluations=6,
+            first_seen_at=now, last_evaluated_at=now,
+            price_at_first_signal=0.004, first_signal_at=now,
+            score_history=[
+                {"at": now.isoformat(), "early": 61.0, "technical": 50.0,
+                 "late_risk": 10.0, "stage": "EARLY", "momentum": "ACCUMULATION",
+                 "decision": "WATCH"},
+                {"at": now.isoformat(), "early": 72.0, "technical": 58.0,
+                 "late_risk": 18.0, "stage": "DEVELOPING", "momentum": "BREAKOUT",
+                 "decision": "WATCH"},
+            ],
+        ))
+        db.commit()
+
+        resp = client.get("/early", auth=AUTH)
+        assert resp.status_code == 200
+        assert "WATCHUI" in resp.text
+        assert "DEVELOPING" in resp.text
+        # All four scores plus late risk must be on one row.
+        for value in ("72", "58", "71", "18"):
+            assert value in resp.text
+
+        # ...and the token page shows how the score moved.
+        detail = client.get("/token/MintWatchUI", auth=AUTH)
+        assert detail.status_code == 200
+        assert "score history" in detail.text.lower()
+        assert "ACCUMULATION" in detail.text
+    finally:
+        for row in db.query(models.WatchlistEntry).filter_by(token_address="MintWatchUI").all():
+            db.delete(row)
+        db.commit()
+        db.close()
+
+
+def test_the_early_api_is_json_safe():
+    import json
+
+    resp = client.get("/api/early", auth=AUTH)
+    assert resp.status_code == 200
+    payload = resp.json()
+    json.dumps(payload, allow_nan=False)
+    assert payload["may_trade"] is False
+    assert "false_positives" in payload and "lead_time" in payload
+
+
+def test_the_early_page_requires_auth():
+    assert client.get("/early").status_code == 401
+    assert client.get("/api/early").status_code == 401
+
+
+def test_every_page_links_to_early_signals():
+    for path in ("/", "/pipeline", "/performance", "/journal", "/research"):
+        resp = client.get(path, auth=AUTH)
+        assert resp.status_code == 200
+        assert "/early" in resp.text, f"{path} does not link to /early"

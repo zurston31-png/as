@@ -47,9 +47,56 @@
     <a class="navlink" href="/pipeline">&larr; Pipeline</a>
     &nbsp;&nbsp;<a class="navlink" href="/">Dashboard</a>
     &nbsp;&nbsp;<a class="navlink" href="/research">Research</a>
+    &nbsp;&nbsp;<a class="navlink" href="/early">Early</a>
   </div>
 </header>
 <main>
+
+{% if d.watchlist %}
+<div class="card">
+  <h2>Early signal — score history</h2>
+  <p class="muted" style="font-size:12.5px; line-height:1.55; margin-top:0">
+    State <strong>{{ d.watchlist.state }}</strong>
+    {% if d.watchlist.stage %}at stage <strong>{{ d.watchlist.stage }}</strong>{% endif %}
+    {% if d.watchlist.momentum_class %}, pattern {{ d.watchlist.momentum_class }}{% endif %}.
+    Best early score {{ '%.0f' % d.watchlist.best_early_score if d.watchlist.best_early_score is not none else '—' }}
+    over {{ d.watchlist.evaluations }} evaluation(s).
+    {% if d.watchlist.failure_category %}
+      Resolved as <strong>{{ d.watchlist.failure_category }}</strong>.
+    {% endif %}
+    <br>{{ d.watchlist.reason }}
+  </p>
+
+  {% set history = d.watchlist.score_history or [] %}
+  {% if history %}
+  <table style="margin-top:12px">
+    <tr>
+      <th>at</th><th class="num">early</th><th class="num">technical</th>
+      <th class="num">late risk</th><th>stage</th><th>pattern</th><th>decision</th>
+    </tr>
+    {% for h in history[-40:] | reverse %}
+    <tr>
+      <td class="muted">{{ h.at[:19].replace('T', ' ') }}</td>
+      <td class="num">{{ '%.0f' % h.early if h.early is not none else '—' }}</td>
+      <td class="num">{{ '%.0f' % h.technical if h.technical is not none else '—' }}</td>
+      <td class="num">{{ '%.0f' % h.late_risk if h.late_risk is not none else '—' }}</td>
+      <td class="muted">{{ h.stage or '—' }}</td>
+      <td class="muted">{{ h.momentum or '—' }}</td>
+      <td class="muted">{{ h.decision or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="muted" style="font-size:12px; margin-top:10px; line-height:1.5">
+    Newest first. Recorded on every re-evaluation so it is possible to ask whether an
+    <em>improving</em> score predicts better outcomes than a high static one — a question no
+    single snapshot per token can answer.
+  </p>
+  {% else %}
+  <div class="muted" style="padding:18px 0; font-size:13px">No score history recorded yet.</div>
+  {% endif %}
+</div>
+{% endif %}
+
 
 <div class="card">
   <div class="verdict">{{ d.verdict }}</div>

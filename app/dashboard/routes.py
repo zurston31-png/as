@@ -18,6 +18,10 @@ from app.analysis.research_report import build_research_report
 from app.analysis.score_distribution import build_score_distribution
 from app.analysis.stage_funnel import build_stage_funnel
 from app.pipeline import MARKET_QUALITY, SECURITY, TECHNICAL_SCORE
+from app.analysis.early_calibration import (
+    build_early_calibration, build_false_positives, build_lead_time,
+)
+from app.early import watchlist as wl
 from app.safety import killswitch
 from app.analysis.report import build_performance_report
 from app.analysis.token_detail import build_token_detail
@@ -497,6 +501,123 @@ async def api_research(user: str = Depends(check_auth)):
                 build_calibration(db, horizon_minutes=h).as_dict() for h in HORIZONS_MINUTES
             ],
             "forward_return_coverage": forward_coverage(db),
+        })
+    finally:
+        db.close()
+
+
+@router.get("/early")
+async def early_signals(request: Request, user: str = Depends(check_auth)):
+    """The Early Signals watchlist and what it has produced so far.
+
+    Separate from /research because they answer different questions: this
+    is "what is the engine looking at right now", that is "is the engine
+    any good". Mixing them would put a live, tempting list of high-scoring
+    tokens next to the numbers that say the score is unvalidated, and the
+    list would win.
+    """
+    db = SessionLocal()
+    try:
+        watching = wl.active(db)
+        resolved = (
+            db.query(models.WatchlistEntry)
+            .filter(models.WatchlistEntry.state.in_(list(wl.TERMINAL_STATES)))
+            .order_by(models.WatchlistEntry.last_evaluated_at.desc())
+            .limit(40)
+            .all()
+        )
+        return templates.TemplateResponse(
+            request,
+            "early.html",
+            {
+                "watching": watching,
+                "resolved": resolved,
+                "false_positives": build_false_positives(db),
+                "lead_time": build_lead_time(db),
+                "calibration": [
+                    build_early_calibration(db, horizon_minutes=h) for h in (15, 60, 240)
+                ],
+                "may_trade": settings.EARLY_SIGNAL_MAY_TRADE,
+                "enabled": settings.EARLY_SIGNAL_ENABLED,
+                "watch_threshold": settings.EARLY_SIGNAL_WATCH_THRESHOLD,
+                "confirm_threshold": settings.EARLY_SIGNAL_CONFIRM_THRESHOLD,
+                "alerts": _early_alerts(watching),
+            },
+        )
+    finally:
+        db.close()
+
+
+def _early_alerts(watching: list) -> list[dict]:
+    """Dashboard-only alerts. Research signals, never execution triggers.
+
+    Each one names a state change worth a human glance: a score crossing
+    the confirm threshold, a score improving fast, or a watched token
+    deteriorating. Nothing here places or cancels anything.
+    """
+    alerts: list[dict] = []
+    for entry in watching:
+        score = entry.early_score or 0.0
+        history = entry.score_history or []
+
+        if entry.state == wl.CONFIRMED:
+            alerts.append({
+                "level": "good", "symbol": entry.symbol, "token": entry.token_address,
+                "message": f"CONFIRMED at early score {score:.0f}",
+            })
+        elif score >= settings.EARLY_SIGNAL_CONFIRM_THRESHOLD:
+            alerts.append({
+                "level": "good", "symbol": entry.symbol, "token": entry.token_address,
+                "message": f"early score {score:.0f} crossed the confirm threshold",
+            })
+
+        if len(history) >= 3:
+            earlier = history[-3].get("early")
+            if earlier is not None and score - earlier >= 10:
+                alerts.append({
+                    "level": "good", "symbol": entry.symbol, "token": entry.token_address,
+                    "message": f"early score improving fast: {earlier:.0f} -> {score:.0f}",
+                })
+
+        if (entry.late_entry_risk or 0) >= 45:
+            alerts.append({
+                "level": "warn", "symbol": entry.symbol, "token": entry.token_address,
+                "message": f"late-entry risk {entry.late_entry_risk:.0f} - the window is closing",
+            })
+
+        if wl.deteriorating(entry):
+            alerts.append({
+                "level": "warn", "symbol": entry.symbol, "token": entry.token_address,
+                "message": (
+                    f"score fading: {entry.best_early_score:.0f} -> {score:.0f}"
+                ),
+            })
+    return alerts[:25]
+
+
+@router.get("/api/early")
+async def api_early(user: str = Depends(check_auth)):
+    db = SessionLocal()
+    try:
+        return JSONResponse({
+            "may_trade": settings.EARLY_SIGNAL_MAY_TRADE,
+            "watching": [
+                {
+                    "symbol": e.symbol, "token_address": e.token_address, "state": e.state,
+                    "stage": e.stage, "early_score": e.early_score,
+                    "technical_score": e.technical_score,
+                    "security_score": e.security_score,
+                    "late_entry_risk": e.late_entry_risk,
+                    "momentum_class": e.momentum_class, "reason": e.reason,
+                    "evaluations": e.evaluations,
+                }
+                for e in wl.active(db)
+            ],
+            "false_positives": build_false_positives(db).as_dict(),
+            "lead_time": build_lead_time(db).as_dict(),
+            "calibration": [
+                build_early_calibration(db, horizon_minutes=h).as_dict() for h in (15, 60, 240)
+            ],
         })
     finally:
         db.close()

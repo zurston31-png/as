@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.dashboard.routes import router as dashboard_router
 from app.database import SessionLocal, init_db
+from app.early import loop as early_loop
 from app.monitor import forward_return_worker, position_monitor
 from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
@@ -33,11 +34,12 @@ scheduler = AsyncIOScheduler()
 _monitor_task: asyncio.Task | None = None
 _scanner_task: asyncio.Task | None = None
 _forward_task: asyncio.Task | None = None
+_early_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _monitor_task, _scanner_task, _forward_task
+    global _monitor_task, _scanner_task, _forward_task, _early_task
     init_db()
 
     mode = "LIVE" if settings.LIVE_TRADING else "PAPER"
@@ -73,6 +75,7 @@ async def lifespan(app: FastAPI):
 
     _monitor_task = asyncio.create_task(position_monitor.run_forever())
     _forward_task = asyncio.create_task(forward_return_worker.run_forever())
+    _early_task = asyncio.create_task(early_loop.run_forever())
 
     scanner_blocked = scanner_loop.scanner_blocked_reason()
     if scanner_blocked:
@@ -94,6 +97,7 @@ async def lifespan(app: FastAPI):
     position_monitor.stop()
     scanner_loop.stop()
     forward_return_worker.stop()
+    early_loop.stop()
     scheduler.shutdown(wait=False)
     if _monitor_task:
         _monitor_task.cancel()
@@ -101,6 +105,8 @@ async def lifespan(app: FastAPI):
         _scanner_task.cancel()
     if _forward_task:
         _forward_task.cancel()
+    if _early_task:
+        _early_task.cancel()
 
 
 app = FastAPI(title="Memecoin Trading Bot", lifespan=lifespan)
