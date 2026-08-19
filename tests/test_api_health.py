@@ -105,6 +105,35 @@ def test_a_huge_error_body_is_truncated():
     assert len(api_health.get("goplus").last_error) == 500
 
 
+@pytest.mark.parametrize("param", ["apikey", "api_key", "API-KEY", "token", "secret", "password"])
+def test_a_credential_in_an_error_url_is_redacted(param):
+    """last_error is a raw exception string (which embeds the URL) and it is
+    rendered on the dashboard. Nothing this bot calls today puts a key in a
+    query string - Birdeye and GoPlus both use headers - but the day one
+    does, it must not appear on a web page."""
+    api_health.record_failure(
+        "future_service", f"HTTP 401 for https://api.example.com/v1?{param}=sk_live_abc123&limit=5"
+    )
+    error = api_health.get("future_service").last_error
+    assert "sk_live_abc123" not in error
+    assert "[REDACTED]" in error
+    assert "limit=5" in error          # non-secret parameters survive
+
+
+def test_redaction_leaves_an_ordinary_error_alone():
+    api_health.record_failure("dexscreener", "HTTP 429 after 3 attempts")
+    assert api_health.get("dexscreener").last_error == "HTTP 429 after 3 attempts"
+
+
+def test_redaction_happens_before_truncation():
+    """Truncating first could leave a partial credential in the visible
+    prefix."""
+    api_health.record_failure("x", "https://a.io/b?apikey=" + "S" * 900)
+    error = api_health.get("x").last_error
+    assert "SSS" not in error
+    assert len(error) <= 500
+
+
 def test_the_snapshot_sorts_problems_to_the_top():
     api_health.record_success("healthy")
     api_health.record_success("flaky")

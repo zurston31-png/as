@@ -150,3 +150,35 @@ def test_checks_never_mutate_settings(monkeypatch):
     monkeypatch.setattr(settings, "MIN_SIGNAL_SCORE_TO_ENTER", 99.0)
     check_config_coherence()
     assert settings.MIN_SIGNAL_SCORE_TO_ENTER == 99.0
+
+
+# ---------------------------------------------------------------------------
+# .env.example must stay in step with Settings
+# ---------------------------------------------------------------------------
+
+def test_every_setting_is_documented_in_env_example():
+    """A setting nobody can discover is a setting nobody will configure.
+
+    This drifts silently: adding a field to Settings works fine without
+    touching .env.example, and the gap only shows up when an operator asks
+    why the bot behaves in a way they cannot find a knob for. Six settings
+    had already drifted when this test was written, including the paper
+    fill-model knobs that change simulated P&L directly.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    declared = set(re.findall(
+        r"^\s{4}([A-Z][A-Z0-9_]+)\s*:", (root / "app" / "config.py").read_text(), re.M
+    ))
+    documented = set(re.findall(
+        r"^([A-Z][A-Z0-9_]+)=", (root / ".env.example").read_text(), re.M
+    ))
+
+    assert not (declared - documented), (
+        f"settings missing from .env.example: {sorted(declared - documented)}"
+    )
+    assert not (documented - declared), (
+        f".env.example documents keys that are not settings: {sorted(documented - declared)}"
+    )

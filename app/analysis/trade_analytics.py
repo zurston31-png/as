@@ -120,8 +120,18 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
             missing += 1
             continue
 
+        # execution_cost_pct is a FRACTION, so turning it into dollars needs
+        # the notional. A leg with a cost percentage but no recorded size
+        # would otherwise contribute exactly $0 to the total while still
+        # counting as covered - understating costs and reporting 100%
+        # coverage while doing it, which is the precise failure this module
+        # exists to avoid. Such a leg is counted as unmeasured instead.
+        notional = t.size_usd or ((t.qty or 0.0) * (t.exit_price or t.entry_price or 0.0))
+        if t.execution_cost_pct is not None and not notional:
+            missing += 1
+            continue
+
         counted += 1
-        notional = (t.size_usd or 0.0) or ((t.qty or 0.0) * (t.exit_price or t.entry_price or 0.0))
         if t.fee_usd is not None:
             fees += t.fee_usd
         if t.execution_cost_pct is not None:

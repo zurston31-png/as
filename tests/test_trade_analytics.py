@@ -348,3 +348,29 @@ def test_the_open_ended_last_bucket_sorts_last():
         {1: 900_000.0, 2: 10_000.0, 3: 60_000.0},
     )
     assert [b.label for b in breakdown.buckets] == ["<25000", "50000-100000", "250000+"]
+
+
+def test_a_cost_percentage_with_no_notional_is_unmeasured_not_free():
+    """execution_cost_pct is a fraction; without a notional it converts to
+    exactly $0. Counting that leg as covered would understate the total and
+    report 100% coverage while doing it."""
+    trades = [
+        _trade(pnl=10.0, fee=0.25, cost_pct=0.006, size=100.0),
+        _trade(pnl=10.0, fee=None, cost_pct=0.006, size=0.0),   # size never recorded
+    ]
+    costs = ta.summarize_costs(trades)
+    assert costs.legs_counted == 1
+    assert costs.legs_missing_cost_data == 1
+    assert costs.cost_data_complete is False
+    assert costs.total_execution_cost_usd == pytest.approx(0.6)
+
+
+def test_a_leg_priced_from_qty_is_still_counted():
+    """size_usd can be absent on an exit leg; qty x price is the fallback,
+    and it must not be mistaken for a missing notional."""
+    trade = _trade(pnl=10.0, fee=0.25, cost_pct=0.01, size=0.0)
+    trade.qty = 500.0
+    trade.exit_price = 0.02          # $10 notional
+    costs = ta.summarize_costs([trade])
+    assert costs.legs_counted == 1
+    assert costs.total_execution_cost_usd == pytest.approx(0.1)

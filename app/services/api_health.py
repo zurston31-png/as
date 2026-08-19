@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 
@@ -49,6 +50,22 @@ DEGRADED_AFTER_CONSECUTIVE_FAILURES = 3
 # At most one database write per service per this interval. The counters
 # are exact in memory; the persisted copy is allowed to lag.
 PERSIST_EVERY_SECONDS = 30.0
+
+# Query-string parameters whose value must never survive into last_error.
+# Nothing this bot calls today puts a credential in a URL - Birdeye and
+# GoPlus both use headers - but last_error is rendered on the dashboard and
+# comes from raw exception strings, which include the URL. The day someone
+# adds a service that takes `?apikey=`, this is what stops it appearing on
+# a web page.
+_SECRETISH_PARAM = re.compile(
+    r"((?:api[_-]?key|apikey|access[_-]?token|token|secret|key|password|auth)=)[^&\s\"']+",
+    re.IGNORECASE,
+)
+
+
+def redact(text: str) -> str:
+    """Strip credential-looking query-string values from an error string."""
+    return _SECRETISH_PARAM.sub(r"\1[REDACTED]", text or "")
 
 
 @dataclass
@@ -135,9 +152,12 @@ def record_failure(service: str, error: str) -> ServiceHealth:
     with _lock:
         health = _registry.setdefault(service, ServiceHealth(service))
         health.last_failure_at = dt.datetime.now(dt.timezone.utc)
-        # Truncated: some upstreams return an entire HTML error page, and a
-        # dashboard cell is not the place for it.
-        health.last_error = (error or "")[:500]
+        # Redacted then truncated: the message is a raw exception string
+        # (which embeds the URL) and it is rendered on the dashboard, so a
+        # credential in a query string must not survive. Truncated because
+        # some upstreams return an entire HTML error page, and a dashboard
+        # cell is not the place for it.
+        health.last_error = redact(error)[:500]
         health.failure_count += 1
         health.consecutive_failures += 1
         if health.consecutive_failures == DEGRADED_AFTER_CONSECUTIVE_FAILURES:
