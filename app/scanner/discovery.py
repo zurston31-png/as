@@ -35,9 +35,8 @@ import datetime as dt
 import logging
 from dataclasses import dataclass
 
-import httpx
-
 from app.config import settings
+from app.services import http
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +92,14 @@ def _to_int(value):
 
 
 async def _get_json(url: str, *, headers: dict | None = None, params: dict | None = None):
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers=headers, params=params)
-            resp.raise_for_status()
-            return resp.json()
-    except Exception:
-        logger.warning("token discovery request failed: %s", url, exc_info=True)
-        return None
+    """Discovery fetch, via the shared rate-limit-aware helper.
+
+    The scanner is the heaviest caller in the bot - a batch of listing plus
+    hydration requests on every tick - so it is the most likely to earn a
+    429, and the one that most needs to back off rather than silently
+    return nothing.
+    """
+    return await http.get_json(url, headers=headers, params=params, label=f"token discovery {url}")
 
 
 # ---------------------------------------------------------------------------

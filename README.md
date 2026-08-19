@@ -455,6 +455,39 @@ your actual deployment (step 4/4) before trusting this gate's verdicts
 unattended; it fetches the exact same pool-resolution and OHLCV endpoints
 this module uses and tells you plainly if the shape doesn't match.
 
+## Operational notes
+
+**Upgrading an existing deployment.** `init_db()` runs an additive schema
+migration on startup (`app/migrations.py`): SQLAlchemy's `create_all()`
+creates new tables but never adds a column to a table that already exists,
+so a database from an earlier build would otherwise come back up missing
+every column added since and die on the first query. The migration adds
+missing columns only — it never renames, drops, or retypes anything, and it
+never does a computed backfill. Columns with a simple scalar default take
+that default on existing rows (a signal written before the scanner existed
+really was `source="tradingview"`); everything else lands NULL, which
+honestly means "not recorded at the time". If this project ever needs a
+destructive or data-transforming change, that's the point to adopt Alembic
+— this deliberately refuses to do the dangerous half.
+
+**Rate limits.** Every data source here is a free or cheap public tier, and
+three subsystems hit them at once: the scanner (a batch every 60s), the
+position monitor (a price per open position every 30s), and the trade path
+(rug-check lookups plus a candle fetch per candidate). `app/services/http.py`
+retries 429s and 5xx with jittered exponential backoff, honoring
+`Retry-After` when the server sends one, and does *not* retry other 4xx
+(a bad address fails the same way however often you ask). Jitter matters
+because the scanner fires a batch on a fixed tick — a fixed backoff would
+have them all retry in lockstep and re-trigger the same limit. If you're
+getting throttled, the log says so explicitly rather than looking like
+"no good setups".
+
+**Paper fees.** Paper mode charges `PAPER_FEE_PCT` (default 0.25%) per side
+on top of its slippage buffer, matching `BacktestConfig.fee_pct`. Without
+it, paper trading was systematically cheaper than the backtest meant to
+validate it — a strategy could pass on paper purely because paper was
+free, which is the wrong direction for an error to lean.
+
 ## Deployment
 
 See [`deploy/vps_setup.md`](deploy/vps_setup.md) for full step-by-step

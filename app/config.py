@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     CEX_API_KEY: Optional[str] = None
     CEX_API_SECRET: Optional[str] = None
 
+    # Trading fee charged per side in PAPER mode. Defaults to the same
+    # 0.25% the backtester uses (BacktestConfig.fee_pct) so paper results
+    # and backtest results are comparable - a paper engine that charged no
+    # fee would look better than the backtest meant to validate it, which
+    # is the wrong direction for an error to point.
+    PAPER_FEE_PCT: float = 0.0025
+
     SLIPPAGE_BPS: int = 150
     MAX_GAS_PRICE_GWEI: float = 50.0
     MAX_TRADE_SIZE_USD: float = 200.0

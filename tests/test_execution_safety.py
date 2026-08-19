@@ -135,6 +135,54 @@ async def test_paper_sell_fills_below_mid(monkeypatch):
     assert result.avg_price < 0.001
 
 
+async def test_paper_fills_are_no_cheaper_than_the_backtester_charges(monkeypatch):
+    """Paper trading must not be rosier than the backtest meant to validate
+    it. The paper engine charges slippage + PAPER_FEE_PCT per side; the
+    backtester charges slippage + spread + fee_pct. Paper's round-trip cost
+    must therefore be at least the fee the backtester assumes, or a strategy
+    could pass on paper purely because paper was cheaper - the wrong
+    direction for an error to point."""
+    from app.backtesting.types import BacktestConfig
+    from app.execution import paper
+
+    async def fake_price(_addr):
+        return 1.0
+    monkeypatch.setattr(paper.price_feed, "get_price_usd", fake_price)
+
+    client = PaperExecutionClient()
+    buy = await client.buy("SomeToken", 100.0, 150)
+    sell = await client.sell("SomeToken", buy.filled_qty, 150)
+
+    # Round-trip cost as a fraction of the notional.
+    proceeds = sell.filled_qty * sell.avg_price
+    paper_round_trip_cost = (100.0 - proceeds) / 100.0
+
+    backtest_fee_only = BacktestConfig().fee_pct * 2  # charged per side
+    assert paper_round_trip_cost >= backtest_fee_only, (
+        f"paper round trip cost {paper_round_trip_cost:.4%} is cheaper than the "
+        f"backtester's fees alone ({backtest_fee_only:.4%})"
+    )
+
+
+async def test_paper_fee_is_actually_applied(monkeypatch):
+    """Raising PAPER_FEE_PCT must make fills measurably worse - guards
+    against the fee being wired up but multiplied by nothing."""
+    from app.execution import paper
+
+    async def fake_price(_addr):
+        return 1.0
+    monkeypatch.setattr(paper.price_feed, "get_price_usd", fake_price)
+
+    monkeypatch.setattr(settings, "PAPER_FEE_PCT", 0.0)
+    free = await PaperExecutionClient().buy("SomeToken", 100.0, 150)
+
+    monkeypatch.setattr(settings, "PAPER_FEE_PCT", 0.05)
+    expensive = await PaperExecutionClient().buy("SomeToken", 100.0, 150)
+
+    assert expensive.avg_price > free.avg_price
+    assert expensive.filled_qty < free.filled_qty
+
+
 async def test_paper_engine_fails_closed_without_a_price(monkeypatch):
     from app.execution import paper
 

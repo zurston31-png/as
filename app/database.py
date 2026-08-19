@@ -43,6 +43,14 @@ def init_db() -> None:
     from app import models  # noqa: F401  (registers tables on Base.metadata)
 
     Base.metadata.create_all(bind=engine)
+
+    # create_all() only creates tables that don't exist - it never adds a
+    # column to a table that does. Without this, upgrading a deployment that
+    # was running an earlier build leaves its tables missing every column
+    # added since, and the first query dies on "no such column".
+    from app.migrations import apply_additive_migrations
+
+    apply_additive_migrations(engine)
     _seed_state()
 
 

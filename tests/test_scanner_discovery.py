@@ -45,8 +45,15 @@ def _pair(address="Addr1", symbol="COIN", liquidity=50_000, chain="solana"):
 
 def _fake_client(get_impl):
     class FakeResponse:
+        """Stands in for httpx.Response. Needs status_code and headers as
+        well as json(), because requests now go through
+        app/services/http.py's rate-limit-aware wrapper, which inspects
+        both to decide whether to retry."""
+
         def __init__(self, payload):
             self._payload = payload
+            self.status_code = 200
+            self.headers = {}
 
         def raise_for_status(self):
             pass

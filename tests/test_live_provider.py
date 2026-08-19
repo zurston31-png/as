@@ -25,9 +25,15 @@ def anyio_backend():
 
 
 class _FakeResponse:
+    """Stands in for httpx.Response. Needs status_code and headers as well
+    as json(), because requests now go through app/services/http.py's
+    rate-limit-aware wrapper, which inspects both to decide on a retry."""
+
     def __init__(self, payload, status_ok=True):
         self._payload = payload
         self._status_ok = status_ok
+        self.status_code = 200 if status_ok else 404
+        self.headers = {}
 
     def raise_for_status(self):
         if not self._status_ok:

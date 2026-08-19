@@ -30,10 +30,9 @@ from __future__ import annotations
 import datetime as dt
 import logging
 
-import httpx
-
 from app.config import settings
 from app.data.candles import Candle, CandleSeries, Timeframe
+from app.services import http
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +62,18 @@ _TIMEFRAME_MAP: dict[Timeframe, tuple[str, int]] = {
 
 
 async def _get_json(url: str, params: dict | None = None) -> dict | None:
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, params=params, headers={"Accept": "application/json"})
-            resp.raise_for_status()
-            return resp.json()
-    except Exception:
-        logger.warning("GeckoTerminal request failed: %s", url, exc_info=True)
-        return None
+    """Candle fetch, via the shared rate-limit-aware helper.
+
+    GeckoTerminal's free tier has the tightest limit of any source here
+    (roughly 30 requests/minute), and both the scanner and the trade path
+    call it. A 429 that isn't retried means rejecting a setup that was
+    actually fine - so this is the call that most benefits from backing
+    off and trying again rather than failing closed immediately.
+    """
+    return await http.get_json(
+        url, params=params, headers={"Accept": "application/json"},
+        label=f"GeckoTerminal {url}",
+    )
 
 
 async def _find_primary_pool(network: str, token_address: str) -> str | None:
