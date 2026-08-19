@@ -455,6 +455,46 @@ your actual deployment (step 4/4) before trusting this gate's verdicts
 unattended; it fetches the exact same pool-resolution and OHLCV endpoints
 this module uses and tells you plainly if the shape doesn't match.
 
+## Realistic paper execution
+
+Paper fills are simulated by `app/execution/fill_model.py` against the
+**actual pool** the trade would hit, not a flat assumption. Five costs:
+
+- **Price impact** — derived, not configured. For a constant-product AMM,
+  buying with `d` against quote-side reserve `R` gives
+  `effective/spot = 1 + d/R`, and DexScreener's `liquidity.usd` is the total
+  across both sides, so impact = `2 × trade_usd / liquidity_usd`. A $20 and
+  a $20,000 trade against the same thin pool now cost wildly different
+  amounts — the flat 0.5% this replaces charged them **identically**, which
+  is the main way a memecoin paper simulator flatters itself.
+- **Spread** (`PAPER_SPREAD_PCT`)
+- **Confirmation delay drift** — a swap isn't instant; the price keeps
+  moving between signing and inclusion, scaled from the token's own 1h
+  volatility by `sqrt(t)`. Signed, not always adverse.
+- **Fees** (`PAPER_FEE_PCT`), per side
+- **Failed fills** — when impact + adverse drift exceed `SLIPPAGE_BPS` the
+  swap **reverts**, exactly as on-chain. `slippage_bps` was previously
+  accepted by the paper engine and silently ignored, so paper trading never
+  experienced a failed fill at all.
+
+What this changes in practice — the same $2,000 buy:
+
+| Pool liquidity | Price impact | Outcome |
+|---|---|---|
+| $20,000 | 20.0% | reverts (over tolerance) |
+| $100,000 | 4.0% | reverts |
+| $500,000 | 0.8% | fills at 1.18% total cost |
+| $5,000,000 | 0.08% | fills at 0.46% total cost |
+
+`app/startup_checks.py` warns if `MAX_TRADE_SIZE_USD` against the thinnest
+pool the scanner accepts (`SCANNER_MIN_LIQUIDITY_USD`) implies impact above
+your slippage tolerance — those fills would silently revert forever.
+
+**On `scripts/run_demo.py`:** it prints a ~+31% trade. That price move is
+*scripted* ($1.00 → $1.33) to demonstrate the entry→monitor→exit cycle. It
+is **not** a trading result and says nothing about whether the strategy
+works. The demo now says so in its own output.
+
 ## "It never trades" — how to diagnose
 
 ```bash

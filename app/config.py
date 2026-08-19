@@ -66,6 +66,23 @@ class Settings(BaseSettings):
     # is the wrong direction for an error to point.
     PAPER_FEE_PCT: float = 0.0025
 
+    # --- Realistic paper fill model (app/execution/fill_model.py) ---
+    # Price impact is DERIVED from pool liquidity (constant-product AMM),
+    # not configured - a big trade against a thin pool costs more, which is
+    # the single most important thing a memecoin simulator must get right.
+    # These cover the rest.
+    PAPER_SPREAD_PCT: float = 0.0015
+    # Confirmation window. A swap isn't instant, and on a volatile token the
+    # price drift during it can dwarf the spread. Solana lands in ~0.4-2s;
+    # widen these for a slower chain.
+    PAPER_MIN_CONFIRM_SECONDS: float = 0.4
+    PAPER_MAX_CONFIRM_SECONDS: float = 2.5
+    # When false, paper fills always succeed (the old behavior). Leaving it
+    # true means a fill can REVERT when impact + drift exceed SLIPPAGE_BPS,
+    # exactly as an on-chain swap with slippage protection does - which is
+    # itself a real cost a simulator should charge.
+    PAPER_ALLOW_FAILED_FILLS: bool = True
+
     SLIPPAGE_BPS: int = 150
     MAX_GAS_PRICE_GWEI: float = 50.0
     MAX_TRADE_SIZE_USD: float = 200.0
@@ -152,7 +169,13 @@ class Settings(BaseSettings):
     # Cheap pre-screen, applied to the listing payload before any rug check
     # or candle fetch is spent on a candidate (app/scanner/filters.py).
     SCANNER_MAX_TOKENS_PER_CYCLE: int = 30
-    SCANNER_MIN_LIQUIDITY_USD: float = 25_000.0
+    # Raised from 25k so the worst realistic case stays fillable: price
+    # impact is trade/(liquidity/2), so MAX_TRADE_SIZE_USD=200 against a
+    # 25k pool implied 1.6% impact against a 1.5% SLIPPAGE_BPS tolerance -
+    # those fills revert. 35k puts the worst case at ~1.1%, comfortably
+    # inside tolerance. app/startup_checks.py re-checks this relationship
+    # if you change any of the three.
+    SCANNER_MIN_LIQUIDITY_USD: float = 35_000.0
     SCANNER_MIN_VOLUME_24H_USD: float = 50_000.0
     SCANNER_MIN_TXNS_24H: int = 100
     SCANNER_MAX_SELL_SHARE: float = 0.70

@@ -84,6 +84,23 @@ def check_config_coherence() -> list[str]:
             f"still rejects three out of four candidates while letting the bot actually trade."
         )
 
+    # --- trade size vs the shallowest pool the scanner will accept ---
+    # Price impact is trade_usd / (liquidity/2), so the worst realistic case
+    # is the biggest allowed trade against the thinnest allowed pool. If
+    # that exceeds the slippage tolerance, those fills simply revert - real
+    # behavior, but worth knowing about before it looks like a mystery.
+    if settings.SCANNER_ENABLED and settings.SCANNER_MIN_LIQUIDITY_USD > 0:
+        worst_impact = settings.MAX_TRADE_SIZE_USD / (settings.SCANNER_MIN_LIQUIDITY_USD / 2)
+        tolerance = settings.SLIPPAGE_BPS / 10_000
+        if worst_impact > tolerance:
+            warnings.append(
+                f"MAX_TRADE_SIZE_USD=${settings.MAX_TRADE_SIZE_USD:,.0f} against the thinnest pool the "
+                f"scanner accepts (${settings.SCANNER_MIN_LIQUIDITY_USD:,.0f}) implies "
+                f"{worst_impact * 100:.1f}% price impact, above the {tolerance * 100:.1f}% "
+                f"SLIPPAGE_BPS tolerance - those fills will revert. Either raise "
+                f"SCANNER_MIN_LIQUIDITY_USD, lower MAX_TRADE_SIZE_USD, or widen SLIPPAGE_BPS."
+            )
+
     # --- gates that are switched off entirely ---
     if not settings.RUGCHECK_ENABLED:
         warnings.append("RUGCHECK_ENABLED=false - buy signals are NOT being screened for scams/rugs")
