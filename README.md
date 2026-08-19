@@ -1005,6 +1005,15 @@ Every one of these reports **INSUFFICIENT DATA** until it has enough
 measured outcomes, and that is the state a fresh install is in. An absence
 of evidence is printed as an absence of evidence.
 
+### Current status
+
+**Built, not validated.** The engine runs and is covered by tests, but it
+has produced no measured outcomes yet, so nothing here shows that an early
+edge exists. The full accounting is in
+[`docs/EARLY_SIGNAL_REPORT.md`](docs/EARLY_SIGNAL_REPORT.md) — including
+the items that are honestly INSUFFICIENT DATA and the two defects that
+made the engine unreachable until integration tests caught them.
+
 ### What the engine genuinely cannot see
 
 Named explicitly in `app/early/features.py` rather than approximated:
