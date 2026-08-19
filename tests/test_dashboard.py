@@ -147,3 +147,54 @@ def test_default_dashboard_password_is_refused(monkeypatch):
 def test_empty_dashboard_password_is_refused(monkeypatch):
     monkeypatch.setattr(settings, "DASHBOARD_PASSWORD", "")
     assert client.get("/", auth=(settings.DASHBOARD_USERNAME, "")).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /performance
+# ---------------------------------------------------------------------------
+
+def test_performance_page_requires_auth():
+    assert client.get("/performance").status_code == 401
+    assert client.get("/api/performance").status_code == 401
+
+
+def test_performance_page_renders_on_an_empty_record():
+    """The empty state is the one an operator sees on day one, and it is
+    where a template bug would sit unnoticed longest."""
+    resp = client.get("/performance", auth=AUTH)
+    assert resp.status_code == 200
+    assert "Performance" in resp.text
+
+
+def test_performance_page_leads_with_the_validation_verdict(sample_rows):
+    resp = client.get("/performance", auth=AUTH)
+    assert resp.status_code == 200
+    body = resp.text
+    # The status banner must appear before the P&L numbers - a page that
+    # opens with the return and buries the sample size reads as a claim.
+    status_at = min(
+        (body.index(s) for s in ("EXPERIMENTAL", "FAILING", "VALIDATED") if s in body),
+        default=-1,
+    )
+    assert status_at >= 0
+    assert status_at < body.index("Net P&amp;L")
+
+
+def test_performance_page_never_claims_real_money_readiness(sample_rows):
+    body = client.get("/performance", auth=AUTH).text
+    assert "not about real execution" in body or "simulated" in body
+
+
+def test_performance_api_returns_the_report_as_json(sample_rows):
+    resp = client.get("/api/performance", auth=AUTH)
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["validation"]["status"] in {"experimental", "failing", "validated"}
+    assert "costs" in payload and "breakdowns" in payload
+
+
+def test_performance_page_can_be_filtered_to_one_strategy_version(sample_rows):
+    resp = client.get("/api/performance?version=v-doesnotexist", auth=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()["trade_count"] == 0
+    assert resp.json()["strategy_version"] == "v-doesnotexist"

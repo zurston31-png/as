@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Performance &amp; Validation — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  .pos { color: var(--green); } .neg { color: var(--red); } .muted { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  .status { border-width: 2px; }
+  .status.experimental { border-color: var(--amber); }
+  .status.failing { border-color: var(--red); }
+  .status.validated { border-color: var(--green); }
+  .status-label { font-size: 22px; font-weight: 700; letter-spacing: .04em; }
+  .status.experimental .status-label { color: var(--amber); }
+  .status.failing .status-label { color: var(--red); }
+  .status.validated .status-label { color: var(--green); }
+  .headline { margin-top: 8px; font-size: 13px; color: var(--muted); max-width: 90ch; line-height: 1.5; }
+  .warn { background: rgba(245,195,68,.08); border: 1px solid rgba(245,195,68,.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .stat { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .v { font-size: 19px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  .pill.pass { background: rgba(61,220,151,.15); color: var(--green); }
+  .pill.fail { background: rgba(255,92,122,.15); color: var(--red); }
+  .pill.unknown { background: rgba(139,147,167,.15); color: var(--muted); }
+  .thin td { color: var(--muted); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+  .empty { padding: 30px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+  pre.mc { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text); white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📈 Performance &amp; Validation</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/journal">Journal</a>
+  </div>
+</header>
+<main>
+
+{# ---- the verdict comes first, on purpose ------------------------------ #}
+<div class="card status {{ r.validation.status.value }}">
+  <div class="status-label">{{ r.validation.status.value | upper }}</div>
+  <div class="headline">{{ r.validation.headline }}</div>
+  <table style="margin-top:14px">
+    <tr><th>Criterion</th><th style="width:110px">State</th><th>Detail</th></tr>
+    {% for c in r.validation.criteria %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td>
+        {% if not c.evidence_sufficient %}<span class="pill unknown">NO DATA</span>
+        {% elif c.passed %}<span class="pill pass">PASS</span>
+        {% else %}<span class="pill fail">FAIL</span>{% endif %}
+      </td>
+      <td class="muted">{{ c.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="note">
+    Passing every criterion is evidence about the <em>strategy</em>, not about real
+    execution — every fill on this page was simulated. No wallet, private key or real
+    funds are involved anywhere in this bot.
+  </div>
+</div>
+
+{% if r.warnings %}
+<div class="card">
+  <h2>Read this first</h2>
+  {% for w in r.warnings %}<div class="warn">{{ w }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Results</h2>
+  <div class="grid">
+    <div class="stat"><div class="k">Closed trades</div><div class="v">{{ r.stats.trade_count }}</div></div>
+    <div class="stat"><div class="k">Win rate</div><div class="v">{{ '%.1f' % r.stats.win_rate }}%
+      <span class="muted" style="font-size:12px">({{ r.stats.win_count }}W/{{ r.stats.loss_count }}L)</span></div></div>
+    <div class="stat"><div class="k">Net P&amp;L</div>
+      <div class="v {{ 'pos' if r.net_pnl_usd >= 0 else 'neg' }}">${{ '%.2f' % r.net_pnl_usd }}</div></div>
+    <div class="stat"><div class="k">Expectancy / trade</div>
+      <div class="v {{ 'pos' if r.stats.expectancy_usd >= 0 else 'neg' }}">${{ '%.2f' % r.stats.expectancy_usd }}</div></div>
+    <div class="stat"><div class="k">Profit factor</div>
+      <div class="v">{{ '%.2f' % r.stats.profit_factor if r.stats.profit_factor not in (None, inf) else '—' }}</div></div>
+    <div class="stat"><div class="k">Max drawdown</div><div class="v">{{ '%.1f' % r.stats.max_drawdown_pct }}%</div></div>
+    <div class="stat"><div class="k">Longest losing run</div><div class="v">{{ r.stats.longest_losing_streak }}</div></div>
+    <div class="stat"><div class="k">Largest win / loss</div><div class="v" style="font-size:15px">
+      <span class="pos">${{ '%.0f' % r.extremes.largest_win_usd if r.extremes.largest_win_usd else '—' }}</span> /
+      <span class="neg">${{ '%.0f' % r.extremes.largest_loss_usd if r.extremes.largest_loss_usd else '—' }}</span>
+    </div></div>
+  </div>
+  {% if r.extremes.profit_depends_on_one_trade %}
+  <div class="warn" style="margin-top:14px">
+    One trade ({{ r.extremes.largest_win_symbol }}) produced
+    {{ '%.0f' % (r.extremes.best_trade_share_of_profit * 100) }}% of the gross profit.
+    That is a lucky sample, not a demonstrated edge.
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>What it cost</h2>
+  <div class="grid">
+    <div class="stat"><div class="k">Fees</div><div class="v">${{ '%.2f' % r.costs.total_fees_usd }}</div></div>
+    <div class="stat"><div class="k">Slippage + impact</div><div class="v">${{ '%.2f' % r.costs.total_slippage_usd }}</div></div>
+    <div class="stat"><div class="k">Total execution cost</div><div class="v">${{ '%.2f' % r.costs.total_execution_cost_usd }}</div></div>
+    <div class="stat"><div class="k">Avg cost per leg</div><div class="v">
+      {{ '%.3f' % (r.costs.avg_execution_cost_pct * 100) if r.costs.avg_execution_cost_pct is not none else '—' }}%</div></div>
+    <div class="stat"><div class="k">Avg fill delay</div><div class="v">
+      {{ '%.2f' % r.costs.avg_fill_delay_seconds if r.costs.avg_fill_delay_seconds is not none else '—' }}s</div></div>
+    <div class="stat"><div class="k">Cost data coverage</div><div class="v">{{ '%.0f' % r.costs.coverage_pct }}%</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Holding time</h2>
+  <div class="grid">
+    <div class="stat"><div class="k">Average</div><div class="v">
+      {{ '%.1f' % r.holding.avg_hours if r.holding.avg_hours is not none else '—' }}h</div></div>
+    <div class="stat"><div class="k">Median</div><div class="v">
+      {{ '%.1f' % r.holding.median_hours if r.holding.median_hours is not none else '—' }}h</div></div>
+    <div class="stat"><div class="k">Avg winner</div><div class="v">
+      {{ '%.1f' % r.holding.avg_winner_hours if r.holding.avg_winner_hours is not none else '—' }}h</div></div>
+    <div class="stat"><div class="k">Avg loser</div><div class="v">
+      {{ '%.1f' % r.holding.avg_loser_hours if r.holding.avg_loser_hours is not none else '—' }}h</div></div>
+  </div>
+  {% if r.holding.winners_held_longer is false %}
+  <div class="warn" style="margin-top:14px">
+    Losers are held longer than winners — cutting winners short and riding losers.
+    This is invisible in a win rate and it is where expectancy goes to die.
+  </div>
+  {% endif %}
+</div>
+
+{% for b in r.breakdowns %}
+<div class="card">
+  <h2>By {{ b.dimension }}{% if b.unknown_count %}
+    <span class="muted" style="text-transform:none;letter-spacing:0">— {{ b.unknown_count }} trade(s) with this value not recorded</span>{% endif %}</h2>
+  {% if b.buckets %}
+  <table>
+    <tr><th>Bucket</th><th class="num">Trades</th><th class="num">Win %</th><th class="num">Total P&amp;L</th><th class="num">Per trade</th></tr>
+    {% for bucket in b.buckets %}
+    <tr {% if not bucket.meaningful %}class="thin"{% endif %}>
+      <td>{{ bucket.label }}{% if not bucket.meaningful %} <span class="pill unknown">THIN</span>{% endif %}</td>
+      <td class="num">{{ bucket.trade_count }}</td>
+      <td class="num">{{ '%.0f' % bucket.win_rate }}%</td>
+      <td class="num {{ 'pos' if bucket.total_pnl_usd >= 0 else 'neg' }}">${{ '%.2f' % bucket.total_pnl_usd }}</td>
+      <td class="num {{ 'pos' if bucket.expectancy_usd >= 0 else 'neg' }}">${{ '%.2f' % bucket.expectancy_usd }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if not b.has_any_meaningful_bucket %}
+  <div class="note">Every bucket here is below {{ min_bucket }} trades. Nothing in this table
+    is evidence yet — it is shown so you can see the sample building, not so you can act on it.</div>
+  {% endif %}
+  {% else %}
+  <div class="empty">No closed trades with this attribute yet.</div>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if r.rejections and r.rejections.total %}
+<div class="card">
+  <h2>Where candidates were rejected</h2>
+  <table>
+    <tr><th>Stage</th><th class="num">Count</th><th class="num">Share</th></tr>
+    {% for e in r.rejections.as_dict()['by_reason'] %}
+    <tr><td>{{ e.reason }}</td><td class="num">{{ e.count }}</td><td class="num">{{ '%.0f' % e.share_pct }}%</td></tr>
+    {% endfor %}
+  </table>
+  <div class="note">A filter rejecting a lot is doing its job. The fix for too few trades is
+    better candidates, never a lower filter.</div>
+</div>
+{% endif %}
+
+{% if r.monte_carlo %}
+<div class="card">
+  <h2>Monte Carlo — the realized path was one draw</h2>
+  <pre class="mc">{{ r.monte_carlo.summary() }}</pre>
+  <div class="note">The order trades arrived in is luck. These paths resample the same
+    results to show the range that order could have produced — the 95th-percentile
+    drawdown, not the realized one, is the ride to size positions for.</div>
+</div>
+{% endif %}
+
+{% if r.version_counts %}
+<div class="card">
+  <h2>Strategy versions in this record</h2>
+  <table>
+    <tr><th>Version</th><th class="num">Trade legs</th></tr>
+    {% for label, count in r.version_counts.items() | sort %}
+    <tr><td>{{ label }}</td><td class="num">{{ count }}</td></tr>
+    {% endfor %}
+  </table>
+  <div class="note">Results from different configurations describe different strategies.
+    Append <code>?version=&lt;label&gt;</code> to this URL to report on one of them alone.</div>
+</div>
+{% endif %}
+
+</main>
+</body>
+</html>

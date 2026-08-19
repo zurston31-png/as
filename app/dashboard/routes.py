@@ -11,6 +11,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 from app import models
+from app.analysis.report import build_performance_report
+from app.analysis.trade_analytics import MIN_TRADES_FOR_A_MEANINGFUL_BUCKET
 from app.config import settings
 from app.dashboard.analytics import compute_equity_curve, compute_portfolio_stats
 from app.dashboard.charts import equity_curve_svg
@@ -325,6 +327,45 @@ async def journal(request: Request, user: str = Depends(check_auth)):
             })
 
         return templates.TemplateResponse(request, "journal.html", {"rows": rows})
+    finally:
+        db.close()
+
+
+@router.get("/performance")
+async def performance(
+    request: Request, version: str | None = None, user: str = Depends(check_auth)
+):
+    """The page that answers "is this record strong enough to believe?".
+
+    Deliberately leads with the validation verdict rather than the return.
+    "+34%" and "on 12 trades" mean very different things, and the second is
+    the part people skip - so the status banner is the first thing on the
+    page and the P&L is below it.
+
+    `?version=<label>` reports on one strategy configuration. Without it the
+    report pools every version and says so, loudly, in its warnings.
+    """
+    db = SessionLocal()
+    try:
+        report = build_performance_report(db, strategy_version=version)
+        return templates.TemplateResponse(
+            request,
+            "performance.html",
+            {
+                "r": report,
+                "inf": float("inf"),
+                "min_bucket": MIN_TRADES_FOR_A_MEANINGFUL_BUCKET,
+            },
+        )
+    finally:
+        db.close()
+
+
+@router.get("/api/performance")
+async def api_performance(version: str | None = None, user: str = Depends(check_auth)):
+    db = SessionLocal()
+    try:
+        return JSONResponse(build_performance_report(db, strategy_version=version).as_dict())
     finally:
         db.close()
 
