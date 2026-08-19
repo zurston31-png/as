@@ -19,6 +19,7 @@ import app.services.trading_service as trading_service
 from app.scanner.discovery import DiscoveredToken
 from app.services import price_feed
 from app.signals.scoring import Factor, SignalScore
+from tests.conftest import make_market_snapshot
 
 pytestmark = pytest.mark.anyio
 
@@ -77,7 +78,11 @@ def _happy_path(monkeypatch):
     async def fake_discover(chain=None):
         return [_token()]
 
+    async def fake_snapshot(token_address):
+        return make_market_snapshot(token_address=token_address)
+
     monkeypatch.setattr(price_feed, "get_price_usd", fake_price)
+    monkeypatch.setattr(price_feed, "get_market_snapshot", fake_snapshot)
     monkeypatch.setattr(trading_service, "run_rug_checks", fake_rug_check)
     monkeypatch.setattr(trading_service, "evaluate_live_entry_signal", fake_score)
     monkeypatch.setattr(scanner_loop, "discover_tokens", fake_discover)

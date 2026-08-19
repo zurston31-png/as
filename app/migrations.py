@@ -14,8 +14,16 @@ missing. Deliberately ADDITIVE ONLY:
 
   * adds a missing column                       yes
   * creates a missing table (via create_all)    yes
+  * creates a missing index                     yes
   * renames / drops / retypes a column          NO
   * computed / conditional backfill             NO
+
+An index needs its own step because neither of the other two covers it:
+`create_all()` skips a table that already exists, indexes included, and
+`ADD COLUMN` never creates one. Without this, a column added on upgrade
+(Signal.strategy_version, Trade.strategy_version) would be present but
+unindexed, and the analytics queries that group by it would quietly
+degrade to full scans on exactly the databases with the most history.
 
 What existing rows get in a newly added column depends on the model:
 
@@ -85,10 +93,11 @@ def _default_clause(column) -> str:
 
 
 def apply_additive_migrations(engine: Engine) -> list[str]:
-    """Add any model column missing from an existing table.
+    """Add any model column or index missing from an existing table.
 
-    Returns the list of `table.column` names added, so startup can log what
-    it changed rather than migrating silently.
+    Returns the list of `table.column` names and `index:name` entries
+    added, so startup can log what it changed rather than migrating
+    silently.
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -124,10 +133,34 @@ def apply_additive_migrations(engine: Engine) -> list[str]:
                 added.append(f"{table.name}.{column.name}")
                 logger.info("migrated: added missing column %s.%s", table.name, column.name)
 
+    # Indexes go in a second pass, after every column exists - an index on a
+    # column added above cannot be created before that ALTER has run.
+    inspector = inspect(engine)  # re-inspect: the columns above are new
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present_indexes = {ix["name"] for ix in inspector.get_indexes(table.name)}
+        present_columns = {col["name"] for col in inspector.get_columns(table.name)}
+        for index in table.indexes:
+            if index.name in present_indexes:
+                continue
+            if not {c.name for c in index.columns} <= present_columns:
+                # A column the index needs is still missing (it hit the
+                # NOT NULL guard above). Skip rather than emit failing DDL.
+                logger.error(
+                    "cannot create index %s - it covers a column that could not be added",
+                    index.name,
+                )
+                continue
+            index.create(bind=engine)
+            added.append(f"index:{index.name}")
+            logger.info("migrated: created missing index %s on %s", index.name, table.name)
+
     if added:
         logger.warning(
-            "database schema was out of date - added %d missing column(s): %s. "
-            "Existing rows have NULL there, which correctly means 'not recorded at the time'.",
+            "database schema was out of date - applied %d additive change(s): %s. "
+            "Existing rows have NULL in any new column, which correctly means "
+            "'not recorded at the time'.",
             len(added), ", ".join(added),
         )
     return added

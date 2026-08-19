@@ -50,3 +50,62 @@ def db_session():
         yield session
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# shared market-data fixtures
+# ---------------------------------------------------------------------------
+# Integration tests that drive the buy path need a MarketSnapshot to exist,
+# because the market-quality gate (app/signals/market_quality.py) rejects a
+# candidate it cannot assess. Building one healthy snapshot here - rather
+# than stubbing the scorer out - means those tests keep exercising the real
+# scorer, so a regression that made every real token score badly would still
+# be caught by the integration suite.
+
+def make_market_snapshot(**overrides):
+    """A snapshot of a genuinely healthy, tradeable market.
+
+    Deep pool, turnover a little above 1x, steady hour-on-hour volume, small
+    average trade size, two-sided flow, an established pool and a normal
+    intraday swing - the profile the quality score is meant to pass.
+    Override any single field to build the unhealthy variant a test needs.
+    """
+    import datetime as _dt
+
+    from app.services.price_feed import MarketSnapshot
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    defaults = dict(
+        price_usd=0.005,
+        liquidity_usd=250_000.0,
+        volume_24h_usd=400_000.0,
+        buys_24h=1_200,
+        sells_24h=900,
+        price_change_1h_pct=8.0,
+        price_change_24h_pct=25.0,
+        pair_created_at=now - _dt.timedelta(days=20),
+        fdv_usd=2_000_000.0,
+        token_address="HealthyMarketToken1111",
+        token_symbol="HEALTHY",
+        token_name="Healthy Market Token",
+        volume_1h_usd=20_000.0,
+        volume_6h_usd=110_000.0,
+        volume_5m_usd=1_600.0,
+        buys_1h=60,
+        sells_1h=45,
+        observed_at=now,
+    )
+    defaults.update(overrides)
+    return MarketSnapshot(**defaults)
+
+
+@pytest.fixture()
+def healthy_market(monkeypatch):
+    """Patch the price feed so the market-quality gate sees a good market."""
+    from app.services import price_feed
+
+    async def fake_snapshot(token_address):
+        return make_market_snapshot(token_address=token_address)
+
+    monkeypatch.setattr(price_feed, "get_market_snapshot", fake_snapshot)
+    return monkeypatch

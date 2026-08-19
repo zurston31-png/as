@@ -4,6 +4,8 @@ These guard the two ways the bot could move real money by accident: the
 paper engine not being forced when live trading is off, and a live backend
 whose accounting is known to be wrong staying reachable.
 """
+import random
+
 import pytest
 
 from app.config import settings
@@ -16,6 +18,18 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def paper_client(seed: int = 1234) -> PaperExecutionClient:
+    """A paper client whose fills are reproducible.
+
+    The fill model draws a confirmation delay and a price drift from an
+    RNG, so an unseeded client produces a different fill every call - and a
+    test asserting on one fill would pass or fail at random. Seeding pins
+    the draw; the randomness itself is covered by the distribution tests in
+    tests/test_fill_model.py.
+    """
+    return PaperExecutionClient(rng=random.Random(seed))
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +129,7 @@ async def test_paper_engine_prices_and_sizes_consistently(monkeypatch):
         return 0.001
     monkeypatch.setattr(paper.price_feed, "get_price_usd", fake_price)
 
-    client = PaperExecutionClient()
+    client = paper_client()
     result = await client.buy("SomeToken", 20.0, 150)
     assert result.success
     assert result.filled_qty * result.avg_price == pytest.approx(20.0)
@@ -130,7 +144,7 @@ async def test_paper_sell_fills_below_mid(monkeypatch):
         return 0.001
     monkeypatch.setattr(paper.price_feed, "get_price_usd", fake_price)
 
-    result = await PaperExecutionClient().sell("SomeToken", 1000.0, 150)
+    result = await paper_client().sell("SomeToken", 1000.0, 150)
     assert result.success
     assert result.avg_price < 0.001
 
@@ -149,7 +163,7 @@ async def test_paper_fills_are_no_cheaper_than_the_backtester_charges(monkeypatc
         return 1.0
     monkeypatch.setattr(paper.price_feed, "get_price_usd", fake_price)
 
-    client = PaperExecutionClient()
+    client = paper_client()
     buy = await client.buy("SomeToken", 100.0, 150)
     sell = await client.sell("SomeToken", buy.filled_qty, 150)
 
@@ -174,10 +188,10 @@ async def test_paper_fee_is_actually_applied(monkeypatch):
     monkeypatch.setattr(paper.price_feed, "get_price_usd", fake_price)
 
     monkeypatch.setattr(settings, "PAPER_FEE_PCT", 0.0)
-    free = await PaperExecutionClient().buy("SomeToken", 100.0, 150)
+    free = await paper_client().buy("SomeToken", 100.0, 150)
 
     monkeypatch.setattr(settings, "PAPER_FEE_PCT", 0.05)
-    expensive = await PaperExecutionClient().buy("SomeToken", 100.0, 150)
+    expensive = await paper_client().buy("SomeToken", 100.0, 150)
 
     assert expensive.avg_price > free.avg_price
     assert expensive.filled_qty < free.filled_qty
@@ -190,6 +204,6 @@ async def test_paper_engine_fails_closed_without_a_price(monkeypatch):
         return None
     monkeypatch.setattr(paper.price_feed, "get_price_usd", no_price)
 
-    result = await PaperExecutionClient().buy("SomeToken", 20.0, 150)
+    result = await paper_client().buy("SomeToken", 20.0, 150)
     assert not result.success
     assert result.filled_qty == 0

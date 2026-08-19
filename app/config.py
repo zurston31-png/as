@@ -151,6 +151,26 @@ class Settings(BaseSettings):
     SIGNAL_SCORE_MIN_CANDLES: int = 60
     GECKOTERMINAL_API_BASE: str = "https://api.geckoterminal.com/api/v2"
 
+    # --- Market quality score (app/signals/market_quality.py) ---
+    # Deliberately separate from BOTH the security score (is this a scam?)
+    # and the signal score (is this a good setup?). A token can be perfectly
+    # safe and show a textbook breakout while being untradeable in practice:
+    # one wash-traded volume spike, a pool nobody can exit, activity
+    # concentrated in three transactions. This scores tradeability itself.
+    MARKET_QUALITY_ENABLED: bool = True
+    MIN_MARKET_QUALITY_SCORE: float = 50.0
+
+    # --- Data freshness / sanity (app/data/staleness.py) ---
+    # Stale data is worse than missing data because it looks authoritative:
+    # a price from 20 minutes ago passes every check and then sizes a
+    # position against a market that has moved on.
+    MAX_MARKET_DATA_AGE_SECONDS: float = 120.0
+    # A move beyond this factor versus the previous observation is treated
+    # as a bad tick rather than a real move. Deliberately generous -
+    # memecoins genuinely do move violently, so this catches broken data
+    # (decimals bugs, thin-pool prints, feed glitches), not volatility.
+    MAX_PRICE_JUMP_FACTOR: float = 20.0
+
     # --- Automatic token scanner (Stage 9) ---
     # Finds newly listed tokens itself instead of waiting for a TradingView
     # alert to name one. Discovered tokens go through the SAME pipeline a

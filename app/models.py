@@ -72,6 +72,13 @@ class Signal(Base):
     # "scanner" (auto-discovered by app/scanner/). Both take the identical
     # path through _handle_buy_signal; this only records which one found it.
     source: Mapped[str] = mapped_column(String(32), default="tradingview", index=True)
+    strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Market quality 0-100 (app/signals/market_quality.py) - "can this be
+    # traded?", distinct from the signal score's "is this a good setup?"
+    # and the rug score's "will this rug?". Persisted regardless of
+    # pass/fail so a rejection is explainable after the fact.
+    market_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_quality_factors: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class RugCheckResult(Base):
@@ -145,6 +152,20 @@ class Trade(Base):
     # reason ("partial profit-take" then later "trend reversal" for the
     # rest); Position.close_reason alone only ever captures the LAST one.
     close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # --- execution-cost accounting (paper fill model) ---
+    # What this leg actually cost beyond the mid price, per
+    # app/execution/fill_model.py: the fee in dollars, the total adverse
+    # move (impact + spread + drift + fee) as a fraction, and the simulated
+    # confirmation delay. Without these, "total fees paid" and "average
+    # slippage" are unanswerable and the analytics can only show gross P&L.
+    fee_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_cost_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fill_delay_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Which strategy configuration produced this trade (StrategyVersion
+    # label). Results from materially different configurations must never
+    # be silently pooled - a stats table mixing v1 and v3 trades answers a
+    # question nobody asked.
+    strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
 
 
 class Position(Base):
@@ -245,6 +266,51 @@ class ScannedToken(Base):
     liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     volume_24h_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     times_traded: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class StrategyVersion(Base):
+    """One row per distinct strategy configuration the bot has ever run.
+
+    Pooling results across materially different configurations answers a
+    question nobody asked: if the score threshold moved from 75 to 65
+    halfway through, a combined win rate describes a strategy that never
+    existed. Every Signal and Trade records the version label active when
+    it happened, so analytics can be filtered to one configuration -
+    and the dashboard can say plainly when the numbers on screen span more
+    than one.
+
+    The label is a short hash of the settings that actually change trading
+    behavior (app/strategy/version.py decides which). Changing a cosmetic
+    setting - a log level, a dashboard password - does NOT mint a new
+    version, because that would fragment history for no analytical gain.
+    """
+
+    __tablename__ = "strategy_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ApiHealth(Base):
+    """Rolling health of each external data source, for the dashboard's
+    system-health panel and for answering "is the bot quiet because the
+    market is quiet, or because an API has been down for six hours?".
+    """
+
+    __tablename__ = "api_health"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    last_success_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class BotState(Base):

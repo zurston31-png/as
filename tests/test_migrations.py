@@ -136,3 +136,42 @@ def test_every_model_column_exists_after_create_all_plus_migrate(old_db):
         expected = {col.name for col in table.columns}
         missing = expected - actual
         assert not missing, f"{table.name} still missing {missing} after migration"
+
+
+# ---------------------------------------------------------------------------
+# indexes
+# ---------------------------------------------------------------------------
+
+def test_an_index_on_a_newly_added_column_is_created(old_db):
+    """Neither of the other two mechanisms covers this: create_all() skips a
+    table that already exists (indexes included) and ADD COLUMN never makes
+    one. Without the index pass, an upgraded database would have
+    signals.source and signals.strategy_version present but unindexed, and
+    the analytics queries that group by them would degrade to full scans on
+    exactly the databases with the most history."""
+    engine = create_engine(f"sqlite:///{old_db}")
+    added = apply_additive_migrations(engine)
+
+    indexes = {ix["name"] for ix in inspect(engine).get_indexes("signals")}
+    assert "ix_signals_source" in indexes
+    assert "ix_signals_strategy_version" in indexes
+    assert "index:ix_signals_strategy_version" in added
+
+
+def test_an_index_that_already_exists_is_left_alone(old_db):
+    engine = create_engine(f"sqlite:///{old_db}")
+    apply_additive_migrations(engine)
+    assert apply_additive_migrations(engine) == [], "re-running must not re-create indexes"
+
+
+def test_every_model_index_exists_after_create_all_plus_migrate(old_db):
+    engine = create_engine(f"sqlite:///{old_db}")
+    Base.metadata.create_all(bind=engine)
+    apply_additive_migrations(engine)
+
+    inspector = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        actual = {ix["name"] for ix in inspector.get_indexes(table.name)}
+        expected = {ix.name for ix in table.indexes}
+        missing = expected - actual
+        assert not missing, f"{table.name} still missing index(es) {missing} after migration"

@@ -26,6 +26,7 @@ deliberately modest assumed pool depth rather than a generous one - an
 unknown pool should not be assumed forgiving.
 """
 import logging
+import random
 import uuid
 
 from app.config import settings
@@ -37,6 +38,17 @@ logger = logging.getLogger(__name__)
 
 
 class PaperExecutionClient(ExecutionClient):
+    def __init__(self, rng: random.Random | None = None):
+        """`rng` seeds the fill model's confirmation delay and price drift.
+
+        Left as None in production, where the whole point is that fills are
+        not deterministic. Passing a seeded Random makes a paper run
+        reproducible, which is what lets a test assert on a specific fill
+        instead of on a distribution - and lets an operator replay a session
+        exactly.
+        """
+        self._rng = rng
+
     async def get_price(self, instrument: str) -> float | None:
         return await price_feed.get_price_usd(instrument)
 
@@ -64,6 +76,9 @@ class PaperExecutionClient(ExecutionClient):
         return SwapResult(
             success=True, filled_qty=qty, avg_price=outcome.fill_price,
             tx_hash=f"PAPER-{uuid.uuid4().hex[:16]}",
+            fee_usd=qty * outcome.fill_price * outcome.fee_pct,
+            execution_cost_pct=outcome.total_cost_pct,
+            fill_delay_seconds=outcome.delay_seconds,
         )
 
     async def buy(self, instrument: str, usd_amount: float, slippage_bps: int) -> SwapResult:
@@ -74,6 +89,7 @@ class PaperExecutionClient(ExecutionClient):
         outcome = simulate_fill(
             side="buy", reference_price=price, trade_usd=usd_amount,
             liquidity_usd=liquidity, volatility_1h_pct=volatility, slippage_bps=slippage_bps,
+            rng=self._rng,
         )
         if not outcome.filled and not settings.PAPER_ALLOW_FAILED_FILLS:
             # Failed fills disabled: charge the costs but let it through, so
@@ -98,6 +114,7 @@ class PaperExecutionClient(ExecutionClient):
         outcome = simulate_fill(
             side="sell", reference_price=price, trade_usd=qty * price,
             liquidity_usd=liquidity, volatility_1h_pct=volatility, slippage_bps=slippage_bps,
+            rng=self._rng,
         )
         if not outcome.filled and not settings.PAPER_ALLOW_FAILED_FILLS:
             outcome.filled = True

@@ -20,8 +20,11 @@ from app.notifications.notifier import notifier
 from app.risk.manager import RiskManager, halt_trading
 from app.rugcheck.filters import run_rug_checks
 from app.schemas import TradingViewAlert
-from app.services import portfolio
+from app.data.staleness import check_snapshot_freshness
+from app.services import portfolio, price_feed
+from app.signals.market_quality import score_market_quality
 from app.signals.live_gate import evaluate_live_entry_signal
+from app.strategy.version import current_label, register_current_version
 
 logger = logging.getLogger(__name__)
 risk_manager = RiskManager()
@@ -48,7 +51,9 @@ async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
         volume_sma=alert.volume_sma,
         breakout_level=alert.breakout_level,
         raw_payload=alert.model_dump(exclude={"secret"}),
+        strategy_version=current_label(),
     )
+    register_current_version(db)
     db.add(signal)
     db.flush()
 
@@ -95,7 +100,9 @@ async def handle_discovered_token(
         price=price,
         source="scanner",
         raw_payload={"discovery_source": discovery_source, **(extra or {})},
+        strategy_version=current_label(),
     )
+    register_current_version(db)
     db.add(signal)
     db.flush()
 
@@ -151,6 +158,36 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
             return
     else:
         logger.warning("LIVE_SIGNAL_SCORE_ENABLED=false - buy signals are NOT being scored before entry")
+
+    # --- market quality: can this actually be traded, regardless of setup? ---
+    # Separate from the signal score on purpose. A token can print a
+    # textbook breakout on volume that is entirely wash-traded; the signal
+    # engine reads price/volume shape and has no way to tell. This does.
+    if settings.MARKET_QUALITY_ENABLED:
+        market = await price_feed.get_market_snapshot(signal.token_address) if signal.token_address else None
+
+        freshness = check_snapshot_freshness(market)
+        if not freshness.fresh:
+            reason = f"market data not usable: {freshness.reason}"
+            db.add(models.RiskEvent(event_type="stale_data_rejected", details=reason, signal_id=signal.id))
+            await notifier.notify_rejection(signal, reason)
+            return
+
+        quality = score_market_quality(market, min_liquidity_usd=settings.MIN_LIQUIDITY_USD)
+        signal.market_quality_score = quality.score
+        signal.market_quality_factors = quality.as_dict()["factors"]
+
+        if not quality.reliable or quality.score < settings.MIN_MARKET_QUALITY_SCORE:
+            concerns = "; ".join(f.reason for f in quality.concerns[:3]) or "; ".join(quality.warnings)
+            reason = (
+                f"market quality {quality.score:.1f}/100 "
+                f"{'(unreliable - too much missing data) ' if not quality.reliable else ''}"
+                f"below minimum {settings.MIN_MARKET_QUALITY_SCORE:.1f}"
+                + (f" - {concerns}" if concerns else "")
+            )
+            db.add(models.RiskEvent(event_type="market_quality_rejected", details=reason, signal_id=signal.id))
+            await notifier.notify_rejection(signal, reason)
+            return
 
     report = await run_rug_checks(signal.chain, signal.token_address)
     db.add(
@@ -219,6 +256,7 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
         side="buy",
         mode=models.TradeMode.LIVE.value if settings.LIVE_TRADING else models.TradeMode.PAPER.value,
         size_usd=size_usd,
+        strategy_version=current_label(),
     )
 
     if not result.success:
@@ -237,6 +275,9 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
     trade.take_profit = tp
     trade.tx_hash = result.tx_hash
     trade.opened_at = now
+    trade.fee_usd = result.fee_usd
+    trade.execution_cost_pct = result.execution_cost_pct
+    trade.fill_delay_seconds = result.fill_delay_seconds
     db.add(trade)
     db.flush()
 
@@ -294,6 +335,7 @@ async def close_position(db: Session, position: models.Position, reason: str, si
         side="sell",
         mode=position.mode,
         size_usd=position.qty * position.entry_price,
+        strategy_version=current_label(),
     )
 
     if not result.success:
@@ -317,6 +359,9 @@ async def close_position(db: Session, position: models.Position, reason: str, si
     trade.tx_hash = result.tx_hash
     trade.closed_at = now
     trade.close_reason = reason
+    trade.fee_usd = result.fee_usd
+    trade.execution_cost_pct = result.execution_cost_pct
+    trade.fill_delay_seconds = result.fill_delay_seconds
     db.add(trade)
 
     position.status = models.PositionStatus.CLOSED.value
@@ -362,6 +407,7 @@ async def partial_close_position(
         side="sell",
         mode=position.mode,
         size_usd=qty_to_sell * position.entry_price,
+        strategy_version=current_label(),
     )
 
     if not result.success:
@@ -385,6 +431,9 @@ async def partial_close_position(
     trade.tx_hash = result.tx_hash
     trade.closed_at = now
     trade.close_reason = reason
+    trade.fee_usd = result.fee_usd
+    trade.execution_cost_pct = result.execution_cost_pct
+    trade.fill_delay_seconds = result.fill_delay_seconds
     db.add(trade)
 
     position.qty -= result.filled_qty
