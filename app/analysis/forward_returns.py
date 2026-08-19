@@ -48,6 +48,28 @@ logger = logging.getLogger(__name__)
 # turns a research table into a permanent background load.
 GIVE_UP_AFTER_HOURS = 12.0
 
+# Coarse outcome labels, by close-to-close return. Bucketed rather than
+# left continuous so "how often does a high early score produce a strong
+# winner?" is a countable question.
+OUTCOME_BANDS: tuple[tuple[float, str], ...] = (
+    (-30.0, "large_loser"),
+    (-8.0, "loser"),
+    (8.0, "flat"),
+    (30.0, "moderate_winner"),
+)
+STRONG_WINNER = "strong_winner"
+
+
+def label_outcome(return_pct: float | None) -> str | None:
+    """Bucket a realised return. None stays None - an unmeasured horizon is
+    not a flat one."""
+    if return_pct is None:
+        return None
+    for upper, label in OUTCOME_BANDS:
+        if return_pct < upper:
+            return label
+    return STRONG_WINNER
+
 
 def schedule(
     db: Session,
@@ -59,6 +81,9 @@ def schedule(
     price_at_signal: float,
     observed_at: dt.datetime | None = None,
     horizons: tuple[int, ...] = HORIZONS_MINUTES,
+    early_score: float | None = None,
+    late_entry_risk: float | None = None,
+    momentum_class: str | None = None,
 ) -> int:
     """Create one pending row per horizon for a freshly scored candidate.
 
@@ -89,6 +114,9 @@ def schedule(
                 horizon_minutes=minutes,
                 due_at=observed_at + dt.timedelta(minutes=minutes),
                 strategy_version=version,
+                early_score=early_score,
+                late_entry_risk=late_entry_risk,
+                momentum_class=momentum_class,
             )
         )
         created += 1
@@ -118,29 +146,79 @@ def due_rows(db: Session, *, now: dt.datetime | None = None, limit: int = 200) -
     )
 
 
+async def _sample_envelope(row: models.ForwardReturn, price: float) -> None:
+    """Widen a row's MFE/MAE envelope with the price observed right now.
+
+    Sampled at the resolution interval rather than tick by tick, so both
+    extremes are UNDERSTATED - the real drawdown was at least this bad and
+    the real peak at least this good. Understating MAE is the safe
+    direction; a tick-level envelope would need a trade-level feed the bot
+    does not have, and pretending otherwise would make stop-loss analysis
+    look more favourable than reality.
+    """
+    move = (price / row.price_at_signal - 1) * 100
+    row.max_favorable_pct = move if row.max_favorable_pct is None else max(row.max_favorable_pct, move)
+    row.max_adverse_pct = move if row.max_adverse_pct is None else min(row.max_adverse_pct, move)
+
+
 async def resolve_due(
     db: Session, *, now: dt.datetime | None = None, limit: int = 200
 ) -> dict:
-    """Fetch prices for every horizon that has come due.
+    """Resolve elapsed horizons, and sample the path of the pending ones.
 
-    One price lookup per distinct mint, not per row: the seven horizons for
-    one token all resolve against the same current price when they come due
-    together, and paying for that price seven times would be the single
-    largest source of avoidable API load in the bot.
+    Both halves share ONE price lookup per distinct mint. The eight
+    horizons for a token all reference the same current price, and the
+    pending ones need that same price to widen their MFE/MAE envelope, so
+    fetching per row would multiply the bot's largest source of API load by
+    eight for no information gain.
+
+    Sampling the pending rows is what makes MFE/MAE mean anything. Reading
+    the price only when a horizon elapses would record the endpoint twice
+    over and miss the entire path - and the path is what a stop would have
+    hit.
 
     A row past GIVE_UP_AFTER_HOURS is closed out with a reason rather than
-    retried forever. It stays in the table as an explicitly unmeasurable
-    observation, which is honest - dropping it would bias the dataset
-    toward tokens that stayed alive.
+    retried forever. It stays in the table as explicitly unmeasurable,
+    which is honest: dropping it would bias the dataset toward tokens that
+    stayed alive.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
-    rows = due_rows(db, now=now, limit=limit)
-    summary = {"due": len(rows), "resolved": 0, "abandoned": 0, "unavailable": 0}
-    if not rows:
+    due = due_rows(db, now=now, limit=limit)
+
+    # Pending rows for the SAME tokens - free to update, since their price
+    # is already being fetched.
+    mints = {row.token_address for row in due}
+    pending: list[models.ForwardReturn] = []
+    if mints:
+        pending = (
+            db.query(models.ForwardReturn)
+            .filter(
+                models.ForwardReturn.filled_at.is_(None),
+                models.ForwardReturn.due_at > now,
+                models.ForwardReturn.token_address.in_(mints),
+            )
+            .all()
+        )
+
+    summary = {
+        "due": len(due), "resolved": 0, "abandoned": 0,
+        "unavailable": 0, "envelope_sampled": 0,
+    }
+    if not due:
         return summary
 
     prices: dict[str, float | None] = {}
-    for row in rows:
+
+    async def price_for(mint: str) -> float | None:
+        if mint not in prices:
+            try:
+                prices[mint] = await price_feed.get_price_usd(mint)
+            except Exception:
+                logger.warning("forward-return price lookup failed for %s", mint, exc_info=True)
+                prices[mint] = None
+        return prices[mint]
+
+    for row in due:
         overdue_hours = (now - _aware(row.due_at)).total_seconds() / 3600
         if overdue_hours > GIVE_UP_AFTER_HOURS:
             row.filled_at = now
@@ -151,24 +229,25 @@ async def resolve_due(
             summary["abandoned"] += 1
             continue
 
-        if row.token_address not in prices:
-            try:
-                prices[row.token_address] = await price_feed.get_price_usd(row.token_address)
-            except Exception:
-                logger.warning("forward-return price lookup failed for %s", row.symbol, exc_info=True)
-                prices[row.token_address] = None
-
-        price = prices[row.token_address]
+        price = await price_for(row.token_address)
         if not price or price <= 0:
-            # Left pending deliberately: the horizon may still resolve on a
-            # later pass, and guessing now would fabricate an outcome.
+            # Left pending deliberately: it may resolve on a later pass,
+            # and guessing now would fabricate an outcome.
             summary["unavailable"] += 1
             continue
 
+        await _sample_envelope(row, price)
         row.price_at_horizon = price
         row.return_pct = (price / row.price_at_signal - 1) * 100
+        row.outcome = label_outcome(row.return_pct)
         row.filled_at = now
         summary["resolved"] += 1
+
+    for row in pending:
+        price = prices.get(row.token_address)
+        if price and price > 0:
+            await _sample_envelope(row, price)
+            summary["envelope_sampled"] += 1
 
     return summary
 

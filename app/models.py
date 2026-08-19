@@ -399,3 +399,116 @@ class ForwardReturn(Base):
     # gap in the calibration dataset is explained rather than mysterious.
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+    # --- path, not just endpoint ---
+    # The close-to-close return hides everything that happened in between,
+    # and what happened in between is what a stop would have hit. A +5%
+    # horizon return that first went -30% is not a +5% trade; it is a
+    # stopped-out loss. MFE/MAE are what make the two distinguishable.
+    max_favorable_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_adverse_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Coarse label for grouping. NULL until the horizon resolves.
+    outcome: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    # The Early Opportunity Score at the moment of the signal, carried here
+    # so calibration can group by it without joining back through the
+    # pipeline event. NULL for candidates the early engine never scored.
+    early_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    late_entry_risk: Mapped[float | None] = mapped_column(Float, nullable=True)
+    momentum_class: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+
+
+class TokenObservation(Base):
+    """One stored market snapshot for a token, at a point in time.
+
+    The Early Signal Engine needs to know whether activity is
+    ACCELERATING, and several of those measurements have no other source.
+    DexScreener reports transaction counts only over 1h and 24h windows,
+    so "transactions per minute, and is that rate rising?" cannot be read
+    from a single response at any granularity that matters. It can only be
+    computed by differencing successive observations - which means the bot
+    has to keep them.
+
+    Candle-derived features (volume and price acceleration, compression,
+    VWAP, EMA/RSI/MACD) come from 1m/5m/15m OHLCV instead and do NOT need
+    this table. Only the flow features do: transaction rate, buy-pressure
+    change and persistence, and liquidity growth.
+
+    Rows are written by the watchlist re-evaluation loop and pruned by age,
+    since their whole value is recency.
+    """
+
+    __tablename__ = "token_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_address: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    observed_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    price_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_cap_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_5m_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_1h_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume_24h_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buys_1h: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sells_1h: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    buys_24h: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sells_24h: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_change_5m_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_change_1h_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class WatchlistEntry(Base):
+    """A token the Early Signal Engine is tracking, and its state.
+
+    The state machine exists because "promising" and "ready" are different
+    facts, and collapsing them forces a bad choice: either trade every
+    promising token immediately (chasing) or discard it (missing the move
+    entirely). WATCH is the third option - keep looking, and enter only if
+    confirmation arrives BEFORE the token becomes overextended.
+
+        DISCOVERED -> WATCH -> CONFIRMED -> PAPER_BUY -> EXIT
+        DISCOVERED -> WATCH -> FAILED -> SKIP
+
+    `score_history` is an append-only JSON list of {at, early, technical,
+    late_risk, stage} points. Keeping it is what makes it possible to ask
+    whether an IMPROVING score predicts better outcomes than a high static
+    one - a question that cannot be asked from a single snapshot per token.
+    """
+
+    __tablename__ = "watchlist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token_address: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    chain: Mapped[str] = mapped_column(String(32), default="solana")
+
+    state: Mapped[str] = mapped_column(String(16), default="WATCH", index=True)
+    stage: Mapped[str | None] = mapped_column(String(16), nullable=True)   # EARLY/DEVELOPING/CONFIRMED/LATE/OVEREXTENDED
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_evaluated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    evaluations: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Price when the token first entered WATCH. Lead-time analysis measures
+    # every later move against this, so it must be the price at DETECTION,
+    # not at entry - otherwise a signal that fired early but was acted on
+    # late would score as if it had been late.
+    price_at_first_signal: Mapped[float | None] = mapped_column(Float, nullable=True)
+    first_signal_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    early_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    technical_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    security_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    late_entry_risk: Mapped[float | None] = mapped_column(Float, nullable=True)
+    momentum_class: Mapped[str | None] = mapped_column(String(24), nullable=True)
+
+    best_early_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score_history: Mapped[list] = mapped_column(JSON, default=list)
+    features: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Why a WATCH candidate ultimately failed, from the taxonomy in
+    # app/analysis/early_calibration.py. NULL while still live.
+    failure_category: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

@@ -42,7 +42,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # The horizons the spec asks for, in minutes.
-HORIZONS_MINUTES: tuple[int, ...] = (15, 30, 60, 120, 240, 480, 1440)
+HORIZONS_MINUTES: tuple[int, ...] = (5, 15, 30, 60, 120, 240, 480, 1440)
 
 # Score buckets. Chosen to straddle every threshold under discussion so the
 # table can speak to each of them.

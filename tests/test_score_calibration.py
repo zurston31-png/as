@@ -268,16 +268,22 @@ def test_a_horizon_still_in_the_future_is_pending_not_missing(clean_db):
 # ===========================================================================
 
 def test_scheduling_creates_one_row_per_horizon(clean_db):
+    from app.analysis.calibration import HORIZONS_MINUTES
+
     created = schedule(
         clean_db, pipeline_event_id=1, token_address="Mint1", symbol="X",
         score=71.0, price_at_signal=0.004,
     )
     clean_db.commit()
-    assert created == 7
-    assert clean_db.query(models.ForwardReturn).count() == 7
-    assert {r.horizon_minutes for r in clean_db.query(models.ForwardReturn).all()} == {
-        15, 30, 60, 120, 240, 480, 1440
-    }
+    # Asserted against the ladder itself rather than a hard-coded count, so
+    # adding a horizon does not fail a test that was never about the number.
+    assert created == len(HORIZONS_MINUTES)
+    assert {r.horizon_minutes for r in clean_db.query(models.ForwardReturn).all()} == set(
+        HORIZONS_MINUTES
+    )
+    # 5m matters specifically: the early engine claims to detect moves
+    # before they are obvious, and a ladder starting at 15m cannot see that.
+    assert 5 in HORIZONS_MINUTES
 
 
 def test_scheduling_refuses_a_corrupt_signal_price(clean_db):

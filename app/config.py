@@ -203,6 +203,39 @@ class Settings(BaseSettings):
     # from a number that no longer means anything.
     KILL_SWITCH_MAX_STALE_VALUATION_SHARE: float = 0.50
 
+    # --- Early Signal Engine (app/early/) ---
+    # Tries to detect demand ARRIVING, as opposed to the technical score's
+    # reading of whether the chart already looks good.
+    EARLY_SIGNAL_ENABLED: bool = True
+    # Below this, a candidate is not interesting enough to keep looking at.
+    EARLY_SIGNAL_WATCH_THRESHOLD: float = 55.0
+    # At or above this - plus a healthy pattern and an enterable stage - the
+    # candidate is CONFIRMED.
+    EARLY_SIGNAL_CONFIRM_THRESHOLD: float = 70.0
+    # Require the existing technical score to agree before entering. This is
+    # combination strategy "C": early signal finds the candidate, the
+    # existing strategy confirms the entry.
+    EARLY_SIGNAL_REQUIRE_TECHNICAL: bool = True
+    #
+    # THE SWITCH THAT MATTERS. False means the early engine can raise a token
+    # to WATCH and can NEVER open a position on its own - the existing
+    # technical strategy remains the only thing that trades.
+    #
+    # The weights in app/early/score.py are unvalidated priors, chosen from
+    # reasoning about microstructure rather than from measured outcomes.
+    # Enabling this before app/analysis/early_calibration.py shows higher
+    # scores actually precede better outcomes means trading on a guess.
+    EARLY_SIGNAL_MAY_TRADE: bool = False
+    # How often WATCH tokens are re-scored, and how long they stay on the
+    # list without confirming.
+    WATCHLIST_INTERVAL_SECONDS: int = 120
+    WATCHLIST_MAX_AGE_HOURS: float = 12.0
+    WATCHLIST_MAX_SIZE: int = 200
+    # Observation history feeds the flow features (transaction rate, buy
+    # pressure change) which have no other source. Pruned by age since their
+    # whole value is recency.
+    OBSERVATION_RETENTION_HOURS: float = 48.0
+
     # --- Automatic token scanner (Stage 9) ---
     # Finds newly listed tokens itself instead of waiting for a TradingView
     # alert to name one. Discovered tokens go through the SAME pipeline a
