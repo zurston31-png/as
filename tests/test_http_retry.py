@@ -28,7 +28,7 @@ def _no_real_sleeping(monkeypatch):
     async def fake_sleep(seconds):
         slept.append(seconds)
 
-    monkeypatch.setattr(http_helper.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(http_helper, "_sleep", fake_sleep)
     return slept
 
 

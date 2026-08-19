@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.config import settings
+from app.concurrency import AlreadyReserved, reserve_entry
 from app.execution import get_execution_client
+from app.identity import describe, instrument_key
 from app.notifications.notifier import notifier
 from app.risk.manager import RiskManager, halt_trading
 from app.rugcheck.filters import run_rug_checks
@@ -31,9 +33,23 @@ risk_manager = RiskManager()
 
 
 def _instrument_id(symbol: str, token_address: str | None) -> str:
-    if settings.EXECUTION_BACKEND == "cex":
-        return symbol
-    return token_address or symbol
+    """What to hand the execution backend. Same rule as identity, and it
+    delegates so the two can never drift apart."""
+    return instrument_key(symbol, token_address)
+
+
+def _open_position_for(db: Session, symbol: str, token_address: str | None):
+    """The open position in THIS TOKEN, or None.
+
+    Matched on the mint. Matching on the symbol meant a position in one
+    PEPE blocked entry into an unrelated PEPE - and, worse, that a sell
+    signal could close the wrong one. See app/identity.py.
+    """
+    key = instrument_key(symbol, token_address)
+    for pos in db.query(models.Position).filter_by(status=models.PositionStatus.OPEN.value).all():
+        if instrument_key(pos.symbol, pos.token_address) == key:
+            return pos
+    return None
 
 
 async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
@@ -117,19 +133,43 @@ async def handle_discovered_token(
 
 
 async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
-    gate = risk_manager.check_can_open_position(db, symbol=signal.symbol)
+    """Evaluate one buy candidate and, if every gate clears, open a position.
+
+    Wrapped in an entry reservation because the gates and the position
+    creation are separated by several network round-trips, and both the
+    scanner loop and the webhook run on the same event loop. Without it two
+    candidates for the same mint could interleave, both see an empty book,
+    and both open a position - double the intended size, split across two
+    rows so the exposure cap never sees it. See app/concurrency.py.
+    """
+    key = instrument_key(signal.symbol, signal.token_address)
+    try:
+        async with reserve_entry(key):
+            await _evaluate_and_enter(db, signal)
+    except AlreadyReserved:
+        reason = (
+            f"an entry for {describe(signal.symbol, signal.token_address)} is already in "
+            "flight - skipping the duplicate rather than opening a second position"
+        )
+        logger.info(reason)
+        db.add(models.RiskEvent(event_type="duplicate_entry_blocked", details=reason, signal_id=signal.id))
+
+
+async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
+    gate = risk_manager.check_can_open_position(
+        db, symbol=signal.symbol, token_address=signal.token_address
+    )
     if not gate.allowed:
         db.add(models.RiskEvent(event_type="buy_blocked", details=gate.reason, signal_id=signal.id))
         await notifier.notify_rejection(signal, gate.reason)
         return
 
-    existing = (
-        db.query(models.Position)
-        .filter_by(symbol=signal.symbol, status=models.PositionStatus.OPEN.value)
-        .first()
-    )
+    existing = _open_position_for(db, signal.symbol, signal.token_address)
     if existing:
-        logger.info("ignoring buy signal for %s: position already open (id=%s)", signal.symbol, existing.id)
+        logger.info(
+            "ignoring buy signal for %s: position already open (id=%s)",
+            describe(signal.symbol, signal.token_address), existing.id,
+        )
         return
 
     if settings.LIVE_SIGNAL_SCORE_ENABLED:
@@ -219,7 +259,9 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
 
     portfolio_value = await portfolio.get_portfolio_value_usd(db)
     total_exposure = await portfolio.get_open_positions_value_usd(db)
-    symbol_exposure = await portfolio.get_symbol_exposure_usd(db, signal.symbol)
+    symbol_exposure = await portfolio.get_token_exposure_usd(
+        db, signal.symbol, signal.token_address
+    )
     size_usd = risk_manager.position_size_usd(
         portfolio_value,
         current_total_exposure_usd=total_exposure,
@@ -307,13 +349,12 @@ async def _handle_buy_signal(db: Session, signal: models.Signal) -> None:
 
 
 async def _handle_sell_signal(db: Session, signal: models.Signal) -> None:
-    position = (
-        db.query(models.Position)
-        .filter_by(symbol=signal.symbol, status=models.PositionStatus.OPEN.value)
-        .first()
-    )
+    position = _open_position_for(db, signal.symbol, signal.token_address)
     if not position:
-        logger.info("sell signal for %s ignored: no open position", signal.symbol)
+        logger.info(
+            "sell signal for %s ignored: no open position",
+            describe(signal.symbol, signal.token_address),
+        )
         return
     await close_position(db, position, reason="sell signal from TradingView", signal_id=signal.id)
 

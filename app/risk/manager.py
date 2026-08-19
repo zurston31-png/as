@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.config import settings
+from app.identity import instrument_key
 from app.state import get_state, set_state
 
 # Absolute ceilings - config is clamped to these no matter what .env says.
@@ -175,7 +176,9 @@ class RiskManager:
         return sl, tp
 
     # ---- gating checks that must pass before a buy is allowed ----
-    def check_can_open_position(self, db: Session, symbol: str | None = None) -> RiskDecision:
+    def check_can_open_position(
+        self, db: Session, symbol: str | None = None, token_address: str | None = None
+    ) -> RiskDecision:
         if is_trading_halted(db):
             reason = get_state(db, HALT_REASON_KEY, "") or "trading halted"
             return RiskDecision(False, f"trading halted: {reason}")
@@ -193,7 +196,7 @@ class RiskManager:
             )
 
         if symbol is not None and self.cooldown_seconds > 0:
-            remaining = self._cooldown_remaining_seconds(db, symbol)
+            remaining = self._cooldown_remaining_seconds(db, symbol, token_address)
             if remaining is not None and remaining > 0:
                 return RiskDecision(
                     False,
@@ -259,12 +262,25 @@ class RiskManager:
             .count()
         )
 
-    def _cooldown_remaining_seconds(self, db: Session, symbol: str) -> float | None:
-        last = (
-            db.query(models.Trade.created_at)
-            .filter(models.Trade.symbol == symbol, models.Trade.status == models.TradeStatus.FILLED.value)
+    def _cooldown_remaining_seconds(
+        self, db: Session, symbol: str, token_address: str | None = None
+    ) -> float | None:
+        """Time left on the re-entry cooldown FOR THIS MINT.
+
+        Matched on the canonical identity rather than the symbol: a
+        cooldown started by one PEPE must not silence an unrelated mint
+        that happens to share the ticker. See app/identity.py.
+        """
+        key = instrument_key(symbol, token_address)
+        recent = (
+            db.query(models.Trade.created_at, models.Trade.symbol, models.Trade.token_address)
+            .filter(models.Trade.status == models.TradeStatus.FILLED.value)
             .order_by(models.Trade.created_at.desc())
-            .first()
+            .limit(200)
+            .all()
+        )
+        last = next(
+            (row for row in recent if instrument_key(row[1], row[2]) == key), None
         )
         if last is None:
             return None

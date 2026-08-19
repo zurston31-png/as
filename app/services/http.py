@@ -40,6 +40,13 @@ from app.services import api_health
 
 logger = logging.getLogger(__name__)
 
+# Indirection so the suite can make backoff instant WITHOUT patching
+# asyncio.sleep itself. Patching the attribute on the shared asyncio module
+# reaches every module in the process: it silently stops coroutines ever
+# suspending, so asyncio.gather stops interleaving and any test written to
+# expose a race quietly passes for the wrong reason. Patch this name.
+_sleep = asyncio.sleep
+
 MAX_ATTEMPTS = 3
 BASE_BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 30.0
@@ -112,7 +119,7 @@ async def get_json(
                     "%s: status %d, retrying in %.1fs (attempt %d/%d)",
                     label, response.status_code, delay, attempt, MAX_ATTEMPTS,
                 )
-                await asyncio.sleep(delay)
+                await _sleep(delay)
                 continue
 
             response.raise_for_status()
@@ -132,7 +139,7 @@ async def get_json(
                 return None
             delay = _backoff_seconds(attempt)
             logger.info("%s: %s, retrying in %.1fs (attempt %d/%d)", label, exc, delay, attempt, MAX_ATTEMPTS)
-            await asyncio.sleep(delay)
+            await _sleep(delay)
 
     return None
 

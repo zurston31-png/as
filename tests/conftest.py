@@ -129,13 +129,19 @@ def _no_retry_sleeping(monkeypatch):
     parsing and give-up behaviour all still run exactly as they do live.
     tests/test_http_retry.py additionally records the delays it would have
     slept for, and overrides this with its own stub to do so.
+
+    Patches app.services.http._sleep, NOT asyncio.sleep. The earlier version
+    set the attribute on the shared asyncio module, which reaches every
+    module in the process - coroutines then never suspend, asyncio.gather
+    stops interleaving, and a test written to expose a race passes because
+    the race can no longer occur rather than because it was fixed.
     """
     from app.services import http as http_helper
 
     async def instant(_seconds):
         return None
 
-    monkeypatch.setattr(http_helper.asyncio, "sleep", instant)
+    monkeypatch.setattr(http_helper, "_sleep", instant)
     yield
 
 
