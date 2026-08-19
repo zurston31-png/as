@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>Scanner Pipeline — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  .muted { color: var(--muted); } .pos { color: var(--green); } .neg { color: var(--red); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  .stage { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .stage .name { width: 150px; font-size: 12px; font-weight: 600; letter-spacing: .04em; flex-shrink: 0; }
+  .bar-wrap { flex: 1; background: rgba(255,255,255,.04); border-radius: 5px; height: 30px; position: relative; overflow: hidden; }
+  .bar { height: 100%; background: linear-gradient(90deg, rgba(91,141,239,.55), rgba(91,141,239,.28)); border-radius: 5px; min-width: 2px; }
+  .bar.buy { background: linear-gradient(90deg, rgba(61,220,151,.55), rgba(61,220,151,.28)); }
+  .bar-label { position: absolute; left: 10px; top: 0; line-height: 30px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .drop { width: 190px; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .stage-note { margin: 0 0 14px 164px; font-size: 11.5px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  .pill.ok { background: rgba(61,220,151,.15); color: var(--green); }
+  .pill.degraded { background: rgba(245,195,68,.16); color: var(--amber); }
+  .pill.down { background: rgba(255,92,122,.16); color: var(--red); }
+  .pill.unused { background: rgba(139,147,167,.15); color: var(--muted); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+  .warn { background: rgba(245,195,68,.08); border: 1px solid rgba(245,195,68,.35); border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.5; }
+  .empty { padding: 26px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  a.addr { color: var(--accent); text-decoration: none; }
+  a.addr:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔭 Scanner Pipeline</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/performance">Performance</a>
+    &nbsp;&nbsp;<a class="navlink" href="/journal">Journal</a>
+  </div>
+</header>
+<main>
+
+{% if scanner_blocked %}
+<div class="card"><div class="warn">Scanner is not running: {{ scanner_blocked }}</div></div>
+{% endif %}
+
+<div class="card">
+  <h2>Funnel — last {{ '%g' % hours }}h</h2>
+  {% set widest = funnel.stages | map(attribute='reached') | max %}
+  {% for s in funnel.stages %}
+  <div class="stage">
+    <div class="name">{{ s.label }}</div>
+    <div class="bar-wrap">
+      <div class="bar {{ 'buy' if s.key == 'paper_buy' }}"
+           style="width: {{ (100 * s.reached / widest) if widest else 0 }}%"></div>
+      <div class="bar-label">{{ s.reached }}</div>
+    </div>
+    <div class="drop">
+      {% if s.rejected_here %}−{{ s.rejected_here }} rejected here{% endif %}
+      {% if s.pass_rate is not none and s.rejected_here %}
+        <span class="muted">({{ '%.0f' % s.pass_rate }}% through)</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="stage-note">{{ s.note }}</div>
+  {% endfor %}
+
+  {% if funnel.other_rejections %}
+  <div class="note">Other rejections in this window:
+    {% for name, n in funnel.other_rejections.items() %}<code>{{ name }}</code> ×{{ n }}{{ ", " if not loop.last }}{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="note">
+    <strong>A narrow funnel is the design, not a fault.</strong> This bot exists to reject
+    weak setups, and rejecting the overwhelming majority of brand-new listings is the
+    expected shape. The one thing to read from these numbers is whether <em>discovery</em>
+    is surfacing anything worth evaluating — never that a filter should be lowered to let
+    more through.
+  </div>
+</div>
+
+<div class="card">
+  <h2>Upstream data sources</h2>
+  {% if health %}
+  <table>
+    <tr><th>Service</th><th style="width:100px">Status</th><th class="num">OK</th><th class="num">Failed</th>
+      <th class="num">Success rate</th><th class="num">Last success</th><th>Last error</th></tr>
+    {% for h in health %}
+    <tr>
+      <td>{{ h.service }}</td>
+      <td><span class="pill {{ h.status }}">{{ h.status | upper }}</span></td>
+      <td class="num">{{ h.success_count }}</td>
+      <td class="num">{{ h.failure_count }}</td>
+      <td class="num">{{ ('%.0f%%' % h.success_rate) if h.success_rate is not none else '—' }}</td>
+      <td class="num">{{ (h.seconds_since_success ~ 's ago') if h.seconds_since_success is not none else 'never' }}</td>
+      <td class="muted"><code>{{ (h.last_error or '')[:90] }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="note">
+    Every gate in this bot fails closed, so a dead upstream and a genuinely quiet market
+    produce the same output: no trades. This table is the only thing that tells them apart.
+    A degraded service never relaxes a gate — it is reported, not compensated for.
+  </div>
+  {% else %}
+  <div class="empty">No upstream calls recorded yet this session.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Recently evaluated tokens</h2>
+  {% if recent_tokens %}
+  <table>
+    <tr><th>Symbol</th><th>Mint</th><th>Source</th><th>Last stage</th>
+      <th class="num">Liquidity</th><th class="num">Vol 24h</th><th class="num">Seen</th><th class="num">Traded</th><th>Reason</th></tr>
+    {% for t in recent_tokens %}
+    <tr>
+      <td>{{ t.symbol or '—' }}</td>
+      <td><a class="addr" href="/token/{{ t.token_address }}"><code>{{ t.token_address[:10] }}…</code></a></td>
+      <td class="muted">{{ t.discovery_source or '—' }}</td>
+      <td>{{ t.last_stage or '—' }}</td>
+      <td class="num">{{ ('$' ~ '{:,.0f}'.format(t.liquidity_usd)) if t.liquidity_usd else '—' }}</td>
+      <td class="num">{{ ('$' ~ '{:,.0f}'.format(t.volume_24h_usd)) if t.volume_24h_usd else '—' }}</td>
+      <td class="num">{{ t.evaluation_count or 0 }}</td>
+      <td class="num">{{ t.times_traded or 0 }}</td>
+      <td class="muted">{{ (t.last_reason or '')[:70] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="note">Click a mint to see everything the bot knows about it.</div>
+  {% else %}
+  <div class="empty">The scanner has not evaluated any tokens yet.</div>
+  {% endif %}
+</div>
+
+</main>
+</body>
+</html>

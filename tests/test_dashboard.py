@@ -198,3 +198,110 @@ def test_performance_page_can_be_filtered_to_one_strategy_version(sample_rows):
     assert resp.status_code == 200
     assert resp.json()["trade_count"] == 0
     assert resp.json()["strategy_version"] == "v-doesnotexist"
+
+
+# ---------------------------------------------------------------------------
+# /pipeline and /token
+# ---------------------------------------------------------------------------
+
+def test_pipeline_and_token_pages_require_auth():
+    assert client.get("/pipeline").status_code == 401
+    assert client.get("/api/pipeline").status_code == 401
+    assert client.get("/token/SomeMint111").status_code == 401
+
+
+def test_pipeline_page_renders_when_nothing_has_been_scanned():
+    resp = client.get("/pipeline", auth=AUTH)
+    assert resp.status_code == 200
+    assert "Funnel" in resp.text
+
+
+def test_pipeline_page_explains_that_a_narrow_funnel_is_the_design():
+    """Without this the page reads as a fault report, and the natural
+    response to a fault report is to loosen the filters - which is the one
+    thing an operator must not conclude from it."""
+    body = client.get("/pipeline", auth=AUTH).text
+    assert "narrow funnel is the design" in body
+    assert "never that a filter should be lowered" in body
+
+
+@pytest.fixture()
+def scanned_token():
+    """A ScannedToken row so the pipeline table renders its cells.
+
+    The empty-state test alone let a broken format string
+    ("$%,.0f", which is not valid %-formatting) ship undetected: with no
+    rows, the loop body never ran. Any template test that only covers the
+    empty state is only covering half the template.
+    """
+    import datetime as dt
+
+    now = dt.datetime.now(dt.timezone.utc)
+    db = SessionLocal()
+    row = models.ScannedToken(
+        token_address="PipelineRenderMint111", symbol="PIPE", chain="solana",
+        discovery_source="dexscreener", first_seen_at=now, last_evaluated_at=now,
+        evaluation_count=2, times_traded=1, last_stage="traded",
+        last_reason="opened a position",
+        liquidity_usd=185_000.0, volume_24h_usd=1_250_000.0,
+    )
+    db.add(row)
+    db.commit()
+    try:
+        yield row
+    finally:
+        db.delete(row)
+        db.commit()
+        db.close()
+
+
+def test_pipeline_page_renders_token_rows_with_formatted_numbers(scanned_token):
+    resp = client.get("/pipeline", auth=AUTH)
+    assert resp.status_code == 200
+    assert "PIPE" in resp.text
+    assert "$185,000" in resp.text        # thousands separator, no decimals
+    assert "$1,250,000" in resp.text
+    assert "/token/PipelineRenderMint111" in resp.text
+
+
+def test_token_page_renders_a_full_record(scanned_token):
+    resp = client.get("/token/PipelineRenderMint111", auth=AUTH)
+    assert resp.status_code == 200
+    assert "PIPE" in resp.text
+    assert "discovered" in resp.text
+
+
+def test_pipeline_page_shows_upstream_health(sample_rows):
+    from app.services import api_health
+
+    api_health.record_success("dexscreener")
+    api_health.record_failure("geckoterminal", "HTTP 429")
+    resp = client.get("/pipeline", auth=AUTH)
+    assert resp.status_code == 200
+    assert "dexscreener" in resp.text
+    assert "geckoterminal" in resp.text
+
+
+def test_pipeline_api_returns_json(sample_rows):
+    import json
+
+    resp = client.get("/api/pipeline", auth=AUTH)
+    assert resp.status_code == 200
+    payload = resp.json()
+    json.dumps(payload, allow_nan=False)
+    assert "stages" in payload["funnel"]
+    assert isinstance(payload["health"], list)
+
+
+def test_token_page_renders_for_an_unknown_address():
+    """The honest answer for an address the bot has never seen is "never
+    seen", not a 404 or a blank page."""
+    resp = client.get("/token/CompletelyUnknownMint999", auth=AUTH)
+    assert resp.status_code == 200
+    assert "never seen" in resp.text
+
+
+def test_token_page_shows_the_mint_as_the_identity(sample_rows):
+    resp = client.get("/token/CompletelyUnknownMint999", auth=AUTH)
+    assert "CompletelyUnknownMint999" in resp.text
+    assert "keyed on the mint address, never the symbol" in resp.text

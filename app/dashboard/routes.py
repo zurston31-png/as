@@ -11,7 +11,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 
 from app import models
+from app.analysis.funnel import build_funnel
 from app.analysis.report import build_performance_report
+from app.analysis.token_detail import build_token_detail
 from app.analysis.trade_analytics import MIN_TRADES_FOR_A_MEANINGFUL_BUCKET
 from app.config import settings
 from app.dashboard.analytics import compute_equity_curve, compute_portfolio_stats
@@ -19,7 +21,7 @@ from app.dashboard.charts import equity_curve_svg
 from app.database import SessionLocal
 from app.risk.manager import halt_trading, is_trading_halted, resume_trading
 from app.scanner.loop import scanner_blocked_reason
-from app.services import portfolio, price_feed
+from app.services import api_health, portfolio, price_feed
 from app.startup_checks import check_config_coherence
 
 router = APIRouter()
@@ -366,6 +368,71 @@ async def api_performance(version: str | None = None, user: str = Depends(check_
     db = SessionLocal()
     try:
         return JSONResponse(build_performance_report(db, strategy_version=version).as_dict())
+    finally:
+        db.close()
+
+
+@router.get("/pipeline")
+async def pipeline(request: Request, hours: float = 24.0, user: str = Depends(check_auth)):
+    """The scanner funnel plus system health, on one page.
+
+    These belong together: a funnel that suddenly narrows and an upstream
+    that just went down look identical from the trade log, and putting the
+    health panel next to the stage counts is what lets an operator tell
+    "the market is quiet" from "DexScreener has been 429ing for an hour".
+    """
+    db = SessionLocal()
+    try:
+        api_health.persist(db)
+        db.commit()
+
+        funnel = build_funnel(db, window_hours=hours if hours > 0 else None)
+        recent = (
+            db.query(models.ScannedToken)
+            .order_by(models.ScannedToken.last_evaluated_at.desc())
+            .limit(60)
+            .all()
+        )
+        return templates.TemplateResponse(
+            request,
+            "pipeline.html",
+            {
+                "funnel": funnel,
+                "health": [h.as_dict() for h in api_health.snapshot()],
+                "recent_tokens": recent,
+                "hours": hours,
+                "scanner_blocked": scanner_blocked_reason(),
+            },
+        )
+    finally:
+        db.close()
+
+
+@router.get("/token/{token_address}")
+async def token_detail(request: Request, token_address: str, user: str = Depends(check_auth)):
+    """Everything the bot knows about one mint, on one timeline.
+
+    Keyed on the mint address, never the symbol - symbols are not unique
+    and are trivially spoofed, so looking one up by symbol could merge two
+    unrelated assets into a single history.
+    """
+    db = SessionLocal()
+    try:
+        detail = build_token_detail(db, token_address)
+        return templates.TemplateResponse(request, "token.html", {"d": detail})
+    finally:
+        db.close()
+
+
+@router.get("/api/pipeline")
+async def api_pipeline(hours: float = 24.0, user: str = Depends(check_auth)):
+    db = SessionLocal()
+    try:
+        return JSONResponse({
+            "funnel": build_funnel(db, window_hours=hours if hours > 0 else None).as_dict(),
+            "health": [h.as_dict() for h in api_health.snapshot()],
+            "scanner_blocked": scanner_blocked_reason(),
+        })
     finally:
         db.close()
 

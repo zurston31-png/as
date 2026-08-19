@@ -73,6 +73,7 @@ async def _get_json(url: str, params: dict | None = None) -> dict | None:
     return await http.get_json(
         url, params=params, headers={"Accept": "application/json"},
         label=f"GeckoTerminal {url}",
+        service="geckoterminal",
     )
 
 

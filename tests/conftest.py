@@ -109,3 +109,42 @@ def healthy_market(monkeypatch):
 
     monkeypatch.setattr(price_feed, "get_market_snapshot", fake_snapshot)
     return monkeypatch
+
+
+# ---------------------------------------------------------------------------
+# no real sleeping, and no real network
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _no_retry_sleeping(monkeypatch):
+    """Make the HTTP helper's retry backoff instant for the whole suite.
+
+    app/services/http.py retries transient failures with 1-2-4s backoff,
+    which is right in production and pure wall-clock cost here. Any test
+    that reaches an unreachable host pays it three times over - routing the
+    price feed through the helper turned a 32s suite into a 68s one on that
+    alone.
+
+    The sleep is skipped, not the retry: attempt counting, Retry-After
+    parsing and give-up behaviour all still run exactly as they do live.
+    tests/test_http_retry.py additionally records the delays it would have
+    slept for, and overrides this with its own stub to do so.
+    """
+    from app.services import http as http_helper
+
+    async def instant(_seconds):
+        return None
+
+    monkeypatch.setattr(http_helper.asyncio, "sleep", instant)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_api_health():
+    """Health counters are process-global, so one test's failures would
+    otherwise show up in another's assertions."""
+    from app.services import api_health
+
+    api_health.reset()
+    yield
+    api_health.reset()

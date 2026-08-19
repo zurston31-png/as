@@ -7,7 +7,7 @@ import datetime as dt
 import logging
 from dataclasses import dataclass, field
 
-import httpx
+from app.services import http
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +22,26 @@ def _to_float(value):
 
 
 async def _fetch_pairs(token_address: str) -> list[dict]:
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(f"{DEXSCREENER_BASE}/{token_address}")
-        resp.raise_for_status()
-        data = resp.json()
+    """Every pair DexScreener knows for this token, or [] if it can't say.
+
+    Goes through the shared rate-limit-aware helper rather than raw httpx.
+    This is the busiest external call in the bot - the position monitor
+    hits it once per open position every 30s and the paper fill model hits
+    it on every leg - so it is the most likely to be throttled, and until
+    it was routed here a 429 produced no retry and no record that
+    throttling had happened at all.
+
+    Returns [] rather than raising on failure, which every caller already
+    treats as "no data" and therefore fails closed on.
+    """
+    data = await http.get_json(
+        f"{DEXSCREENER_BASE}/{token_address}",
+        timeout=10,
+        label=f"DexScreener price {token_address}",
+        service="dexscreener",
+    )
+    if not isinstance(data, dict):
+        return []
     return data.get("pairs") or []
 
 

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ d.symbol or 'Token' }} — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1100px; margin: 0 auto; }
+  .muted { color: var(--muted); } .pos { color: var(--green); } .neg { color: var(--red); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  .verdict { font-size: 15px; line-height: 1.5; }
+  .addr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--muted); word-break: break-all; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .stat { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 8px; padding: 11px 13px; }
+  .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .v { font-size: 17px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .when { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+  .kind { width: 96px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  .pill.discovered { background: rgba(139,147,167,.15); color: var(--muted); }
+  .pill.signal { background: rgba(91,141,239,.15); color: var(--accent); }
+  .pill.rejected { background: rgba(245,195,68,.16); color: var(--amber); }
+  .pill.buy { background: rgba(61,220,151,.15); color: var(--green); }
+  .pill.sell { background: rgba(255,92,122,.14); color: var(--red); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+  .empty { padding: 34px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔎 {{ d.symbol or 'Unknown token' }}</h1>
+  <div>
+    <a class="navlink" href="/pipeline">&larr; Pipeline</a>
+    &nbsp;&nbsp;<a class="navlink" href="/">Dashboard</a>
+  </div>
+</header>
+<main>
+
+<div class="card">
+  <div class="verdict">{{ d.verdict }}</div>
+  <div class="addr" style="margin-top:10px">{{ d.token_address }}</div>
+  <div class="note">
+    This page is keyed on the mint address, never the symbol. Symbols are not unique and
+    are trivially spoofed — two different mints can both call themselves the same thing,
+    so the address is the only safe identity.
+  </div>
+</div>
+
+{% if d.found %}
+<div class="card">
+  <h2>Summary</h2>
+  <div class="grid">
+    <div class="stat"><div class="k">Chain</div><div class="v">{{ d.chain or '—' }}</div></div>
+    <div class="stat"><div class="k">Times traded</div><div class="v">{{ d.times_traded }}</div></div>
+    <div class="stat"><div class="k">Realized P&amp;L</div>
+      <div class="v {{ 'pos' if d.realized_pnl_usd >= 0 else 'neg' }}">${{ '%.2f' % d.realized_pnl_usd }}</div></div>
+    <div class="stat"><div class="k">Signals</div><div class="v">{{ d.signals | length }}</div></div>
+    <div class="stat"><div class="k">Rejections</div><div class="v">{{ d.rejections | length }}</div></div>
+    {% if d.latest_signal and d.latest_signal.signal_score is not none %}
+    <div class="stat"><div class="k">Last signal score</div>
+      <div class="v">{{ '%.0f' % d.latest_signal.signal_score }}/100</div></div>
+    {% endif %}
+    {% if d.latest_signal and d.latest_signal.market_quality_score is not none %}
+    <div class="stat"><div class="k">Last market quality</div>
+      <div class="v">{{ '%.0f' % d.latest_signal.market_quality_score }}/100</div></div>
+    {% endif %}
+    {% if d.latest_rug_check and d.latest_rug_check.rug_risk_score is not none %}
+    <div class="stat"><div class="k">Last rug risk</div>
+      <div class="v">{{ '%.0f' % d.latest_rug_check.rug_risk_score }}/100
+        <span class="muted" style="font-size:12px">{{ d.latest_rug_check.rug_risk_level or '' }}</span></div></div>
+    {% endif %}
+  </div>
+</div>
+
+{% if d.latest_rug_check %}
+<div class="card">
+  <h2>Latest security check</h2>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>Overall</td><td>{{ 'passed' if d.latest_rug_check.passed else 'FAILED' }}</td></tr>
+    <tr><td>Ownership renounced</td><td>{{ d.latest_rug_check.ownership_renounced if d.latest_rug_check.ownership_renounced is not none else 'unknown' }}</td></tr>
+    <tr><td>Mint disabled</td><td>{{ d.latest_rug_check.mint_disabled if d.latest_rug_check.mint_disabled is not none else 'unknown' }}</td></tr>
+    <tr><td>Liquidity locked</td><td>{{ d.latest_rug_check.liquidity_locked if d.latest_rug_check.liquidity_locked is not none else 'unknown' }}</td></tr>
+    <tr><td>Honeypot</td><td>{{ d.latest_rug_check.is_honeypot if d.latest_rug_check.is_honeypot is not none else 'unknown' }}</td></tr>
+    <tr><td>Top-10 holders</td><td>{{ ('%.1f%%' % (d.latest_rug_check.top10_holder_pct * 100)) if d.latest_rug_check.top10_holder_pct is not none else 'unknown' }}</td></tr>
+    <tr><td>Dev wallet</td><td>{{ ('%.1f%%' % (d.latest_rug_check.dev_wallet_pct * 100)) if d.latest_rug_check.dev_wallet_pct is not none else 'unknown' }}</td></tr>
+    <tr><td>Liquidity</td><td>{{ ('$' ~ '{:,.0f}'.format(d.latest_rug_check.liquidity_usd)) if d.latest_rug_check.liquidity_usd else 'unknown' }}</td></tr>
+    <tr><td>Screened by</td><td>{{ d.latest_rug_check.scanner_source or 'unknown' }}</td></tr>
+  </table>
+  {% if d.latest_rug_check.reasons %}
+  <div class="note">Reasons: {{ d.latest_rug_check.reasons | join('; ') }}</div>
+  {% endif %}
+  <div class="note">"unknown" means the source did not report it — not that it passed.
+    A check the bot could not perform makes it reject, never proceed.</div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Timeline</h2>
+  {% if d.timeline %}
+  <table>
+    {% for e in d.timeline %}
+    <tr>
+      <td class="when">{{ e.at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td class="kind"><span class="pill {{ e.kind }}">{{ e.kind }}</span></td>
+      <td class="{{ 'pos' if e.outcome == 'win' else ('neg' if e.outcome == 'loss' else '') }}">{{ e.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">Nothing recorded for this token yet.</div>
+  {% endif %}
+</div>
+
+{% else %}
+<div class="card">
+  <div class="empty">
+    The bot has no record of this address — it has never been discovered by the scanner
+    or submitted through a webhook alert.
+  </div>
+</div>
+{% endif %}
+
+</main>
+</body>
+</html>

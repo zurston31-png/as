@@ -36,6 +36,8 @@ import random
 
 import httpx
 
+from app.services import api_health
+
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
@@ -76,12 +78,19 @@ async def get_json(
     params: dict | None = None,
     timeout: float = 15.0,
     label: str | None = None,
+    service: str | None = None,
 ):
     """GET a JSON document, retrying transient failures. None on give-up.
 
     Returning None rather than raising keeps every caller's existing
     fail-closed handling intact: no data means the trade is rejected, never
     that a check is skipped.
+
+    `service` names the upstream for health tracking (app/services/
+    api_health.py). It exists because fail-closed makes a dead API and a
+    quiet market look the same from the outside, and only the health
+    record can tell them apart. Recording is best-effort and never changes
+    the outcome of the call.
     """
     label = label or url
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -96,6 +105,7 @@ async def get_json(
                         label, MAX_ATTEMPTS, response.status_code,
                         " - you are being rate limited" if response.status_code == 429 else "",
                     )
+                    _note_failure(service, f"HTTP {response.status_code} after {MAX_ATTEMPTS} attempts")
                     return None
                 delay = _parse_retry_after(response) or _backoff_seconds(attempt)
                 logger.info(
@@ -106,18 +116,41 @@ async def get_json(
                 continue
 
             response.raise_for_status()
-            return response.json()
+            payload = response.json()
+            _note_success(service)
+            return payload
 
         except httpx.HTTPStatusError as exc:
             # A non-retryable 4xx - asking again will fail the same way.
             logger.warning("%s: %s", label, exc)
+            _note_failure(service, str(exc))
             return None
         except Exception as exc:  # noqa: BLE001 - network/parse errors are all "no data"
             if attempt == MAX_ATTEMPTS:
                 logger.warning("%s: giving up after %d attempts (%s)", label, MAX_ATTEMPTS, exc)
+                _note_failure(service, str(exc))
                 return None
             delay = _backoff_seconds(attempt)
             logger.info("%s: %s, retrying in %.1fs (attempt %d/%d)", label, exc, delay, attempt, MAX_ATTEMPTS)
             await asyncio.sleep(delay)
 
     return None
+
+
+def _note_success(service: str | None) -> None:
+    """Health recording must never be able to break a working request."""
+    if not service:
+        return
+    try:
+        api_health.record_success(service)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not record API health for %s", service, exc_info=True)
+
+
+def _note_failure(service: str | None, error: str) -> None:
+    if not service:
+        return
+    try:
+        api_health.record_failure(service, error)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not record API health for %s", service, exc_info=True)

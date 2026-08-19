@@ -426,6 +426,102 @@ since a position can close in more than one step (a partial profit-take,
 then later a full exit for a different reason). This is "study why the bot
 won or lost" made concrete.
 
+### Performance and validation (`/performance`)
+
+The page that answers the question the headline numbers cannot: **is this
+record strong enough to believe?** It leads with a validation verdict
+rather than a return, because "+34%" and "on 12 trades" mean very
+different things and the second is the part people skip.
+
+Every strategy starts **EXPERIMENTAL** and stays there until it clears
+every criterion in `app/analysis/validation.py`: at least 100 closed
+trades, positive expectancy *after costs*, profit factor ≥ 1.30, realized
+drawdown ≤ 25%, no single trade contributing more than 40% of gross
+profit, a resampled 95th-percentile drawdown ≤ 35%, a profitable
+out-of-sample run, and a majority of walk-forward windows profitable.
+
+Three statuses, and the distinction between the first two is the point:
+
+| Status | Meaning |
+| --- | --- |
+| `EXPERIMENTAL` | not enough evidence yet — whatever the numbers say |
+| `FAILING` | enough evidence, and the answer is no |
+| `VALIDATED` | cleared every criterion |
+
+Insufficient evidence is never treated as a pass, and never as a failure
+either. Too few trades, an infinite profit factor from having no losing
+trades yet, and a concentration ratio computed from under ten winners are
+all "we don't know", because branding a young strategy a failure for doing
+arithmetic would be as wrong as calling it proven. The thresholds are
+module constants rather than settings — a bar that can be lowered from
+`.env` when the strategy fails to clear it is not a bar. And
+`cleared_for_real_money` is `False` by construction even for a VALIDATED
+strategy: every fill on that page was simulated, and simulated evidence is
+not evidence about real execution.
+
+Below the verdict: where the money actually went (fees, slippage, total
+execution cost, and what share of legs have cost data recorded at all),
+holding-time distribution including whether losers are being held longer
+than winners, largest win/loss, and per-bucket breakdowns by signal score,
+market quality, entry liquidity, holding time and exit reason — each
+bucket carrying its own trade count and flagged `THIN` below 20, so a
+suggestive-looking row cannot be mistaken for evidence.
+
+**Monte Carlo** (`app/analysis/monte_carlo.py`) resamples the trade
+sequence, because a run produces one path and the order of that path is
+luck. Shuffle mode reorders the same trades to isolate *path risk* (same
+total, different ride); bootstrap mode draws with replacement to estimate
+*outcome risk* (what range of results is consistent with this edge, and
+what the chance of ending down over the next N trades actually is). The
+95th-percentile resampled drawdown, not the realized one, is the number to
+size positions against.
+
+Also available as `GET /api/performance` (JSON) and
+`python scripts/performance_report.py` (terminal, with `--version`,
+`--list-versions` and `--json`).
+
+**Strategy versioning** underpins all of it: every Signal and Trade is
+stamped with a deterministic hash of the 46 settings that materially
+change trading behaviour (`app/strategy/version.py`). Cosmetic changes —
+log level, poll intervals, dashboard password — deliberately do not mint a
+new version, since fragmenting history on those costs analytical power and
+buys nothing. Reporting across more than one version produces a loud
+warning, because a win rate spanning a threshold change describes a
+strategy that never existed.
+
+### Scanner pipeline and system health (`/pipeline`)
+
+The funnel, stage by stage:
+
+```
+FOUND -> PRE-SCREEN -> EVALUATED -> SECURITY -> MARKET QUALITY -> SIGNAL -> PAPER BUY
+```
+
+with how many reached each stage and how many were rejected there. **A
+narrow funnel is the design, not a fault** — this bot exists to reject
+weak setups, and rejecting the overwhelming majority of brand-new listings
+is the expected shape. The only legitimate conclusion to draw from a
+narrow funnel is about the quality of what *discovery* is surfacing, never
+that a filter should be lowered to let more through. The page says so
+directly, because a funnel chart that narrows hard invites exactly the
+wrong reaction.
+
+Alongside it, an **upstream health panel** (`app/services/api_health.py`)
+showing per-service last success, failure count, consecutive failures and
+the last error. This exists because every gate in this bot fails closed,
+which means a dead API and a genuinely quiet market produce *identical*
+output: no trades, and logs that say "rejected: no data". The health table
+is the only thing that tells them apart. A degraded service never relaxes
+a gate — it is reported, not compensated for.
+
+Clicking any mint opens **`/token/<mint>`**: everything the bot knows about
+that token on one timeline — when it was discovered, every signal with its
+scores, every rejection with its reason, every fill, and a one-line verdict
+saying what the bot ultimately did and why. Keyed on the mint address,
+never the symbol: symbols are not unique and are trivially spoofed, so
+looking up by symbol could merge a scam clone's history into the real
+token's.
+
 ### Live signal score
 
 The 0-100 composite signal score (`app/signals/scoring.py`) gates every

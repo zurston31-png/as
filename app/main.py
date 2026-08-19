@@ -20,7 +20,9 @@ from app.monitor import position_monitor
 from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
 from app.security import verify_webhook_secret
+from app.services import api_health
 from app.startup_checks import log_config_coherence
+from app.strategy.version import register_current_version
 from app.services.reporting import send_daily_summary
 from app.services.trading_service import handle_alert
 
@@ -50,6 +52,23 @@ async def lifespan(app: FastAPI):
     # the history the score needs). Silent at runtime otherwise - the bot
     # just never trades and the logs look fine.
     log_config_coherence()
+
+    # Restore upstream health and register the running strategy version.
+    # Without the reload, a restart makes every data source look "unused"
+    # and the dashboard loses the fact that one has been down for an hour.
+    db = SessionLocal()
+    try:
+        loaded = api_health.load(db)
+        if loaded:
+            logger.info("restored health records for %d upstream service(s)", loaded)
+        version = register_current_version(db)
+        db.commit()
+        logger.info("running strategy version %s", version.label)
+    except Exception:
+        logger.exception("startup bookkeeping failed - continuing without it")
+        db.rollback()
+    finally:
+        db.close()
 
     _monitor_task = asyncio.create_task(position_monitor.run_forever())
 

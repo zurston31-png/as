@@ -91,7 +91,10 @@ def _to_int(value):
         return None
 
 
-async def _get_json(url: str, *, headers: dict | None = None, params: dict | None = None):
+async def _get_json(
+    url: str, *, headers: dict | None = None, params: dict | None = None,
+    service: str = "dexscreener",
+):
     """Discovery fetch, via the shared rate-limit-aware helper.
 
     The scanner is the heaviest caller in the bot - a batch of listing plus
@@ -99,7 +102,10 @@ async def _get_json(url: str, *, headers: dict | None = None, params: dict | Non
     429, and the one that most needs to back off rather than silently
     return nothing.
     """
-    return await http.get_json(url, headers=headers, params=params, label=f"token discovery {url}")
+    return await http.get_json(
+        url, headers=headers, params=params,
+        label=f"token discovery {url}", service=service,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +247,7 @@ async def discover_birdeye(chain: str) -> list[DiscoveredToken]:
         f"{settings.BIRDEYE_API_BASE}/defi/v2/tokens/new_listing",
         headers=_birdeye_headers(),
         params={"limit": min(settings.SCANNER_MAX_TOKENS_PER_CYCLE, 50)},
+        service="birdeye",
     )
     if not isinstance(payload, dict):
         return []
