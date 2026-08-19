@@ -28,21 +28,6 @@ from app.early.score import EarlyScore
 NOW = dt.datetime.now(dt.timezone.utc)
 
 
-@pytest.fixture()
-def clean_db():
-    def wipe(session):
-        for model in (models.WatchlistEntry, models.TokenObservation, models.ForwardReturn):
-            for row in session.query(model).all():
-                session.delete(row)
-        session.commit()
-
-    db = SessionLocal()
-    wipe(db)
-    try:
-        yield db
-    finally:
-        wipe(db)
-        db.close()
 
 
 def verdict(

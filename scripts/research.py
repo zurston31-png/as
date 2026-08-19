@@ -9,8 +9,13 @@
     python scripts/research.py ablate      <symbol>    which factors earn their weight
     python scripts/research.py sweep       <symbol> <param> <v1,v2,...>
 
-The first four read the bot's own database and need no network. The last
-three run backtests and need candle history for the symbol - by default
+    python scripts/research.py early                   the Early Signal Engine
+    python scripts/research.py early-ablate            which early factors earn it
+    python scripts/research.py early-walkforward       is the early threshold stable?
+    python scripts/research.py modes       <symbol>    A vs B vs C
+
+The database-backed commands read the bot's own database and need no
+network. The backtest commands need candle history for the symbol - by default
 from the live provider, or with --synthetic from the generator (useful for
 exercising the machinery, useless for drawing conclusions about markets).
 
@@ -212,6 +217,121 @@ def cmd_sweep(args) -> int:
     return 0
 
 
+def cmd_early(args) -> int:
+    from app.analysis.early_calibration import (
+        build_early_calibration, build_false_positives, build_lead_time,
+    )
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" EARLY SIGNAL ENGINE")
+        print(RULE)
+
+        print("\n CALIBRATION - does a higher EARLY score precede a better outcome?\n")
+        for horizon in args.horizons:
+            table = build_early_calibration(db, horizon_minutes=horizon)
+            print(f" {horizon}m: {table.verdict()}")
+            usable = [b for b in table.buckets if b.sample_size]
+            if usable:
+                print(f"    {'bucket':<10}{'n':>6}{'mean %':>9}{'win %':>8}"
+                      f"{'net %':>9}{'MFE':>8}{'MAE':>8}")
+                for b in usable:
+                    mark = " " if b.meaningful else "*"
+                    mfe = f"{b.mean_favorable_pct:+.1f}" if b.mean_favorable_pct is not None else "-"
+                    mae = f"{b.mean_adverse_pct:+.1f}" if b.mean_adverse_pct is not None else "-"
+                    print(f"  {mark} {b.bucket:<10}{b.sample_size:>6}"
+                          f"{b.mean_return_pct:>+9.2f}{b.win_rate_pct:>8.0f}"
+                          f"{b.expectancy_net_pct:>+9.2f}{mfe:>8}{mae:>8}")
+            print()
+        print(" * fewer than 30 measured outcomes - shown, but not evidence")
+
+        lead = build_lead_time(db)
+        print(f"\n LEAD TIME\n {lead.verdict()}")
+        if lead.tracked:
+            print(f"    {'move':<10}{'reached':>9}{'detected first':>16}{'share':>8}")
+            for row in lead.as_dict()["thresholds"]:
+                share = f"{row['share_pct']:.0f}%" if row["share_pct"] is not None else "-"
+                print(f"    +{row['threshold_pct']:<9.0f}{row['reached']:>9}"
+                      f"{row['detected_before']:>16}{share:>8}")
+
+        fp = build_false_positives(db)
+        print(f"\n FALSE POSITIVES\n {fp.verdict()}")
+        if fp.by_category:
+            print(f"    {'category':<26}{'count':>7}")
+            for category, count in fp.by_category:
+                print(f"    {category:<26}{count:>7}")
+        if fp.by_score_bucket:
+            print(f"\n    {'early bucket':<14}{'failed':>8}{'total':>7}{'fail rate':>11}")
+            for bucket, (failed, total) in fp.by_score_bucket.items():
+                rate = f"{failed / total * 100:.0f}%" if total else "-"
+                print(f"    {bucket:<14}{failed:>8}{total:>7}{rate:>11}")
+
+        if args.json:
+            print(json.dumps({
+                "calibration": [
+                    build_early_calibration(db, horizon_minutes=h).as_dict() for h in args.horizons
+                ],
+                "lead_time": lead.as_dict(),
+                "false_positives": fp.as_dict(),
+            }, indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_early_ablate(args) -> int:
+    from app.research.early_ablation import run_early_ablation
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" EARLY FEATURE ABLATION - does each early factor earn its weight?")
+        print(RULE)
+        report = run_early_ablation(db, horizon_minutes=args.horizon)
+        print(report.summary())
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_early_walkforward(args) -> int:
+    from app.research.early_walkforward import walk_forward_early_threshold
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" EARLY THRESHOLD WALK-FORWARD - does the level survive out-of-sample?")
+        print(RULE)
+        report = walk_forward_early_threshold(
+            db, horizon_minutes=args.horizon, windows=args.windows
+        )
+        print(report.table())
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_modes(args) -> int:
+    from app.research.strategy_modes import compare_modes
+
+    series = _series(args.symbol, synthetic=args.synthetic, limit=args.limit)
+    if series is None:
+        return 1
+    print(RULE)
+    print(" STRATEGY MODES - technical only vs early only vs early+technical")
+    print(RULE)
+    comparison = compare_modes(series, base_config=BacktestConfig(warmup_bars=args.warmup))
+    print(comparison.table())
+    if args.json:
+        print(json.dumps(comparison.as_dict(), indent=2))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -253,6 +373,27 @@ def main() -> int:
     p.add_argument("param", help="BacktestConfig field name")
     p.add_argument("values", help="comma-separated values, e.g. 60,62.5,65,67.5,70")
     p.set_defaults(func=cmd_sweep)
+
+    p = sub.add_parser("early", help="Early Signal Engine: calibration, lead time, false positives")
+    p.add_argument("--horizons", type=int, nargs="+", default=[15, 30, 60, 120],
+                   help="forward-return horizons in minutes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_early)
+
+    p = sub.add_parser("early-ablate", help="leave-one-out over the early factors, on stored data")
+    p.add_argument("--horizon", type=int, default=60)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_early_ablate)
+
+    p = sub.add_parser("early-walkforward", help="is the early threshold stable out-of-sample?")
+    p.add_argument("--horizon", type=int, default=60)
+    p.add_argument("--windows", type=int, default=4)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_early_walkforward)
+
+    p = sub.add_parser("modes", help="A: technical / B: early / C: both")
+    backtest_args(p)
+    p.set_defaults(func=cmd_modes)
 
     args = parser.parse_args()
     init_db()

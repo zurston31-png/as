@@ -415,6 +415,11 @@ class ForwardReturn(Base):
     early_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
     late_entry_risk: Mapped[float | None] = mapped_column(Float, nullable=True)
     momentum_class: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    # The early feature values AS THEY WERE at signal time. Stored rather
+    # than recomputed, because the whole point of ablation is to ask what
+    # the engine could have known when it decided - re-extracting features
+    # later would score the token on candles that had not happened yet.
+    early_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class TokenObservation(Base):

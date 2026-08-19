@@ -84,6 +84,7 @@ def schedule(
     early_score: float | None = None,
     late_entry_risk: float | None = None,
     momentum_class: str | None = None,
+    early_features: dict | None = None,
 ) -> int:
     """Create one pending row per horizon for a freshly scored candidate.
 
@@ -117,10 +118,44 @@ def schedule(
                 early_score=early_score,
                 late_entry_risk=late_entry_risk,
                 momentum_class=momentum_class,
+                early_features=early_features,
             )
         )
         created += 1
     return created
+
+
+def attach_early(db: Session, pipeline_event_id: int, verdict) -> int:
+    """Record the early verdict on rows already scheduled for this event.
+
+    Forward returns are scheduled the moment a candidate is scored, before
+    the early engine has run - deliberately, because a candidate the
+    TECHNICAL gate rejects still has to be followed forward or the
+    threshold can never be shown to be wrong. The consequence is that the
+    early score is not known at scheduling time, and without this
+    back-fill every ForwardReturn.early_score stays NULL and the early
+    calibration reads an empty dataset while looking like it is working.
+
+    A verdict with no early score (a security failure, which short-circuits
+    before any feature is computed) writes nothing at all rather than
+    writing zeros. "The early engine never got to look at this" and "the
+    early engine scored it zero" are different facts.
+    """
+    if getattr(verdict, "early_score", None) is None:
+        return 0
+
+    rows = (
+        db.query(models.ForwardReturn)
+        .filter(models.ForwardReturn.pipeline_event_id == pipeline_event_id)
+        .all()
+    )
+    features = verdict.features.as_dict() if getattr(verdict, "features", None) else None
+    for row in rows:
+        row.early_score = verdict.early_score
+        row.late_entry_risk = verdict.late_risk
+        row.momentum_class = verdict.momentum.label.value if verdict.momentum else None
+        row.early_features = features
+    return len(rows)
 
 
 def _aware(moment: dt.datetime) -> dt.datetime:

@@ -189,3 +189,29 @@ def _coherent_cash_ledger():
     finally:
         db.close()
     yield
+
+
+@pytest.fixture()
+def clean_db():
+    """A session with the early-signal tables emptied before and after.
+
+    Wiped on both sides rather than only on entry: these tests seed
+    hundreds of forward-return rows, and leaving them behind would make an
+    unrelated calibration or funnel test read a dataset it never created.
+    """
+    from app import models as _models
+    from app.database import SessionLocal as _SessionLocal
+
+    def wipe(session):
+        for model in (_models.WatchlistEntry, _models.TokenObservation, _models.ForwardReturn):
+            for row in session.query(model).all():
+                session.delete(row)
+        session.commit()
+
+    db = _SessionLocal()
+    wipe(db)
+    try:
+        yield db
+    finally:
+        wipe(db)
+        db.close()

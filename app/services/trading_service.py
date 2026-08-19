@@ -354,7 +354,7 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     # third state.
     if settings.EARLY_SIGNAL_ENABLED and signal.token_address:
         try:
-            await _consider_for_watchlist(db, signal, report)
+            await _consider_for_watchlist(db, signal, report, scored_event)
         except Exception:
             logger.exception("early-signal evaluation failed for %s - continuing", signal.symbol)
 
@@ -476,7 +476,9 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     await notifier.notify_trade_executed(trade, extra=f"entry ${result.avg_price:.8f} | SL ${sl:.8f} / TP ${tp:.8f}")
 
 
-async def _consider_for_watchlist(db: Session, signal: models.Signal, report) -> None:
+async def _consider_for_watchlist(
+    db: Session, signal: models.Signal, report, scored_event=None
+) -> None:
     """Score a candidate on the early engine and record the verdict.
 
     Never opens a position and never blocks one. It records a WATCH entry
@@ -523,6 +525,16 @@ async def _consider_for_watchlist(db: Session, signal: models.Signal, report) ->
         verdict=verdict,
         price=signal.price,
     )
+    # Back-fill the early verdict onto the forward-return rows that were
+    # scheduled earlier in this same pass. They are scheduled before the
+    # early engine runs, because a candidate rejected by the TECHNICAL gate
+    # must still be followed forward - but that ordering means the early
+    # score is not known yet at scheduling time. Without this attach, every
+    # ForwardReturn.early_score would be NULL and the entire early
+    # calibration would silently have nothing to read.
+    if scored_event is not None:
+        forward_returns.attach_early(db, scored_event.id, verdict)
+
     if entry is not None:
         logger.info(
             "early signal %s: %s (early %.0f, late risk %.0f, %s)",

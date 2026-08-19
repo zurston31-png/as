@@ -105,6 +105,37 @@ class EarlyFeatures:
     def as_dict(self) -> dict:
         return {name: f.as_dict() for name, f in sorted(self.features.items())}
 
+    @classmethod
+    def from_dict(cls, payload: dict | None) -> "EarlyFeatures":
+        """Rebuild a feature set from what was stored at signal time.
+
+        This is what makes the early-signal ablation honest. Re-extracting
+        features today would score the token on TODAY's candles and
+        today's snapshots, which is look-ahead: the question is what the
+        engine could have known at the moment it decided, and only the
+        stored row knows that.
+
+        `available` is read from the payload rather than inferred from the
+        value being non-null. A feature can legitimately be available with
+        a value of 0.0, and treating 0.0 as "missing" would silently move
+        weight out of the missing-data budget and make an unreliable score
+        look reliable.
+        """
+        features = cls()
+        for name, raw in (payload or {}).items():
+            if not isinstance(raw, dict):
+                continue
+            features.add(
+                Feature(
+                    name=raw.get("name", name),
+                    value=raw.get("value"),
+                    available=bool(raw.get("available")),
+                    detail=raw.get("detail", ""),
+                    source=raw.get("source", ""),
+                )
+            )
+        return features
+
 
 # ---------------------------------------------------------------------------
 # candle-derived

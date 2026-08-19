@@ -882,6 +882,145 @@ It **fails closed** — a check that cannot run counts as a failure — and it
 **never closes existing positions**. Halting entries is safe; liquidating
 a book because a feed hiccuped turns a data problem into a real loss.
 
+## Early Signal Engine — catching demand as it arrives
+
+The technical score reads a chart that *already looks good*. By the time an
+RSI cross, a MACD expansion and a volume spike all agree, the move is
+usually well underway, and the entry that follows is a chase. The Early
+Signal Engine (`app/early/`) is a **fourth, separate 0-100 score** that
+asks a different question: is demand *arriving right now*?
+
+It is separate on purpose. Blending it into the technical score would make
+both unreadable and would let a strong early reading paper over a weak
+setup. The four scores stay independent:
+
+| Score | Question | Module |
+|---|---|---|
+| Technical | Does this setup look good? | `app/signals/scoring.py` |
+| Security | Will this rug? | `app/rugcheck/risk_score.py` |
+| Market quality | Can this actually be traded? | `app/signals/market_quality.py` |
+| **Early opportunity** | **Is demand arriving?** | **`app/early/score.py`** |
+
+### The nine early factors
+
+Volume acceleration (0.18), transaction acceleration (0.14), buy pressure
+(0.14), volume quality (0.10), liquidity quality (0.10), momentum
+acceleration (0.10), price structure (0.09), breakout position (0.08),
+relative volume (0.07).
+
+**These weights are unvalidated priors.** They were chosen by reasoning
+about microstructure, not measured from outcomes. Until
+`python scripts/research.py early` says otherwise, they are a hypothesis.
+
+Several are deliberately **non-monotonic**. Volume acceleration peaks
+around 3x and *falls* above 8x, because a token already exploding is not an
+early signal, it is a late one. Breakout position scores highest *at* the
+range high and worst 15% above it — the move already happened.
+
+### Anti-chase: Late Entry Risk
+
+A second, separate 0-100 score (`app/early/late_entry.py`) that can **veto**
+an entry but is never averaged into the early score. Averaging would let a
+strong early reading cancel out a clear "you are too late" reading, which
+is exactly the trade the whole system exists to avoid.
+
+It classifies a candidate into a stage — EARLY, DEVELOPING, CONFIRMED,
+LATE, OVEREXTENDED — and only the first three are enterable. **A candidate
+that cannot be assessed is classified LATE**, because "we cannot tell"
+must not become an invitation to enter.
+
+### The WATCH state machine
+
+```
+DISCOVERED → WATCH → CONFIRMED → PAPER_BUY
+          ↘ WATCH → FAILED / EXPIRED
+```
+
+"Promising" and "ready" are different facts, and a bot with only two states
+has to collapse them — buy every promising candidate immediately (chasing)
+or throw it away (missing the move). WATCH is the third state: the token
+stays under observation, is re-scored every `WATCHLIST_INTERVAL_SECONDS`,
+and enters only on confirmation that arrives *before* it becomes
+overextended.
+
+Entries that do not work out are **recorded, not deleted** — FAILED with
+one of eight categories, or EXPIRED. A watchlist that quietly dropped its
+disappointments would make the engine permanently unfalsifiable.
+
+### Where it sits in the pipeline
+
+Security runs **first**, before a single early feature is computed. An
+excellent early signal can never override a failed security check — on a
+security failure the engine returns before scoring anything at all, so
+there is no early score to override with.
+
+The engine's only power is to put a candidate the **technical** gate turned
+down onto the WATCH list instead of discarding it. It never opens a
+position directly: a CONFIRMED token is handed to the normal buy path,
+which re-runs every existing risk, exposure and liquidity check.
+
+### The switch that matters
+
+```
+EARLY_SIGNAL_MAY_TRADE=false     # default
+```
+
+False means the early engine can raise a token to WATCH and can **never**
+open a position on its own. Turning it on before calibration shows that
+higher early scores actually precede better outcomes is trading on a guess.
+
+### Measuring whether any of it works
+
+```bash
+python scripts/research.py early              # calibration, lead time, false positives
+python scripts/research.py early-ablate       # which early factors earn their weight
+python scripts/research.py early-walkforward  # is the threshold stable out-of-sample?
+python scripts/research.py modes  <mint>      # A: technical / B: early / C: both
+```
+
+or open **`/early`** in the dashboard.
+
+- **Calibration** buckets every scored candidate — *including the rejected
+  ones* — by early score and reports what actually happened next, with MFE
+  and MAE so a +5% horizon return that first went −30% is visibly a
+  stopped-out loss rather than a win.
+- **Lead time** asks the question the engine exists for: of the tokens that
+  went on to move +10%, +20%, +50%, what share did the engine flag
+  *beforehand*?
+- **False positives** groups every failed watchlist entry by cause. If more
+  than half land in the residual `score_decayed` bucket, the taxonomy is
+  missing a category — that is reported, not smoothed over.
+- **Ablation** re-scores the features **stored at signal time** with one
+  factor's weight zeroed. It cannot be done as a candle backtest: four of
+  the nine factors come from differencing market snapshots, which candles
+  do not carry, so a backtest would silently mark them unavailable and
+  then report that removing them changes nothing. The verdict comes from
+  rank correlation, not bucket separation — bucket edges move when a score
+  merely shifts.
+- **Walk-forward** refits the entry threshold on each training window and
+  grades it on the next, so a threshold chosen on noise is visible as a
+  threshold that will not sit still.
+
+Every one of these reports **INSUFFICIENT DATA** until it has enough
+measured outcomes, and that is the state a fresh install is in. An absence
+of evidence is printed as an absence of evidence.
+
+### What the engine genuinely cannot see
+
+Named explicitly in `app/early/features.py` rather than approximated:
+
+| Wanted | Why it is unavailable |
+|---|---|
+| Unique / new / repeat buyers | Needs a wallet-level indexer. A transaction count is not a participant count. |
+| Wallet concentration | Needs holder distribution beyond the top-10 the rug engine reads. |
+| Order-book depth | AMMs have no order book. Transaction flow is a proxy and is labelled as one. |
+| Social activity | No trustworthy provider configured. |
+
+A factor with no data is marked unavailable and counted against the
+missing-data budget; above `MAX_UNAVAILABLE_WEIGHT` (40%) the whole score
+is marked unreliable. It is never silently replaced with a zero or an
+average.
+
 ## Configuration reference
 
 Every variable is documented inline in [`.env.example`](.env.example) —
