@@ -216,6 +216,14 @@ class Settings(BaseSettings):
     # combination strategy "C": early signal finds the candidate, the
     # existing strategy confirms the entry.
     EARLY_SIGNAL_REQUIRE_TECHNICAL: bool = True
+    # How far BELOW the trading threshold a technical score may sit and still
+    # be shown to the early engine. The engine exists to watch charts that do
+    # not look good yet, so stopping at the technical gate would leave it
+    # seeing only candidates the bot was already going to buy. Continuing
+    # costs a security lookup and a candle fetch per candidate, so the window
+    # is bounded rather than open: with the default threshold of 65 this
+    # means a technical score of 40 or better still gets a look.
+    EARLY_SIGNAL_TECHNICAL_MARGIN: float = 25.0
     #
     # THE SWITCH THAT MATTERS. False means the early engine can raise a token
     # to WATCH and can NEVER open a position on its own - the existing

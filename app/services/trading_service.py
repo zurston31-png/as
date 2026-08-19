@@ -204,6 +204,11 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
 
     _stage(db, signal, pipeline.RISK, True, "within every portfolio limit")
 
+    # Set when the technical gate says "do not trade this". Everything after
+    # that point still runs so the early engine can watch the candidate, but
+    # nothing may open a position once it is True.
+    technical_rejected = False
+
     if settings.LIVE_SIGNAL_SCORE_ENABLED:
         score = await evaluate_live_entry_signal(signal.chain, signal.token_address, signal.symbol)
         if score is None:
@@ -262,7 +267,17 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
             )
             db.add(models.RiskEvent(event_type="signal_score_rejected", details=reason, signal_id=signal.id))
             await notifier.notify_rejection(signal, reason)
-            return
+            # Rejected for TRADING - but not necessarily discarded. The whole
+            # point of the Early Signal Engine is that a chart which does not
+            # look good YET can be one whose demand is arriving, and returning
+            # here would mean the engine only ever sees candidates the bot was
+            # already about to buy. `technical_rejected` carries that decision
+            # forward: the security and market-quality gates still run (the
+            # engine must never see a token that failed security), the engine
+            # gets its look, and the function returns before sizing.
+            technical_rejected = True
+            if not _worth_an_early_look(score):
+                return
     else:
         logger.warning("LIVE_SIGNAL_SCORE_ENABLED=false - buy signals are NOT being scored before entry")
 
@@ -357,6 +372,11 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
             await _consider_for_watchlist(db, signal, report, scored_event)
         except Exception:
             logger.exception("early-signal evaluation failed for %s - continuing", signal.symbol)
+
+    # The technical gate already refused this one. Everything above ran so
+    # the early engine could see it; nothing below may act on it.
+    if technical_rejected:
+        return
 
     portfolio_value = await portfolio.get_portfolio_value_usd(db)
     total_exposure = await portfolio.get_open_positions_value_usd(db)
@@ -476,6 +496,29 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     await notifier.notify_trade_executed(trade, extra=f"entry ${result.avg_price:.8f} | SL ${sl:.8f} / TP ${tp:.8f}")
 
 
+def _worth_an_early_look(score) -> bool:
+    """Should a technically-rejected candidate still be shown to the early engine?
+
+    Continuing past the technical gate costs a security lookup and a
+    candle fetch per candidate, and the scanner sees a lot of candidates.
+    So the extra work is bounded: only scores within
+    EARLY_SIGNAL_TECHNICAL_MARGIN of the entry threshold continue. A token
+    scoring 12/100 is not an early opportunity the chart has not caught up
+    with, it is a bad token, and paying an API call to confirm that on
+    every scan would starve the rate budget the real candidates need.
+
+    An UNRELIABLE score does not continue either. Its number is not a
+    measurement, so "within 25 points of the threshold" would be reading
+    meaning into a value the scorer already disclaimed.
+    """
+    if not settings.EARLY_SIGNAL_ENABLED:
+        return False
+    if not score.reliable:
+        return False
+    floor = settings.MIN_SIGNAL_SCORE_TO_ENTER - settings.EARLY_SIGNAL_TECHNICAL_MARGIN
+    return score.score >= floor
+
+
 async def _consider_for_watchlist(
     db: Session, signal: models.Signal, report, scored_event=None
 ) -> None:
@@ -500,11 +543,21 @@ async def _consider_for_watchlist(
     series = None
     try:
         from app.data.candles import Timeframe
-        from app.data.live_provider import fetch_live_series
+        from app.data.live_provider import fetch_candles
 
-        series = await fetch_live_series(signal.chain, signal.token_address, Timeframe.M5, limit=300)
+        series = await fetch_candles(
+            signal.chain, signal.token_address, signal.symbol, Timeframe.M5, 300
+        )
     except Exception:
-        logger.debug("no candle history for early scoring of %s", signal.symbol, exc_info=True)
+        # Network and parse failures are expected for a brand-new pool and
+        # must not take down the scan. Logged at warning rather than debug:
+        # a persistent failure here silently disables the whole early
+        # engine, because a candidate with no candles always fails the
+        # data-quality gate and is skipped.
+        logger.warning(
+            "no candle history for early scoring of %s - it cannot be scored",
+            signal.symbol, exc_info=True,
+        )
 
     verdict = evaluate_early(
         series=series,

@@ -75,12 +75,12 @@ async def _score_one(db: Session, entry: models.WatchlistEntry) -> None:
     close_to_confirming = (entry.early_score or 0) >= settings.EARLY_SIGNAL_WATCH_THRESHOLD
     if close_to_confirming:
         try:
-            from app.data.live_provider import fetch_live_series
             from app.data.candles import Timeframe
+            from app.data.live_provider import fetch_candles
             from app.signals.live_gate import evaluate_live_entry_signal
 
-            series = await fetch_live_series(
-                entry.chain, entry.token_address, Timeframe.M5, limit=300
+            series = await fetch_candles(
+                entry.chain, entry.token_address, entry.symbol, Timeframe.M5, 300
             )
             score = await evaluate_live_entry_signal(entry.chain, entry.token_address, entry.symbol)
             technical = score.score if score else None
