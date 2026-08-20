@@ -22,10 +22,51 @@ import logging
 from app.config import settings
 from app.data.candles import Timeframe
 from app.signals.market_regime import classify_full
-from app.data.live_provider import fetch_candles
+from app.data.live_provider import CHAIN_TO_GECKOTERMINAL_NETWORK, fetch_candles
 from app.signals.scoring import SignalScore, score_signal
 
 logger = logging.getLogger(__name__)
+
+
+def unavailable_reason(chain: str, token_address: str | None, symbol: str) -> str:
+    """Why a live score could not be produced, without repeating the fetch.
+
+    `evaluate_live_entry_signal` returns None for five different reasons -
+    no contract address, an invalid timeframe setting, a chain with no
+    candle provider, a failed fetch, and a genuinely short history - and
+    the caller used to record all five as "need >=N live candles". That
+    reads as a measurement, and for four of the five nothing was ever
+    measured: a blank address never reaches the provider at all.
+
+    Reporting a count that was never taken is the same failure as inventing
+    one, so the ambiguous case says it is ambiguous and names the tool that
+    settles it. Everything here is local state - no network call, because
+    this runs on a path that has already failed once.
+    """
+    if not token_address:
+        return (
+            f"no contract address on the {symbol} signal, so no candles could be requested - "
+            f"set Token/Contract Address in the TradingView indicator settings"
+        )
+
+    try:
+        Timeframe(settings.SIGNAL_SCORE_TIMEFRAME)
+    except ValueError:
+        return (
+            f"SIGNAL_SCORE_TIMEFRAME={settings.SIGNAL_SCORE_TIMEFRAME!r} is not a valid "
+            f"timeframe, so no candles could be requested"
+        )
+
+    if chain not in CHAIN_TO_GECKOTERMINAL_NETWORK:
+        return (
+            f"chain {chain!r} has no candle provider mapping, so {symbol} cannot be scored"
+        )
+
+    return (
+        f"the candle provider returned no usable history for {symbol} ({token_address}) - "
+        f"either it has no pool for this mint or the request failed. This is NOT a measured "
+        f"candle count: run scripts/diagnose_token.py {token_address} to tell the two apart"
+    )
 
 
 async def evaluate_live_entry_signal(

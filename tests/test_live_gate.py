@@ -84,3 +84,50 @@ async def test_passes_the_configured_timeframe_and_limit_through(monkeypatch):
     assert seen["symbol"] == "TESTCOIN"
     assert seen["timeframe"] == Timeframe(settings.SIGNAL_SCORE_TIMEFRAME)
     assert seen["limit"] == settings.SIGNAL_SCORE_CANDLE_LIMIT
+
+
+# ---------------------------------------------------------------------------
+# why the score was unavailable - the five causes must not share one message
+# ---------------------------------------------------------------------------
+
+def test_a_blank_address_is_not_reported_as_a_candle_shortage():
+    """Regression, from a live run. A BONK signal was rejected with "need
+    >=60 live 15m candles" - a count of a fetch that never happened, because
+    `evaluate_live_entry_signal` returns None on a blank address before it
+    reaches the provider at all.
+
+    BONK is among the most liquid mints on Solana, so the stated reason sent
+    the search in exactly the wrong direction. Reporting a measurement that
+    was never taken is the same failure as inventing one.
+    """
+    reason = live_gate.unavailable_reason("solana", None, "BONK")
+    assert "no contract address" in reason
+    assert "Token/Contract Address" in reason  # names the field to fix
+    # Saying "no candles could be requested" is honest - it describes what
+    # did not happen. Quoting a threshold is not, because that implies a
+    # fetch came back short. Ban the count, not the word.
+    assert ">=" not in reason
+    assert str(settings.SIGNAL_SCORE_MIN_CANDLES) not in reason
+
+
+def test_an_unmapped_chain_says_so_rather_than_blaming_the_history():
+    reason = live_gate.unavailable_reason("dogecoin", "SomeAddress111", "DOGE")
+    assert "no candle provider" in reason
+    assert "dogecoin" in reason
+
+
+def test_an_invalid_timeframe_setting_says_so(monkeypatch):
+    monkeypatch.setattr(settings, "SIGNAL_SCORE_TIMEFRAME", "13m")
+    reason = live_gate.unavailable_reason("solana", "SomeAddress111", "TESTCOIN")
+    assert "not a valid timeframe" in reason
+
+
+def test_the_genuinely_ambiguous_case_admits_it_is_ambiguous():
+    """With an address, a real chain and a valid timeframe, the failure is
+    either "no pool for this mint" or "the request failed" - and this code
+    cannot tell which without asking again. It must not pick one, and it
+    must not quote a candle count it never measured."""
+    reason = live_gate.unavailable_reason("solana", "RealMint111", "BONK")
+    assert "no pool for this mint or the request failed" in reason
+    assert "NOT a measured candle count" in reason
+    assert "diagnose_token.py RealMint111" in reason  # names the tool that settles it

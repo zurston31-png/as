@@ -30,7 +30,7 @@ from app.data import cross_check
 from app.data.staleness import check_snapshot_freshness
 from app.services import portfolio, price_feed
 from app.signals.market_quality import score_market_quality
-from app.signals.live_gate import evaluate_live_entry_signal
+from app.signals.live_gate import evaluate_live_entry_signal, unavailable_reason
 from app.strategy.version import current_label, register_current_version
 
 logger = logging.getLogger(__name__)
@@ -226,8 +226,8 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         )
         if score is None:
             reason = (
-                f"live signal score unavailable for {signal.symbol} - no trustworthy candle data "
-                f"(need >={settings.SIGNAL_SCORE_MIN_CANDLES} live {settings.SIGNAL_SCORE_TIMEFRAME} candles)"
+                f"live signal score unavailable for {signal.symbol}: "
+                f"{unavailable_reason(signal.chain, signal.token_address, signal.symbol)}"
             )
             _stage(db, signal, pipeline.HISTORY, False, reason)
             db.add(models.RiskEvent(event_type="signal_score_unavailable", details=reason, signal_id=signal.id))
