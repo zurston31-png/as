@@ -29,6 +29,21 @@ class TradingViewAlert(BaseModel):
     def normalize_signal(cls, v: str) -> str:
         return v.strip().lower()
 
+    @field_validator("time", mode="before")
+    @classmethod
+    def accept_numeric_time(cls, v):
+        """Pine sends `"time":1766248800000` - a JSON number, not a string.
+
+        Pydantic v2 does not coerce int to str, so an unquoted timestamp
+        failed validation and FastAPI answered 422 before the handler ran.
+        Coercing here keeps `parsed_time()` working on either form.
+        """
+        if isinstance(v, bool) or v is None:
+            return None if v is None else str(v)
+        if isinstance(v, (int, float)):
+            return repr(v) if isinstance(v, float) else str(v)
+        return v
+
     def parsed_time(self) -> Optional[dt.datetime]:
         if self.time is None:
             return None

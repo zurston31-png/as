@@ -5,14 +5,19 @@ position monitor (stop-loss/take-profit/dev-wallet exits), and the daily
 P&L summary scheduler.
 """
 import asyncio
+import datetime as dt
 import logging
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
+from app import webhook_debug
 from app.config import settings
 from app.dashboard.routes import router as dashboard_router
 from app import backup
@@ -195,19 +200,84 @@ async def health():
     return {"status": "ok", "live_trading": settings.LIVE_TRADING}
 
 
+@app.exception_handler(RequestValidationError)
+async def log_validation_errors(request: Request, exc: RequestValidationError):
+    """Say why a request was rejected instead of returning a silent 422.
+
+    FastAPI validates the body before the route handler runs, so without
+    this the only record of a rejected TradingView alert is a 422 in the
+    access log with no field named.
+    """
+    raw_text = (exc.body if isinstance(exc.body, str) else str(exc.body or "")).strip()
+    logger.warning(
+        "422 %s %s content_type=%s errors=%s body=%s",
+        request.method, request.url.path,
+        request.headers.get("content-type", "<none>"),
+        webhook_debug.format_errors(exc), webhook_debug.redact_text(raw_text),
+    )
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
+
+
 @app.post(settings.WEBHOOK_PATH)
-async def tradingview_webhook(alert: TradingViewAlert):
+async def tradingview_webhook(request: Request):
+    """Accept a TradingView alert.
+
+    The body is read and validated by hand rather than declared as a
+    `TradingViewAlert` parameter: FastAPI would reject a malformed payload
+    before this function ran, and the whole point here is to log what
+    arrived before anything can reject it.
+    """
+    received_at = dt.datetime.now(dt.timezone.utc)
+    raw_text = (await request.body()).decode("utf-8", errors="replace")
+    content_type = request.headers.get("content-type", "<none>")
+    client = request.client.host if request.client else "unknown"
+
+    logger.info(
+        "webhook <- %s at=%s content_type=%s bytes=%d body=%s",
+        client, received_at.isoformat(), content_type, len(raw_text),
+        webhook_debug.redact_text(raw_text),
+    )
+
+    payload, parse_error = webhook_debug.parse_body(raw_text)
+    if parse_error:
+        logger.warning(
+            "webhook -> 422 %s | expected shape: %s", parse_error, webhook_debug.expected_shape(),
+        )
+        return JSONResponse(status_code=422, content={"detail": parse_error})
+
+    logger.info(
+        "webhook parsed json=%s secret=%s",
+        webhook_debug.redact(payload), webhook_debug.secret_presence(payload),
+    )
+
+    try:
+        alert = TradingViewAlert.model_validate(payload)
+    except ValidationError as exc:
+        problems = webhook_debug.format_errors(exc) + webhook_debug.describe_field_mismatches(payload)
+        logger.warning(
+            "webhook -> 422 validation failed: %s | expected shape: %s",
+            problems, webhook_debug.expected_shape(),
+        )
+        return JSONResponse(status_code=422, content={"detail": problems})
+
     if not verify_webhook_secret(alert.secret):
-        raise HTTPException(status_code=401, detail="invalid webhook secret")
+        logger.warning(
+            "webhook -> 401 invalid secret for %s (secret %s)",
+            alert.symbol, webhook_debug.secret_presence(payload),
+        )
+        return JSONResponse(status_code=401, content={"detail": "invalid webhook secret"})
 
     db = SessionLocal()
     try:
         signal = await handle_alert(db, alert)
         db.commit()
+        logger.info(
+            "webhook -> 200 accepted %s %s signal_id=%s", alert.signal, alert.symbol, signal.id,
+        )
         return JSONResponse({"status": "accepted", "signal_id": signal.id})
     except Exception:
         db.rollback()
-        logger.exception("failed to process webhook alert for %s", alert.symbol)
+        logger.exception("webhook -> 500 failed to process alert for %s", alert.symbol)
         raise HTTPException(status_code=500, detail="internal error processing alert")
     finally:
         db.close()

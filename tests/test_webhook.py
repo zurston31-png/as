@@ -268,11 +268,18 @@ def _roomy_risk_limits(monkeypatch):
     return monkeypatch
 
 
-def test_untradeable_market_is_rejected_even_with_a_perfect_signal(monkeypatch):
+def test_untradeable_market_is_rejected_even_with_a_perfect_signal(monkeypatch, _roomy_risk_limits):
     """The signal score says 90/100 and the rug check passes. The market is
     still one wash-traded burst into a pool too thin to exit, and that must
     be enough on its own to block the trade - the two existing scores have
-    no way to see it."""
+    no way to see it.
+
+    Needs `_roomy_risk_limits` for the same reason its siblings do: the
+    daily-trade counter is shared across the run, so without headroom the
+    risk gate rejects first with `buy_blocked` and the market-quality gate
+    this test is about never runs. The rejection asserted here is the
+    market's, not the cap's.
+    """
     async def wash_traded(token_address):
         return make_market_snapshot(
             token_address=token_address,
@@ -299,9 +306,14 @@ def test_untradeable_market_is_rejected_even_with_a_perfect_signal(monkeypatch):
         db.close()
 
 
-def test_stale_market_data_is_rejected_rather_than_traded_on(monkeypatch):
+def test_stale_market_data_is_rejected_rather_than_traded_on(monkeypatch, _roomy_risk_limits):
     """A twenty-minute-old price looks authoritative and is not. Sizing a
-    position and setting a stop against it is worse than skipping."""
+    position and setting a stop against it is worse than skipping.
+
+    `_roomy_risk_limits` for the same shared-counter reason as the test
+    above: the assertion is that *staleness* rejected the entry, which only
+    means anything if the risk cap did not reject it first.
+    """
     import datetime as dt
 
     async def stale(token_address):
@@ -415,3 +427,138 @@ def test_paper_trades_record_what_the_fill_actually_cost(_roomy_risk_limits):
         assert trade.fill_delay_seconds is not None and trade.fill_delay_seconds >= 0
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# payload shapes TradingView actually sends
+#
+# Kept at the end of the module on purpose. Several tests above assert on
+# the *latest* RiskEvent row or on a fill happening, and the daily-trade
+# counter and open-position book are shared across the whole run - so a
+# test that trades earlier in file order silently changes their outcome.
+# These were originally placed mid-file and did exactly that.
+# ---------------------------------------------------------------------------
+
+def _pine_payload(symbol: str, signal: str) -> str:
+    """The literal string `pine/memecoin_signal_strategy.pine` builds.
+
+    Kept as text rather than a dict because the bug this covers was about
+    JSON types: `time` is emitted unquoted, and a dict round-tripped through
+    the test client would have hidden that.
+    """
+    return (
+        '{"secret":"' + settings.WEBHOOK_SECRET + '"'
+        ',"symbol":"' + symbol + '"'
+        ',"token_address":"' + symbol + 'TokenAddress111"'
+        ',"chain":"solana"'
+        ',"signal":"' + signal + '"'
+        ',"price":0.001234'
+        ',"time":1766248800000'
+        ',"rsi":55.12'
+        ',"ema9":0.00125'
+        ',"ema21":0.00115'
+        ',"volume":100000.0'
+        ',"volume_sma":40000.0'
+        ',"breakout_level":0.0012}'
+    )
+
+
+def test_the_exact_pine_payload_is_accepted(_roomy_risk_limits):
+    """Regression: Pine emits `"time":1766248800000` as a JSON number, but
+    the field was typed `Optional[str]` and pydantic v2 does not coerce int
+    to str. Every live alert was therefore rejected 422 by FastAPI before
+    the route handler ran, which is why nothing appeared in the log."""
+    resp = client.post(
+        settings.WEBHOOK_PATH,
+        content=_pine_payload("PINECOIN", "buy"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "accepted"
+
+
+def test_numeric_time_survives_as_a_parsed_datetime():
+    """Coercing int -> str must not break the timestamp itself."""
+    from app.schemas import TradingViewAlert
+
+    alert = TradingViewAlert(secret="s", symbol="X", signal="buy", price=1.0, time=1766248800000)
+    parsed = alert.parsed_time()
+    assert parsed is not None
+    assert parsed.year == 2025 and parsed.tzinfo is not None
+
+
+def test_iso_time_still_parses():
+    from app.schemas import TradingViewAlert
+
+    alert = TradingViewAlert(
+        secret="s", symbol="X", signal="buy", price=1.0, time="2026-08-20T20:00:00Z",
+    )
+    assert alert.parsed_time().year == 2026
+
+
+def test_malformed_json_is_reported_rather_than_swallowed():
+    resp = client.post(
+        settings.WEBHOOK_PATH, content="{not json", headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422
+    assert "not valid JSON" in resp.json()["detail"]
+
+
+def test_a_missing_required_field_names_the_field():
+    resp = client.post(settings.WEBHOOK_PATH, json={"secret": settings.WEBHOOK_SECRET, "symbol": "X"})
+    assert resp.status_code == 422
+    detail = " ".join(resp.json()["detail"])
+    assert "signal" in detail and "price" in detail
+
+
+def test_a_differently_named_field_is_called_out_rather_than_ignored_silently():
+    """TradingView's own default template uses `ticker`/`action`. Being told
+    the field was unexpected is the difference between a two-minute fix and
+    an afternoon."""
+    resp = client.post(
+        settings.WEBHOOK_PATH,
+        json={"secret": settings.WEBHOOK_SECRET, "ticker": "WIF", "action": "buy", "price": 1.0},
+    )
+    assert resp.status_code == 422
+    detail = " ".join(resp.json()["detail"])
+    assert "unexpected field 'ticker'" in detail
+    assert "unexpected field 'action'" in detail
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # wrong scalar type: input is the offending value
+        {"secret": "SECRET", "symbol": "X", "signal": "buy", "price": "abc"},
+        # missing field: pydantic reports the WHOLE body as the input, which
+        # is how the secret leaked into the error body the first time.
+        {"secret": "SECRET", "symbol": "X"},
+        # secret itself the wrong type
+        {"secret": 12345, "symbol": "X", "signal": "buy", "price": 1.0},
+    ],
+    ids=["wrong-type", "missing-field", "secret-wrong-type"],
+)
+def test_the_secret_never_appears_in_an_error_body(payload):
+    """A 422 body reaches TradingView's alert log and any screenshot of it.
+    The secret must not travel with it under any validation failure."""
+    payload = {**payload}
+    if payload.get("secret") == "SECRET":
+        payload["secret"] = settings.WEBHOOK_SECRET
+
+    resp = client.post(settings.WEBHOOK_PATH, json=payload)
+    assert resp.status_code == 422
+    assert settings.WEBHOOK_SECRET not in resp.text
+
+
+def test_the_secret_is_never_written_to_the_log(caplog, _roomy_risk_limits):
+    """Covers the accepted path and the rejected path: the log is the whole
+    point of this endpoint's rewrite, so it is the likeliest place to leak."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="app.main"):
+        client.post(settings.WEBHOOK_PATH, json=_payload("LOGCOIN", "buy"))
+        client.post(settings.WEBHOOK_PATH, json={"secret": settings.WEBHOOK_SECRET, "symbol": "X"})
+
+    assert caplog.text, "the webhook must log what it received"
+    assert settings.WEBHOOK_SECRET not in caplog.text
+    assert "LOGCOIN" in caplog.text
