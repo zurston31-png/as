@@ -19,7 +19,7 @@ from app import backup
 from app.autopilot import loop as autopilot_loop
 from app.database import SessionLocal, init_db
 from app.early import loop as early_loop
-from app.monitor import forward_return_worker, position_monitor
+from app.monitor import forward_return_worker, position_monitor, shadow_resolver_worker
 from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
 from app.security import verify_webhook_secret
@@ -36,6 +36,7 @@ scheduler = AsyncIOScheduler()
 _monitor_task: asyncio.Task | None = None
 _scanner_task: asyncio.Task | None = None
 _forward_task: asyncio.Task | None = None
+_shadow_task: asyncio.Task | None = None
 _early_task: asyncio.Task | None = None
 _backup_task: asyncio.Task | None = None
 _autopilot_task: asyncio.Task | None = None
@@ -67,6 +68,7 @@ async def _snapshot_forever() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _monitor_task, _scanner_task, _forward_task, _early_task, _backup_task
+    global _shadow_task
     global _autopilot_task
 
     # BEFORE init_db(). A wiped disk leaves no database at all, and
@@ -117,6 +119,7 @@ async def lifespan(app: FastAPI):
     _monitor_task = asyncio.create_task(position_monitor.run_forever())
     _forward_task = asyncio.create_task(forward_return_worker.run_forever())
     _early_task = asyncio.create_task(early_loop.run_forever())
+    _shadow_task = asyncio.create_task(shadow_resolver_worker.run_forever())
     if settings.BACKUP_ENABLED:
         _backup_task = asyncio.create_task(_snapshot_forever())
 
@@ -146,6 +149,7 @@ async def lifespan(app: FastAPI):
     position_monitor.stop()
     scanner_loop.stop()
     forward_return_worker.stop()
+    shadow_resolver_worker.stop()
     early_loop.stop()
     scheduler.shutdown(wait=False)
     if _monitor_task:
@@ -154,6 +158,8 @@ async def lifespan(app: FastAPI):
         _scanner_task.cancel()
     if _forward_task:
         _forward_task.cancel()
+    if _shadow_task:
+        _shadow_task.cancel()
     if _early_task:
         _early_task.cancel()
     if _backup_task:
@@ -165,7 +171,8 @@ async def lifespan(app: FastAPI):
     # await points until control returns here. Wait for them before the
     # shutdown snapshot, otherwise it races the writes it exists to capture.
     pending = [t for t in (_monitor_task, _scanner_task, _forward_task,
-                           _early_task, _backup_task, _autopilot_task) if t is not None]
+                           _early_task, _backup_task, _autopilot_task,
+                           _shadow_task) if t is not None]
     if pending:
         await asyncio.wait(pending, timeout=10)
 

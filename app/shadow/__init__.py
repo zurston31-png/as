@@ -31,6 +31,28 @@ rather than a fork. A challenger that needed new logic would need a new
 code path, and a new code path cannot be compared against the champion on
 equal terms because it has not been through the same gates.
 
+AN OBSERVATION IS NOT EVIDENCE UNTIL IT IS RESOLVED
+
+Recording what a strategy WOULD have done is only half a measurement. Until
+app/shadow/resolver.py runs, every hypothetical entry stays open, every
+`return_pct` is NULL, and the paired comparison has two arms of nothing to
+compare. The resolver walks post-entry candles through one shared exit rule
+(app/shadow/exit_policy.py), so what differs between arms is entry scoring
+and nothing else.
+
+It also records fixed horizon returns - 15m, 1h, 4h, 24h - whether or not
+the position is still open. Those survive a change to the exit rule, which
+is what makes it possible to tell a bad entry apart from a good entry that
+a stop cut short.
+
+TWO EXPECTANCIES, KEPT APART
+
+Per OPPORTUNITY (a decline counts as 0%) and per ENTERED TRADE. A selective
+strategy with a superb per-trade number can still lose on per-opportunity
+terms by trading too rarely, and a busy one can be a worse trader that makes
+it up on volume. Only the per-opportunity series is paired - both arms share
+the same denominator - so only that one is handed to the promotion gate.
+
 NOTHING HERE PROMOTES ANYTHING
 
 This module produces observations. app/autopilot/promote.py decides. Wiring

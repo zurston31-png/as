@@ -602,6 +602,56 @@ class ShadowPosition(Base):
     fees_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     slippage_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Which exit rule produced the outcome, and the gross move before the
+    # round-trip cost was charged. Both exist so a resolved row can be
+    # re-derived and argued with later: without the policy fingerprint a
+    # dataset spanning a settings change would silently mix two different
+    # experiments, and without the gross figure there is no way to see how
+    # much of a result is edge and how much is cost.
+    exit_policy: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    gross_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bars_observed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class ShadowHorizonReturn(Base):
+    """What the price did N minutes after a hypothetical entry.
+
+    Separate from the position's own outcome, and recorded whether or not
+    the position is still open, because the two answer different
+    questions. The exit-rule return says "was this trade, as managed,
+    worth taking". The horizon return says "was there anything there at
+    all" - and only the second one survives a change to the exit rule.
+
+    Keeping both is what makes it possible to tell a bad entry apart from
+    a good entry mishandled by a stop, which is otherwise the single
+    easiest mistake to make when a strategy underperforms.
+    """
+
+    __tablename__ = "shadow_horizon_returns"
+
+    __table_args__ = (
+        UniqueConstraint("position_id", "horizon_minutes", name="uq_shadow_horizon"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position_id: Mapped[int] = mapped_column(Integer, index=True)
+    opportunity_id: Mapped[str] = mapped_column(String(32), index=True)
+    strategy_id: Mapped[str] = mapped_column(String(48), index=True)
+    token_address: Mapped[str] = mapped_column(String(128), index=True)
+
+    horizon_minutes: Mapped[int] = mapped_column(Integer, index=True)
+    due_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    measured_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    price_at_horizon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Gross is the raw price move; net charges the same round-trip cost the
+    # entry was charged. A horizon that could not be measured keeps both
+    # NULL and carries a reason - never a zero, which would read as "flat".
+    gross_return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 class TokenObservation(Base):
     """One stored market snapshot for a token, at a point in time.

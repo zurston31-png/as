@@ -278,10 +278,23 @@ def cmd_postmortem(args) -> int:
     return 0
 
 
+def _pct(value: float | None, *, signed: bool = False) -> str:
+    """Format a percentage, or say plainly that there isn't one.
+
+    A missing expectancy prints as "n/a", never as 0.000% - a strategy that
+    has not entered anything has no per-trade number, and showing zero
+    would read as "it broke even".
+    """
+    if value is None:
+        return "     n/a"
+    return f"{value:>+8.3f}%" if signed else f"{value:>8.3f}%"
+
+
 def cmd_shadow(args) -> int:
     from app.autopilot.promote import evaluate
     from app.shadow.challengers import CHAMPION_ID
     from app.shadow.compare import compare_all
+    from app.shadow.resolver import coverage
     from app.strategy.version import current_label
 
     db = SessionLocal()
@@ -290,6 +303,16 @@ def cmd_shadow(args) -> int:
         print(" SHADOW CHALLENGERS - paired comparison")
         print(RULE)
         print(f" Champion:            {CHAMPION_ID} ({current_label()})")
+
+        # Printed first, because every number below is conditional on it.
+        # A comparison drawn from mostly-unresolved positions describes
+        # whichever tokens kept trading long enough to be measured.
+        c = coverage(db)
+        print(
+            f" Outcome coverage:    {c['resolved']}/{c['positions']} resolved "
+            f"({c['resolved_pct']}%), {c['open']} still open, "
+            f"{c['unmeasurable']} unmeasurable"
+        )
 
         comparisons = compare_all(db)
         if not comparisons:
@@ -312,9 +335,21 @@ def cmd_shadow(args) -> int:
                 print(" Promotion gate:      INSUFFICIENT_DATA - not submitted")
                 continue
 
-            print(f" Champion expectancy: {d['champion_expectancy_pct']:>8.3f}%")
-            print(f" Challenger expect.:  {d['challenger_expectancy_pct']:>8.3f}%")
-            print(f" Difference:          {d['difference_pct']:>+8.3f}%")
+            print("\n Per OPPORTUNITY (declines count as 0%, paired - the gate reads this)")
+            print(f"   Champion:          {d['champion_expectancy_pct']:>8.3f}%")
+            print(f"   Challenger:        {d['challenger_expectancy_pct']:>8.3f}%")
+            print(f"   Difference:        {d['difference_pct']:>+8.3f}%")
+
+            print("\n Per ENTERED TRADE (self-selected samples - reported, not promoted on)")
+            print(
+                f"   Champion:          {_pct(d['champion_trade_expectancy_pct'])}"
+                f"  over {d['champion_trades']} entries"
+            )
+            print(
+                f"   Challenger:        {_pct(d['challenger_trade_expectancy_pct'])}"
+                f"  over {d['challenger_trades']} entries"
+            )
+            print(f"   Difference:        {_pct(d['trade_difference_pct'], signed=True)}")
 
             champion_arm, challenger_arm = result.arms()
             verdict = evaluate(champion_arm, challenger_arm, attempts=len(comparisons))
@@ -326,7 +361,13 @@ def cmd_shadow(args) -> int:
         print(
             "\n Paired means both strategies evaluated the SAME opportunity. Unpaired\n"
             " observations are excluded: a larger unpaired sample measures the wrong\n"
-            " thing more precisely."
+            " thing more precisely.\n\n"
+            " The two expectancies answer different questions. Per-opportunity asks\n"
+            " what a strategy makes per chance that comes past, and both arms share\n"
+            " the same denominator, so it is a paired contrast. Per-trade asks how\n"
+            " good the trades are when it does trade, over the entries it chose for\n"
+            " itself - informative, but not a controlled comparison, which is why the\n"
+            " promotion gate never sees it."
         )
         if args.json:
             print(json.dumps([r.as_dict() for r in comparisons], indent=2))

@@ -194,8 +194,14 @@ def record_opportunity(
     champion_factors: list | None = None,
     series=None,
     rng: random.Random | None = None,
+    event_id: str | None = None,
 ) -> dict:
     """Record what every strategy would have done about one opportunity.
+
+    `event_id` is the caller's own canonical id for this look, when it has
+    one - a scanner run id, a webhook delivery id. Passing it makes the
+    identity exact instead of derived; leaving it out falls back to the
+    mint, the time bucket and a coarse market snapshot.
 
     Returns a summary for logging and tests. Never raises into the caller:
     a fault in the shadow system must not be able to cost a real paper
@@ -206,7 +212,13 @@ def record_opportunity(
         return summary
 
     observed_at = observed_at or dt.datetime.now(dt.timezone.utc)
-    oid = opportunity_id(token_address, observed_at, reference_price)
+    # Depth is part of the identity, not just price. The same quote against
+    # a pool that has been drained is not the same chance to trade, and the
+    # fill model prices it completely differently.
+    oid = opportunity_id(
+        token_address, observed_at, event_id=event_id,
+        snapshot={"price": reference_price, "liquidity": liquidity_usd},
+    )
     summary["opportunity_id"] = oid
     rng = rng or random.Random()
 

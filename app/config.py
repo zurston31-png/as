@@ -188,6 +188,24 @@ class Settings(BaseSettings):
     # the risk manager, because sizing depends on live exposure and a
     # challenger must never read - let alone move - that state.
     SHADOW_POSITION_USD: float = 100.0
+    # --- shadow outcome resolver (app/shadow/resolver.py) ---
+    # Without this running, every hypothetical entry stays open forever and
+    # the shadow tables hold decisions with no outcomes - which is a
+    # dataset that cannot answer the question it was collected for.
+    SHADOW_RESOLVER_ENABLED: bool = True
+    # Candle granularity the exit rule is walked on. Finer sees a stop
+    # breach that a coarser bar averages away; too fine and the provider's
+    # 1000-candle ceiling stops covering the maximum hold.
+    SHADOW_RESOLUTION_TIMEFRAME: str = "5m"
+    SHADOW_RESOLVE_BATCH: int = 50
+    SHADOW_RESOLVE_INTERVAL_SECONDS: int = 300
+    # Fixed horizons recorded regardless of the exit rule, so a good entry
+    # cut short by a stop can be told apart from a bad entry.
+    SHADOW_HORIZONS_MINUTES: str = "15,60,240,1440"
+    # How long past its due point an outcome is chased before being filed
+    # as unmeasurable. A token whose feed went quiet half a day ago is not
+    # going to answer, and retrying forever is a permanent background load.
+    SHADOW_UNMEASURABLE_AFTER_HOURS: float = 12.0
     # --- liquidity-drop exit (app/exits/manager.py) ---
     # A pool being drained while the position is open is the one failure the
     # price-based exits cannot catch in time: the quote looks normal until

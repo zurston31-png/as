@@ -396,3 +396,89 @@ def test_the_comparison_never_promotes_anything_itself():
     body = pathlib.Path("app/shadow/compare.py").read_text()
     assert "def promote" not in body
     assert "changelog.record" not in body
+
+
+# ---------------------------------------------------------------------------
+# two expectancies, because one number hides the trade-off
+# ---------------------------------------------------------------------------
+
+def test_opportunity_and_conditional_expectancy_are_reported_separately(db):
+    """The worked case that makes the distinction matter.
+
+    Over 40 paired opportunities the champion enters 8 and averages +5.5%
+    on those; the challenger enters 16 and averages +2.25%. Per ENTERED
+    TRADE the champion is far better. Per OPPORTUNITY the challenger wins,
+    because it finds twice as many. Collapsing these into one number would
+    make one of those facts disappear, and which one disappeared would
+    depend on which formula happened to be chosen.
+    """
+    for i in range(40):
+        champion_in = i < 8
+        challenger_in = i < 16
+        _pair(
+            db, i,
+            champion_return=5.5 if champion_in else None,
+            challenger_return=2.25 if challenger_in else None,
+            champion_in=champion_in, challenger_in=challenger_in,
+        )
+    db.commit()
+
+    result = shadow_compare.compare(db, "tighter")
+    assert result.paired == 40
+
+    # Conditional: only the trades each side actually took.
+    assert result.champion_trades == 8
+    assert result.challenger_trades == 16
+    assert result.champion_trade_expectancy == pytest.approx(5.5)
+    assert result.challenger_trade_expectancy == pytest.approx(2.25)
+    assert result.trade_difference == pytest.approx(-3.25)
+
+    # Per opportunity: 8/40 * 5.5 vs 16/40 * 2.25.
+    assert result.champion_expectancy == pytest.approx(1.1)
+    assert result.challenger_expectancy == pytest.approx(0.9)
+    assert result.difference == pytest.approx(-0.2)
+
+
+def test_a_decline_is_zero_per_opportunity_and_absent_per_trade(db):
+    """A trade that was never taken is not a flat trade. Averaging it in as
+    one would drag every selective strategy's per-trade number toward zero
+    purely for being selective."""
+    for i in range(shadow_compare.MIN_PAIRS + 2):
+        _pair(db, i, champion_return=10.0, challenger_in=False)
+    db.commit()
+
+    result = shadow_compare.compare(db, "tighter")
+    assert result.challenger_expectancy == pytest.approx(0.0)   # per opportunity
+    assert result.challenger_trades == 0
+    assert result.challenger_trade_expectancy is None           # per trade: no trades
+    assert result.trade_difference is None
+
+
+def test_the_gate_reads_the_paired_series_not_the_self_selected_one(db):
+    """Handing the gate two self-selected samples would let a challenger
+    win by being choosier rather than by being better."""
+    for i in range(40):
+        _pair(
+            db, i,
+            champion_return=5.0 if i < 8 else None,
+            challenger_return=2.0 if i < 16 else None,
+            champion_in=i < 8, challenger_in=i < 16,
+        )
+    db.commit()
+
+    result = shadow_compare.compare(db, "tighter")
+    champion, challenger = result.arms()
+    assert champion.expectancy_r == pytest.approx(8 / 40 * 0.05)
+    assert challenger.expectancy_r == pytest.approx(16 / 40 * 0.02)
+
+
+def test_an_unresolved_entry_stays_out_of_both_series(db):
+    """It is not a decline and it is not a flat trade - it is a
+    measurement that has not been taken yet."""
+    _pair(db, 1, champion_return=None, challenger_return=None)
+    db.commit()
+
+    result = shadow_compare.compare(db, "tighter")
+    assert result.champion_returns == []
+    assert result.champion_trade_returns == []
+    assert result.unresolved == 2
