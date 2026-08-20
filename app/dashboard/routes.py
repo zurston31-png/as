@@ -727,3 +727,53 @@ async def backup_download(user: str = Depends(check_auth)):
         media_type="application/vnd.sqlite3",
         filename=snapshot.path.name,
     )
+
+
+# ---------------------------------------------------------------------------
+# trade post-mortems and threshold replay
+# ---------------------------------------------------------------------------
+
+@router.get("/api/postmortems")
+async def api_postmortems(limit: int = 50, user: str = Depends(check_auth)):
+    """Per-trade autopsies, newest first."""
+    from app.analysis.postmortem import recent_postmortems
+
+    db = SessionLocal()
+    try:
+        reports = recent_postmortems(db, limit=min(limit, 200))
+        return JSONResponse({
+            "count": len(reports),
+            "gave_back_a_winner": sum(1 for p in reports if p.gave_back_a_winner),
+            "survived_a_drawdown": sum(1 for p in reports if p.survived_a_drawdown),
+            "note": (
+                "max gain and max loss come from polled prices, so both are LOWER "
+                "bounds on the true path - a spike between two polls is invisible"
+            ),
+            "trades": [p.as_dict() for p in reports],
+        })
+    finally:
+        db.close()
+
+
+@router.get("/api/replay")
+async def api_replay(
+    horizon: int = 60,
+    thresholds: str = "50,55,60,65,70,75,80",
+    user: str = Depends(check_auth),
+):
+    """What each entry threshold would have done to the candidates this bot
+    actually recorded - not a synthetic backtest."""
+    from app.research.replay import replay_thresholds
+
+    db = SessionLocal()
+    try:
+        try:
+            ladder = tuple(float(v) for v in thresholds.split(","))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="thresholds must be a comma-separated list of numbers",
+            )
+        return JSONResponse(replay_thresholds(db, horizon_minutes=horizon, thresholds=ladder).as_dict())
+    finally:
+        db.close()

@@ -1150,6 +1150,79 @@ A failed security lookup raises `LookupFailed` rather than returning empty.
 about a security screen, and collapsing them would let a provider outage
 read as a clean bill of health.
 
+## Debugging paper mode
+
+Everything below reads the bot's own recorded history. None of it needs a
+backtest, and none of it invents a number it could not measure.
+
+```bash
+python scripts/research.py postmortem --verbose   # per-trade autopsies
+python scripts/research.py replay                 # thresholds on YOUR data
+python scripts/research.py funnel                 # where candidates die
+python scripts/research.py calibration            # does the score predict?
+python scripts/research.py readiness              # how much data is still needed
+```
+
+### Trade post-mortems
+
+A closing price hides the trade. **+5% that first went −30% is a stop-loss
+that happened not to fire**, not a winner — the next one like it loses.
+−8% that first went +40% is a trailing stop set too wide, not a bad entry.
+Both read identically in a P&L column and call for opposite fixes.
+
+So every post-mortem carries max favourable and max adverse excursion from
+the high/low water marks the monitor records each tick, plus `capture` —
+the share of the peak the exit actually kept, which grades the *exit* and
+is invisible in the return column. Fees are summed across every leg and
+the exit price is size-weighted, so a position closed in pieces is not
+misreported.
+
+MFE/MAE come from polled prices, so both are **lower bounds**; the sample
+count tells you how loose.
+
+### Threshold replay
+
+`replay` re-scores the candidates *this bot actually saw*, using the
+forward returns already measured on them. That differs from the
+candle-backtest sweep in a way that matters: the live pipeline rejects
+tokens for reasons a backtest never models, so its population isn't the
+same one, and a threshold tuned on synthetic candles is tuned on the wrong
+sample.
+
+It will tell you **"no threshold was profitable"** rather than naming a
+best row when every level loses after costs, and flags a winner that beats
+its neighbours as a *spike, not a plateau*. It does not replay sizing,
+exposure caps or concurrency — it compares per-trade expectancy, not an
+equity curve.
+
+### Liquidity-drop exit
+
+The one failure the price-based exits cannot catch. Every other exit asks
+"is this trade going badly?"; this asks **"will there still be something to
+sell into?"** — a drained pool looks fine on price right up to the moment
+the stop fills into nothing.
+
+Positions record depth at entry and the low-water mark since, then close
+below `LIQUIDITY_EXIT_DROP_PCT` of entry or the `LIQUIDITY_EXIT_FLOOR_USD`
+floor, with a softer drop trimming instead. A **missing** reading is
+deliberately not a drop: one quiet tick from the feed would otherwise
+market-sell the whole book.
+
+### Short-window flow, and what isn't obtainable
+
+DexScreener publishes transaction counts for exactly four windows — **5m,
+1h, 6h, 24h**. There is no 1m and no 15m, and they can't be recovered by
+arithmetic: the published windows are *rolling* aggregates, not disjoint
+buckets, so subtracting one from another has no defined meaning. A "15m"
+figure computed that way would look precise and mean nothing.
+
+`app/analysis/flow.py` therefore labels every window `measured`, `derived`
+or `unavailable`, and lists the unavailable ones with the reason rather
+than omitting or estimating them. What *is* obtainable at finer resolution
+is the rate of change of the 5m window between successive polls — reported
+as derived, carrying its actual spacing. A true per-minute figure needs a
+trade-level source: an indexer, or an RPC log subscription.
+
 ## Surviving a reset
 
 The code is in git. **A month of observed forward returns is not** — the

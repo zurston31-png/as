@@ -114,6 +114,14 @@ class MarketSnapshot:
     # --- shorter volume windows ---
     volume_5m_usd: float | None = None
     volume_1h_usd: float | None = None
+    # DexScreener publishes transaction counts for exactly four windows -
+    # m5, h1, h6, h24. There is no m1 and no m15; anything shorter than
+    # five minutes has to be derived from successive snapshots, and is
+    # labelled as derived wherever that happens.
+    buys_5m: int | None = None
+    sells_5m: int | None = None
+    buys_6h: int | None = None
+    sells_6h: int | None = None
     volume_6h_usd: float | None = None
     # --- shorter price-change windows ---
     price_change_5m_pct: float | None = None
@@ -195,6 +203,12 @@ def _snapshot_from_pair(pair: dict, token_address: str) -> MarketSnapshot:
     )
     buys_24h, sells_24h = txns("h24")
     buys_1h, sells_1h = txns("h1")
+    # m5 and h6 were being parsed for volume but their transaction counts
+    # were dropped. They are the shortest and the middle window DexScreener
+    # publishes, and short-window buy pressure is the whole point of the
+    # early engine - discarding m5 left it reading a 1h average.
+    buys_5m, sells_5m = txns("m5")
+    buys_6h, sells_6h = txns("h6")
 
     return MarketSnapshot(
         price_usd=_to_float(pair.get("priceUsd")),
@@ -220,4 +234,8 @@ def _snapshot_from_pair(pair: dict, token_address: str) -> MarketSnapshot:
         price_change_6h_pct=window("priceChange", "h6"),
         buys_1h=buys_1h,
         sells_1h=sells_1h,
+        buys_5m=buys_5m,
+        sells_5m=sells_5m,
+        buys_6h=buys_6h,
+        sells_6h=sells_6h,
     )

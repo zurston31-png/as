@@ -514,3 +514,30 @@ def test_taking_a_snapshot_is_a_post_not_a_get():
     """It writes a file and rotates old ones, so a browser prefetch or a
     link crawler must not be able to trigger it."""
     assert client.get("/backup/now", auth=AUTH).status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# post-mortems and replay
+# ---------------------------------------------------------------------------
+
+def test_postmortems_endpoint_states_that_the_path_is_a_lower_bound():
+    """MFE/MAE come from polled prices. A reader who takes them as exact
+    will over-trust a "max loss" that never saw the real trough."""
+    resp = client.get("/api/postmortems", auth=AUTH)
+    assert resp.status_code == 200
+    assert "LOWER" in resp.json()["note"]
+
+
+def test_replay_endpoint_reports_insufficient_data_on_an_empty_history():
+    resp = client.get("/api/replay", auth=AUTH)
+    assert resp.status_code == 200
+    assert "INSUFFICIENT DATA" in resp.json()["verdict"]
+
+
+def test_replay_rejects_a_malformed_threshold_list():
+    assert client.get("/api/replay?thresholds=60,abc", auth=AUTH).status_code == 400
+
+
+def test_the_new_endpoints_require_auth():
+    for path in ("/api/postmortems", "/api/replay"):
+        assert client.get(path).status_code == 401
