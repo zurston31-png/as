@@ -422,6 +422,13 @@ class ForwardReturn(Base):
     price_at_horizon: Mapped[float | None] = mapped_column(Float, nullable=True)
     return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     filled_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the price behind this row was actually read, and how long the
+    # position would really have been held to read it. `horizon_minutes`
+    # says what was intended; these say what happened. They differ whenever
+    # the resolver runs late, and without them a row measured hours past its
+    # window is indistinguishable from one measured on time.
+    measured_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_elapsed_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Why the horizon could not be measured, when it could not be. Kept so a
     # gap in the calibration dataset is explained rather than mysterious.
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

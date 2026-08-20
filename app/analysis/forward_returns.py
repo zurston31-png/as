@@ -46,7 +46,34 @@ logger = logging.getLogger(__name__)
 # Stop chasing a horizon this long after it came due. A token whose feed
 # went quiet three days ago is not going to answer, and retrying forever
 # turns a research table into a permanent background load.
+#
+# This is an upper bound only. The binding rule is `lateness_tolerance`
+# below, which is always tighter - see why there.
 GIVE_UP_AFTER_HOURS = 12.0
+
+# How far past its due time a horizon may be measured and still be called
+# that horizon.
+#
+# This used to be GIVE_UP_AFTER_HOURS alone: a flat twelve hours for every
+# horizon. That is defensible for the 1440-minute row and nonsense for the
+# 5-minute one. The resolver polls every FORWARD_RETURN_RESOLVE_INTERVAL_
+# SECONDS, so any interruption - a laptop sleeping, a restart, a backlog
+# past FORWARD_RETURN_BATCH_LIMIT - meant pending 5-minute rows were later
+# resolved against a price hours old and stored as the 5-minute return.
+# Calibration buckets by horizon, so the short columns silently filled with
+# returns that were not those horizons, and nothing in the table recorded
+# that it had happened.
+#
+# A quarter of the horizon's own length keeps the label honest: a "60m"
+# return is measured between 60 and 75 minutes out, never at 12 hours. Rows
+# outside it are sealed unmeasurable rather than filled, in keeping with
+# the rule that a measurement which cannot be taken is never invented.
+MAX_LATENESS_FRACTION = 0.25
+
+
+def lateness_tolerance_minutes(horizon_minutes: int) -> float:
+    """Minutes past due that still count as measuring `horizon_minutes`."""
+    return horizon_minutes * MAX_LATENESS_FRACTION
 
 # Coarse outcome labels, by close-to-close return. Bucketed rather than
 # left continuous so "how often does a high early score produce a strong
@@ -277,12 +304,21 @@ async def resolve_due(
         return prices[mint]
 
     for row in due:
-        overdue_hours = (now - _aware(row.due_at)).total_seconds() / 3600
-        if overdue_hours > GIVE_UP_AFTER_HOURS:
+        overdue_minutes = (now - _aware(row.due_at)).total_seconds() / 60
+        tolerance = lateness_tolerance_minutes(row.horizon_minutes)
+
+        if overdue_minutes > tolerance:
+            # Past its own window. A price fetched now would describe a
+            # different holding period than the one this row is labelled
+            # with, and storing it would corrupt the horizon it feeds.
             row.filled_at = now
+            row.measured_at = now
+            row.actual_elapsed_minutes = (now - _aware(row.observed_at)).total_seconds() / 60
             row.failure_reason = (
-                f"horizon came due {overdue_hours:.1f}h ago and no price was obtainable - "
-                "recorded as unmeasurable rather than dropped or zero-filled"
+                f"came due {overdue_minutes:.0f}min ago, past the {tolerance:.0f}min tolerance "
+                f"for a {row.horizon_minutes}min horizon - sealed as unmeasurable rather than "
+                f"filled with a price that would describe a "
+                f"{row.actual_elapsed_minutes:.0f}min holding period"
             )
             summary["abandoned"] += 1
             continue
@@ -299,6 +335,11 @@ async def resolve_due(
         row.return_pct = (price / row.price_at_signal - 1) * 100
         row.outcome = label_outcome(row.return_pct)
         row.filled_at = now
+        # Recorded even on a clean resolve. The horizon says what was
+        # intended; this says what was actually held, so an analysis can
+        # tighten past MAX_LATENESS_FRACTION without re-deriving it.
+        row.measured_at = now
+        row.actual_elapsed_minutes = (now - _aware(row.observed_at)).total_seconds() / 60
         summary["resolved"] += 1
 
     for row in pending:

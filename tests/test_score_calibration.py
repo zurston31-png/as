@@ -321,10 +321,20 @@ async def test_resolving_computes_the_return_from_the_live_price(clean_db, monke
         return 0.006
     monkeypatch.setattr(fr.price_feed, "get_price_usd", price)
 
+    # Observed 65 minutes ago on a 60-minute horizon, so the row came due 5
+    # minutes ago - inside the 15-minute tolerance for that horizon.
+    #
+    # This fixture previously said due_at=NOW-30min with observed_at=NOW-2h,
+    # which was both internally inconsistent (60 minutes after observed_at
+    # is NOW-60min, not NOW-30min) and 30 minutes late for a 60-minute
+    # horizon. It now fails, correctly: measuring at 90 minutes and storing
+    # the result as the 60-minute return is the bug MAX_LATENESS_FRACTION
+    # exists to stop. The test is about arithmetic on a timely row, so the
+    # fixture is made timely rather than the rule loosened.
     row = models.ForwardReturn(
         pipeline_event_id=1, token_address="Mint1", symbol="X",
-        observed_at=NOW - dt.timedelta(hours=2), score=70.0, price_at_signal=0.004,
-        horizon_minutes=60, due_at=NOW - dt.timedelta(minutes=30),
+        observed_at=NOW - dt.timedelta(minutes=65), score=70.0, price_at_signal=0.004,
+        horizon_minutes=60, due_at=NOW - dt.timedelta(minutes=5),
     )
     clean_db.add(row)
     clean_db.commit()
@@ -335,6 +345,9 @@ async def test_resolving_computes_the_return_from_the_live_price(clean_db, monke
     assert summary["resolved"] == 1
     assert row.return_pct == pytest.approx(50.0)   # 0.004 -> 0.006
     assert row.filled_at is not None
+    # What was actually held, alongside what was intended.
+    assert row.measured_at is not None
+    assert row.actual_elapsed_minutes == pytest.approx(65.0)
 
 
 async def test_one_price_lookup_serves_every_horizon_for_a_mint(clean_db, monkeypatch):
@@ -367,10 +380,13 @@ async def test_a_missing_price_leaves_the_row_pending_rather_than_guessing(clean
         return None
     monkeypatch.setattr(fr.price_feed, "get_price_usd", no_price)
 
+    # Timely for its horizon (see the note in the test above) so that the
+    # missing price is the only reason it does not resolve - otherwise this
+    # would pass for the wrong reason once lateness also seals rows.
     row = models.ForwardReturn(
         pipeline_event_id=1, token_address="Mint1", symbol="X",
-        observed_at=NOW - dt.timedelta(hours=2), score=70.0, price_at_signal=0.004,
-        horizon_minutes=60, due_at=NOW - dt.timedelta(minutes=30),
+        observed_at=NOW - dt.timedelta(minutes=65), score=70.0, price_at_signal=0.004,
+        horizon_minutes=60, due_at=NOW - dt.timedelta(minutes=5),
     )
     clean_db.add(row)
     clean_db.commit()
@@ -404,7 +420,10 @@ async def test_a_long_dead_token_is_closed_out_with_a_reason(clean_db, monkeypat
     assert summary["abandoned"] == 1
     assert row.filled_at is not None
     assert row.return_pct is None
-    assert "unmeasurable rather than dropped or zero-filled" in row.failure_reason
+    # Wording changed when the flat 12-hour give-up became a per-horizon
+    # tolerance; the behaviour under test - sealed, not dropped, not
+    # zero-filled - is unchanged.
+    assert "sealed as unmeasurable" in row.failure_reason
 
 
 def test_coverage_reports_how_complete_the_dataset_is(clean_db):
@@ -535,3 +554,87 @@ def test_ties_are_averaged_rather_than_ordered_arbitrarily(clean_db):
     from app.analysis.calibration import _ranks
 
     assert _ranks([3.0, 1.0, 1.0, 2.0]) == [4.0, 1.5, 1.5, 3.0]
+
+
+# ---------------------------------------------------------------------------
+# horizon lateness - a return is only that horizon's return if it was
+# measured near that horizon
+# ---------------------------------------------------------------------------
+
+async def test_a_short_horizon_resolved_hours_late_is_sealed_not_filled(clean_db, monkeypatch):
+    """Regression. The give-up rule was a flat 12 hours for every horizon,
+    so a 5-minute row could be resolved against a price 8 hours old and
+    stored as the 5-minute return.
+
+    This is not hypothetical: the resolver polls on an interval, and any
+    interruption - a machine sleeping, a restart, a backlog past
+    FORWARD_RETURN_BATCH_LIMIT - leaves short horizons pending well past
+    their window. Calibration buckets by horizon, so those columns filled
+    with returns from holding periods two orders of magnitude longer than
+    their label, and nothing recorded that it had happened.
+    """
+    from app.analysis import forward_returns as fr
+
+    async def price(_addr):
+        return 0.008
+    monkeypatch.setattr(fr.price_feed, "get_price_usd", price)
+
+    row = models.ForwardReturn(
+        pipeline_event_id=1, token_address="Mint1", symbol="X",
+        observed_at=NOW - dt.timedelta(hours=8), score=70.0, price_at_signal=0.004,
+        horizon_minutes=5, due_at=NOW - dt.timedelta(hours=8) + dt.timedelta(minutes=5),
+    )
+    clean_db.add(row)
+    clean_db.commit()
+
+    summary = await resolve_due(clean_db, now=NOW)
+    clean_db.commit()
+
+    assert summary["abandoned"] == 1
+    assert summary["resolved"] == 0
+    # The price was available. It was still refused, because it does not
+    # describe a five-minute hold.
+    assert row.return_pct is None
+    assert row.price_at_horizon is None
+    assert row.outcome is None
+    assert "5min horizon" in row.failure_reason
+    assert row.actual_elapsed_minutes == pytest.approx(480.0, abs=1.0)
+
+
+async def test_the_tolerance_scales_with_the_horizon(clean_db, monkeypatch):
+    """The same 20 minutes of lateness is fatal to a 15-minute horizon and
+    harmless to a 1440-minute one. A flat threshold cannot express that,
+    which is why the old one was wrong at one end or the other."""
+    from app.analysis import forward_returns as fr
+
+    async def price(_addr):
+        return 0.006
+    monkeypatch.setattr(fr.price_feed, "get_price_usd", price)
+
+    for horizon in (15, 1440):
+        clean_db.add(models.ForwardReturn(
+            pipeline_event_id=1, token_address=f"Mint{horizon}", symbol="X",
+            observed_at=NOW - dt.timedelta(minutes=horizon + 20), score=70.0,
+            price_at_signal=0.004, horizon_minutes=horizon,
+            due_at=NOW - dt.timedelta(minutes=20),
+        ))
+    clean_db.commit()
+
+    summary = await resolve_due(clean_db, now=NOW)
+    clean_db.commit()
+
+    short = clean_db.query(models.ForwardReturn).filter_by(horizon_minutes=15).one()
+    long = clean_db.query(models.ForwardReturn).filter_by(horizon_minutes=1440).one()
+
+    assert short.return_pct is None, "20min late on a 15min horizon is not that horizon"
+    assert long.return_pct == pytest.approx(50.0), "20min late on a 24h horizon is fine"
+    assert summary["abandoned"] == 1 and summary["resolved"] == 1
+
+
+def test_the_lateness_tolerance_is_never_larger_than_the_horizon():
+    """A tolerance exceeding the horizon would permit a measurement taken
+    after more than twice the intended holding period."""
+    from app.analysis.forward_returns import HORIZONS_MINUTES, lateness_tolerance_minutes
+
+    for horizon in HORIZONS_MINUTES:
+        assert 0 < lateness_tolerance_minutes(horizon) < horizon
