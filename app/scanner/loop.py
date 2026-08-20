@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import random
 
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ from app import models, pipeline
 from app.config import settings
 from app.database import SessionLocal
 from app.scanner.discovery import DiscoveredToken, discover_tokens
+from app.analysis import forward_returns
 from app.scanner.filters import prescreen
 from app.services.trading_service import handle_discovered_token
 
@@ -44,6 +46,11 @@ _stop_event = asyncio.Event()
 
 # ScannedToken.last_stage values, in pipeline order.
 STAGE_PRESCREEN = "prescreen"
+
+# A reduced horizon set for sampled prescreen rejects. The counterfactual
+# reads one horizon at a time and the full eight would multiply the price
+# lookups these rows cost by nearly three for no extra answer.
+PRESCREEN_HORIZONS: tuple[int, ...] = (60, 240, 1440)
 STAGE_EVALUATED = "evaluated"
 STAGE_TRADED = "traded"
 
@@ -59,6 +66,59 @@ def scanner_blocked_reason() -> str | None:
             "SCANNER_ALLOW_LIVE_TRADING=true only if that is genuinely what you want"
         )
     return None
+
+
+def _track_prescreen_reject(
+    db: Session, token: DiscoveredToken, *, rng: random.Random
+) -> bool:
+    """Follow a SAMPLE of prescreen rejects forward, so the gate has a cost.
+
+    The prescreen is where most candidates die, and until now none of them
+    were followed - so app/analysis/counterfactual.py could say nothing at
+    all about the filter that rejects the most. "No data" is not the same
+    finding as "rejects nothing worth having", and the two were
+    indistinguishable.
+
+    SAMPLED, because tracking every reject would multiply the bot's largest
+    source of API load by the rejection rate, which is most of the flow.
+    A random draw keeps the sample unbiased: the mean of a random tenth is
+    an unbiased estimate of the mean of the whole, while the first tenth a
+    provider happens to list is not.
+
+    NO SCORE is recorded, because none was computed - these tokens never
+    reached the scorer. That is deliberate: every calibration query filters
+    on a non-null score, so these rows serve the counterfactual without
+    entering a table that would then be describing a different population.
+    """
+    if not settings.SCANNER_TRACK_PRESCREEN_REJECTS:
+        return False
+    if not forward_returns.enabled():
+        return False
+    price = token.price_usd or 0.0
+    if price <= 0 or not token.token_address:
+        return False
+    if rng.random() >= settings.SCANNER_PRESCREEN_TRACKING_RATE:
+        return False
+
+    event = pipeline.record(
+        db, stage=pipeline.PRESCREEN, symbol=token.symbol,
+        token_address=token.token_address, chain=token.chain, passed=False,
+        reason="tracked for counterfactual analysis",
+        detail={"sampled_at_rate": settings.SCANNER_PRESCREEN_TRACKING_RATE},
+    )
+    if event is None:
+        return False
+    db.flush()
+    created = forward_returns.schedule(
+        db,
+        pipeline_event_id=event.id,
+        token_address=token.token_address,
+        symbol=token.symbol,
+        score=None,
+        price_at_signal=price,
+        horizons=PRESCREEN_HORIZONS,
+    )
+    return bool(created)
 
 
 def _record(
@@ -101,7 +161,7 @@ def _recently_evaluated(db: Session, token_address: str) -> bool:
     return elapsed_minutes < settings.SCANNER_RECHECK_MINUTES
 
 
-async def scan_once(db: Session | None = None) -> dict:
+async def scan_once(db: Session | None = None, rng: random.Random | None = None) -> dict:
     """Run one full scan cycle. Returns a summary dict for logging/tests.
 
     Takes an optional session so scripts/scan_once.py and the tests can
@@ -115,7 +175,9 @@ async def scan_once(db: Session | None = None) -> dict:
 
     owns_session = db is None
     db = db or SessionLocal()
-    summary = {"discovered": 0, "prescreen_rejected": 0, "skipped_recent": 0, "evaluated": 0, "traded": 0}
+    summary = {"discovered": 0, "prescreen_rejected": 0, "prescreen_tracked": 0,
+               "skipped_recent": 0, "evaluated": 0, "traded": 0}
+    rng = rng or random.Random()
 
     try:
         tokens = await discover_tokens()
@@ -164,6 +226,8 @@ async def scan_once(db: Session | None = None) -> dict:
             if not verdict.passed:
                 _record(db, token, stage=STAGE_PRESCREEN, reason=verdict.reason)
                 summary["prescreen_rejected"] += 1
+                if _track_prescreen_reject(db, token, rng=rng):
+                    summary["prescreen_tracked"] += 1
                 considered += 1
                 continue
 

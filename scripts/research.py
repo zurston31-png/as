@@ -13,6 +13,7 @@
     python scripts/research.py evidence                is there enough evidence yet?
     python scripts/research.py shadow                  champion vs challengers, paired
     python scripts/research.py integrity               observations that must not be counted
+    python scripts/research.py preflight               can this machine collect at all?
     python scripts/research.py collection              is the paper run collecting cleanly?
     python scripts/research.py counterfactual          what the filters rejected, and its worth
     python scripts/research.py degradation             has recent behaviour drifted from baseline?
@@ -424,6 +425,36 @@ def cmd_integrity(args) -> int:
     return 0
 
 
+def cmd_preflight(args) -> int:
+    from app.analysis.preflight import environment_summary, run
+
+    print(RULE)
+    print(" PREFLIGHT - can this machine actually run a collection?")
+    print(RULE)
+    for key, value in environment_summary().items():
+        print(f"   {key:<14} {value}")
+    if args.no_probe:
+        print("\n   (--no-probe: upstream APIs not contacted)")
+    print()
+
+    report = run(probe_upstreams=not args.no_probe)
+    for check in report.checks:
+        tag = "" if check.fatal else "  (non-fatal)"
+        print(f" [{check.status:<4}] {check.name}{tag}")
+        print(f"        {check.detail}")
+
+    print(f"\n {report.verdict()}")
+    if report.blocking:
+        print(
+            "\n The bot degrades quietly by design - a missing price must never take down the\n"
+            " position monitor. The cost is that a completely non-functional deployment looks\n"
+            " exactly like a quiet market, which is what this command exists to tell apart."
+        )
+    if args.json:
+        print(json.dumps(report.as_dict(), indent=2))
+    return 1 if report.blocking else 0
+
+
 def cmd_degradation(args) -> int:
     from app.analysis.degradation import build_degradation
 
@@ -767,6 +798,11 @@ def main() -> int:
     p = sub.add_parser("integrity", help="observations that must not be counted")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_integrity)
+
+    p = sub.add_parser("preflight", help="can this machine actually run a collection?")
+    p.add_argument("--no-probe", action="store_true", help="skip the live upstream probes")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_preflight)
 
     p = sub.add_parser("degradation", help="has recent behaviour moved away from the baseline?")
     p.add_argument("--recent", type=int, default=30, help="trades in the recent window")

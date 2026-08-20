@@ -213,6 +213,16 @@ class Settings(BaseSettings):
     # as unmeasurable. A token whose feed went quiet half a day ago is not
     # going to answer, and retrying forever is a permanent background load.
     SHADOW_UNMEASURABLE_AFTER_HOURS: float = 12.0
+    # --- prescreen counterfactual coverage ---
+    # Forward returns are normally scheduled at TECHNICAL_SCORE, which
+    # leaves the prescreen - where MOST candidates die - completely
+    # unmeasurable: there is no way to ask whether it is throwing away the
+    # good ones. Tracking a random SAMPLE of its rejects makes that
+    # question answerable at bounded API cost. Random rather than
+    # first-N-per-cycle, because the first tokens a provider lists are not
+    # a random draw from the ones it rejects.
+    SCANNER_TRACK_PRESCREEN_REJECTS: bool = True
+    SCANNER_PRESCREEN_TRACKING_RATE: float = 0.10
     # --- liquidity-drop exit (app/exits/manager.py) ---
     # A pool being drained while the position is open is the one failure the
     # price-based exits cannot catch in time: the quote looks normal until

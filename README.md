@@ -808,14 +808,28 @@ signal weighting itself contributes.
 Everything above builds a bot that trades. This part answers whether it
 *should*, and it is deliberately capable of saying no.
 
-Open **`/research`** in the dashboard, or run:
+> **Running a paper collection?** Start with **[COLLECTION.md](COLLECTION.md)** —
+> how to verify a machine can actually collect, what is being measured, what
+> to check daily, and when the numbers start meaning anything.
+
+Open **`/dataset`** (how much usable data exists) or **`/research`** (whether
+the strategy is any good) in the dashboard, or run:
 
 ```bash
+python scripts/research.py preflight       # can this machine collect at all?
+python scripts/research.py collection      # is the run producing usable data?
 python scripts/research.py report          # the validation verdict
 python scripts/research.py distribution    # what the scorer actually produces
 python scripts/research.py calibration     # does a higher score predict better?
+python scripts/research.py counterfactual  # did the filters reject the good ones?
+python scripts/research.py degradation     # has recent behaviour drifted?
 python scripts/research.py funnel          # where discovered tokens die
 ```
+
+`preflight` and `collection` exit non-zero on a real problem, so both work
+as a cron. The two pages are separate on purpose: putting coverage beside
+expectancy makes the return the headline and the sample size a footnote,
+which is the reading order that gets people hurt.
 
 ### The validation report
 

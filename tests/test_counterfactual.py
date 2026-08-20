@@ -13,6 +13,7 @@ import pytest
 from app import models, pipeline
 from app.analysis import counterfactual
 from app.analysis.counterfactual import MIN_COHORT, build_counterfactual
+from app.config import settings
 from app.database import SessionLocal
 
 NOW = dt.datetime(2026, 5, 1, 12, 0, tzinfo=dt.timezone.utc)
@@ -159,9 +160,23 @@ def test_stages_before_tracking_starts_are_named_not_rendered_empty(db):
     """An empty row reads as "this filter rejects nothing worth having",
     which is the opposite of what an absent measurement means."""
     report = build_counterfactual(db, horizon_minutes=60)
-    assert pipeline.PRESCREEN in report.invisible_stages
+    assert pipeline.RISK in report.invisible_stages
     assert pipeline.HISTORY in report.invisible_stages
     assert [g.stage for g in report.gates] == []
+
+
+def test_the_prescreen_is_visible_only_while_its_sampling_is_on(db, monkeypatch):
+    """It rejects more candidates than every other gate combined, so
+    leaving it unmeasurable left the biggest filter permanently
+    unexaminable. Reporting it as unmeasurable while its rows sit in the
+    table would send someone looking for a hole that is no longer there -
+    and reporting it as measurable when the sampling is off would hide a
+    real one."""
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", True)
+    assert pipeline.PRESCREEN not in build_counterfactual(db).invisible_stages
+
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", False)
+    assert pipeline.PRESCREEN in build_counterfactual(db).invisible_stages
 
 
 def test_a_candidate_with_no_pipeline_trail_is_counted_not_assumed_accepted(db):

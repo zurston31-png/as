@@ -7,6 +7,7 @@ trusting that handle_discovered_token delegates correctly - if the scanner
 ever grew its own bypassing trade path, those two would fail.
 """
 import datetime as dt
+import random
 
 import pytest
 
@@ -349,3 +350,137 @@ async def test_one_bad_candidate_does_not_kill_the_whole_cycle(_happy_path, monk
             db.delete(row)
         db.commit()
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# prescreen counterfactual coverage
+# ---------------------------------------------------------------------------
+
+def _rejected_token(address="ThinAddr1") -> DiscoveredToken:
+    """A token the prescreen will turn down - far too illiquid."""
+    return DiscoveredToken(
+        token_address=address, symbol="THIN", chain="solana", source="dexscreener",
+        liquidity_usd=200.0, volume_24h_usd=50.0, buys_24h=2, sells_24h=1,
+        price_usd=0.004, price_change_1h_pct=0.0, price_change_24h_pct=0.0,
+        pair_created_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=4),
+    )
+
+
+class _AlwaysSample(random.Random):
+    def random(self):
+        return 0.0        # below any positive rate
+
+
+class _NeverSample(random.Random):
+    def random(self):
+        return 0.999999   # above any rate below 1.0
+
+
+async def test_a_sampled_prescreen_reject_is_followed_forward(monkeypatch):
+    """The prescreen rejects more candidates than every other gate
+    combined, and until now none were followed - so the counterfactual
+    could say nothing at all about the biggest filter in the pipeline. "No
+    data" and "rejects nothing worth having" were indistinguishable."""
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", True)
+    monkeypatch.setattr(settings, "SCANNER_PRESCREEN_TRACKING_RATE", 0.10)
+
+    async def one_token():
+        return [_rejected_token()]
+
+    monkeypatch.setattr(scanner_loop, "discover_tokens", one_token)
+
+    db = SessionLocal()
+    try:
+        before = db.query(models.ForwardReturn).count()
+        summary = await scanner_loop.scan_once(db=db, rng=_AlwaysSample())
+        db.commit()
+
+        assert summary["prescreen_rejected"] == 1
+        assert summary["prescreen_tracked"] == 1
+        rows = db.query(models.ForwardReturn).all()[before:]
+        assert {r.horizon_minutes for r in rows} == set(scanner_loop.PRESCREEN_HORIZONS)
+        # No score: these tokens never reached the scorer, and every
+        # calibration query filters on a non-null score - so they serve the
+        # counterfactual without entering a table describing a different
+        # population.
+        assert all(r.score is None for r in rows)
+        assert all(r.price_at_signal == 0.004 for r in rows)
+    finally:
+        db.close()
+
+
+async def test_an_unsampled_prescreen_reject_costs_nothing(monkeypatch):
+    """Tracking every reject would multiply the bot's largest source of API
+    load by the rejection rate, which is most of the flow."""
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", True)
+    monkeypatch.setattr(settings, "SCANNER_PRESCREEN_TRACKING_RATE", 0.10)
+
+    async def one_token():
+        return [_rejected_token("ThinAddr2")]
+
+    monkeypatch.setattr(scanner_loop, "discover_tokens", one_token)
+
+    db = SessionLocal()
+    try:
+        before = db.query(models.ForwardReturn).count()
+        summary = await scanner_loop.scan_once(db=db, rng=_NeverSample())
+        db.commit()
+
+        assert summary["prescreen_rejected"] == 1
+        assert summary["prescreen_tracked"] == 0
+        assert db.query(models.ForwardReturn).count() == before
+    finally:
+        db.close()
+
+
+async def test_tracking_can_be_switched_off_entirely(monkeypatch):
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", False)
+
+    async def one_token():
+        return [_rejected_token("ThinAddr3")]
+
+    monkeypatch.setattr(scanner_loop, "discover_tokens", one_token)
+
+    db = SessionLocal()
+    try:
+        before = db.query(models.ForwardReturn).count()
+        summary = await scanner_loop.scan_once(db=db, rng=_AlwaysSample())
+        db.commit()
+        assert summary["prescreen_tracked"] == 0
+        assert db.query(models.ForwardReturn).count() == before
+    finally:
+        db.close()
+
+
+async def test_a_reject_with_no_price_is_never_tracked(monkeypatch):
+    """Every forward return divides by the signal price. A zero there is
+    corrupt data, not a free option."""
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", True)
+
+    token = _rejected_token("ThinAddr4")
+    token.price_usd = 0.0
+
+    async def one_token():
+        return [token]
+
+    monkeypatch.setattr(scanner_loop, "discover_tokens", one_token)
+
+    db = SessionLocal()
+    try:
+        before = db.query(models.ForwardReturn).count()
+        await scanner_loop.scan_once(db=db, rng=_AlwaysSample())
+        db.commit()
+        assert db.query(models.ForwardReturn).count() == before
+    finally:
+        db.close()
+
+
+def test_the_sample_is_random_rather_than_the_first_n():
+    """The first tokens a provider happens to list are not a random draw
+    from the ones it rejects - they are ordered by whatever the provider
+    sorts on, which is usually correlated with exactly the properties
+    being measured."""
+    import inspect
+
+    body = inspect.getsource(scanner_loop._track_prescreen_reject)
+    assert "rng.random()" in body

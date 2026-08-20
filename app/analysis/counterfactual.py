@@ -19,10 +19,18 @@ A yes is not permission to loosen anything. It is a place to look.
 WHAT IT CANNOT SEE
 
 Forward returns are scheduled at the TECHNICAL_SCORE stage, so a candidate
-killed before that - by the prescreen, the history check, the risk gate -
-has no recorded outcome at all and cannot appear here. That is a real hole
-and it is reported as one rather than rendered as an empty row, because an
-empty row reads as "this filter rejects nothing worth having".
+killed before that has no recorded outcome and cannot appear here. Those
+stages are NAMED as unmeasurable rather than rendered as empty rows,
+because an empty row reads as "this filter rejects nothing worth having",
+which is the opposite of what an absent measurement means.
+
+The prescreen is the exception, and deliberately so: it rejects more
+candidates than every other gate combined, so leaving it unmeasurable left
+the biggest filter in the pipeline permanently unexaminable. A random
+sample of its rejects is now followed forward (see app/scanner/loop.py),
+which makes its cohort smaller than the others but not biased - a random
+tenth estimates the same mean as the whole. The cohort floor below handles
+the smaller n on its own; nothing needs to compensate for the sampling.
 
 SAFETY FILTERS ARE NOT TUNING CANDIDATES
 
@@ -139,8 +147,13 @@ class GateVerdict:
             f"rejected {self.rejected.mean:+.2f}% vs accepted {self.accepted.mean:+.2f}% "
             f"net of costs (n={self.rejected.n}/{self.accepted.n})"
         )
+        sampled = (
+            " Its rejects are a random sample, so the cohort is smaller than the others "
+            "but estimates the same mean."
+            if self.stage == pipeline.PRESCREEN else ""
+        )
         if self.grade() == "PASS":
-            return f"{self.stage}: keeping the better half - {direction}."
+            return f"{self.stage}: keeping the better half - {direction}.{sampled}"
         if self.protected:
             return (
                 f"{self.stage}: {direction}, p={self.p_value:.3f}. This is a SAFETY gate. The "
@@ -150,9 +163,9 @@ class GateVerdict:
             )
         return (
             f"{self.stage}: rejecting opportunities that OUTPERFORMED what it accepted - "
-            f"{direction}, p={self.p_value:.3f}. Worth investigating. This is a screening "
-            "result, not a mandate: any actual change goes through the promotion gate as a "
-            "challenger, on its own paired sample."
+            f"{direction}, p={self.p_value:.3f}.{sampled} Worth investigating. This is a "
+            "screening result, not a mandate: any actual change goes through the promotion "
+            "gate as a challenger, on its own paired sample."
         )
 
     def as_dict(self) -> dict:
@@ -338,13 +351,20 @@ def _events_near(events: list[models.PipelineEvent], observed_at) -> list[models
 def _invisible_stages() -> list[str]:
     """Gates that run before forward-return tracking starts.
 
-    Named explicitly. Rendering them as empty rows would read as "this
-    filter rejects nothing worth having", which is the opposite of what an
-    absent measurement means.
+    Named explicitly rather than shown as empty rows. The prescreen drops
+    off this list when its sampled tracking is switched on, because it then
+    genuinely has coverage - reporting a gate as unmeasurable while its
+    rows are sitting in the table would send someone looking for a hole
+    that is no longer there.
     """
+    from app.config import settings
+
     rank = _stage_rank()
     cutoff = rank[MEASURABLE_FROM]
+    tracked_prescreen = bool(getattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", False))
     return [
         stage for stage in pipeline.FILTER_STAGES
-        if rank.get(stage, 99) < cutoff and stage != pipeline.DISCOVERED
+        if rank.get(stage, 99) < cutoff
+        and stage != pipeline.DISCOVERED
+        and not (stage == pipeline.PRESCREEN and tracked_prescreen)
     ]
