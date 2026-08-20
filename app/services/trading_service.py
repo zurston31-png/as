@@ -21,6 +21,7 @@ from app.execution import get_execution_client
 from app.identity import describe, instrument_key
 from app.notifications.notifier import notifier
 from app.risk import book
+from app.shadow import recorder as shadow_recorder
 from app.risk.manager import RiskManager, halt_trading
 from app.safety import killswitch
 from app.rugcheck.filters import run_rug_checks
@@ -210,6 +211,10 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     # that point still runs so the early engine can watch the candidate, but
     # nothing may open a position once it is True.
     technical_rejected = False
+    # Held so the shadow recorder can log the champion's score after the
+    # gates finish. Reading it back off the signal would work too, but the
+    # score object carries the factor breakdown the observation wants.
+    _last_score = None
 
     if settings.LIVE_SIGNAL_SCORE_ENABLED:
         # No liquidity argument here: the market snapshot is fetched by the
@@ -231,6 +236,7 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
 
         _stage(db, signal, pipeline.HISTORY, True, "enough trustworthy candles to score")
 
+        _last_score = score
         signal.signal_score = score.score
         signal.signal_score_reliable = score.reliable
         signal.signal_score_factors = score.as_dict()["factors"]
@@ -294,6 +300,11 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
             # engine must never see a token that failed security), the engine
             # gets its look, and the function returns before sizing.
             technical_rejected = True
+            _record_shadow(
+                db, signal, score,
+                decision=shadow_recorder.REJECT, reason=reason,
+                liquidity_usd=None,
+            )
             if not _worth_an_early_look(score):
                 return
     else:
@@ -458,6 +469,14 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
             await _consider_for_watchlist(db, signal, report, scored_event)
         except Exception:
             logger.exception("early-signal evaluation failed for %s - continuing", signal.symbol)
+
+    # The champion has now cleared every gate. Recording here - after the
+    # decision is fixed - means the shadow system cannot influence it.
+    _record_shadow(
+        db, signal, _last_score,
+        decision=shadow_recorder.BUY, reason="cleared every gate",
+        liquidity_usd=trusted_liquidity,
+    )
 
     # The technical gate already refused this one. Everything above ran so
     # the early engine could see it; nothing below may act on it.
@@ -625,6 +644,35 @@ def _worth_an_early_look(score) -> bool:
         return False
     floor = settings.MIN_SIGNAL_SCORE_TO_ENTER - settings.EARLY_SIGNAL_TECHNICAL_MARGIN
     return score.score >= floor
+
+
+def _record_shadow(db, signal, score, *, decision: str, reason: str, liquidity_usd):
+    """Log what every strategy would have done about this opportunity.
+
+    Wrapped so a fault in the shadow system can never cost a real paper
+    entry: by the time this runs the champion's decision is already made,
+    and an exception here must not unmake it.
+    """
+    if not settings.SHADOW_ENABLED:
+        return
+    try:
+        shadow_recorder.record_opportunity(
+            db,
+            token_address=signal.token_address,
+            symbol=signal.symbol,
+            chain=signal.chain,
+            reference_price=signal.price,
+            observed_at=signal.received_at,
+            market_regime=signal.market_regime,
+            liquidity_usd=liquidity_usd,
+            champion_decision=decision,
+            champion_reason=reason,
+            champion_score=getattr(score, "score", None),
+            champion_factors=(score.as_dict().get("factors") if score else None),
+            series=getattr(score, "series", None),
+        )
+    except Exception:
+        logger.exception("shadow recording failed for %s - continuing", signal.symbol)
 
 
 async def _consider_for_watchlist(

@@ -11,6 +11,7 @@
 
     python scripts/research.py readiness               how much data is still needed
     python scripts/research.py evidence                is there enough evidence yet?
+    python scripts/research.py shadow                  champion vs challengers, paired
     python scripts/research.py integrity               observations that must not be counted
     python scripts/research.py diagnose                triage the recorded data
     python scripts/research.py changelog               what autopilot changed, and why
@@ -277,6 +278,63 @@ def cmd_postmortem(args) -> int:
     return 0
 
 
+def cmd_shadow(args) -> int:
+    from app.autopilot.promote import evaluate
+    from app.shadow.challengers import CHAMPION_ID
+    from app.shadow.compare import compare_all
+    from app.strategy.version import current_label
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" SHADOW CHALLENGERS - paired comparison")
+        print(RULE)
+        print(f" Champion:            {CHAMPION_ID} ({current_label()})")
+
+        comparisons = compare_all(db)
+        if not comparisons:
+            print(" Challengers:         none have recorded a decision")
+            print("\n INSUFFICIENT_DATA - configure SHADOW_CHALLENGERS and let the bot run.")
+            return 0
+
+        for result in comparisons:
+            d = result.as_dict()
+            print(f"\n Challenger:          {d['challenger_id']}")
+            print(f" Paired opportunities:{d['paired']:>8}")
+            print(f" Both entered:        {d['both_entered']:>8}")
+            print(f" Both rejected:       {d['both_rejected']:>8}")
+            print(f" Champion-only:       {d['champion_only']:>8}")
+            print(f" Challenger-only:     {d['challenger_only']:>8}")
+            print(f" Unresolved entries:  {d['unresolved']:>8}")
+
+            if not result.conclusive or d["difference_pct"] is None:
+                print(f"\n {result.verdict()}")
+                print(" Promotion gate:      INSUFFICIENT_DATA - not submitted")
+                continue
+
+            print(f" Champion expectancy: {d['champion_expectancy_pct']:>8.3f}%")
+            print(f" Challenger expect.:  {d['challenger_expectancy_pct']:>8.3f}%")
+            print(f" Difference:          {d['difference_pct']:>+8.3f}%")
+
+            champion_arm, challenger_arm = result.arms()
+            verdict = evaluate(champion_arm, challenger_arm, attempts=len(comparisons))
+            print(f"\n Promotion gate:      {verdict.outcome}")
+            print(f"   {verdict.reason()}")
+            for bar in verdict.bars:
+                print(f"   [{'PASS' if bar.passed else 'FAIL'}] {bar.name:<14} {bar.detail}")
+
+        print(
+            "\n Paired means both strategies evaluated the SAME opportunity. Unpaired\n"
+            " observations are excluded: a larger unpaired sample measures the wrong\n"
+            " thing more precisely."
+        )
+        if args.json:
+            print(json.dumps([r.as_dict() for r in comparisons], indent=2))
+    finally:
+        db.close()
+    return 0
+
+
 def cmd_evidence(args) -> int:
     from app.analysis.evidence import build_evidence_report
 
@@ -533,6 +591,10 @@ def main() -> int:
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_postmortem)
+
+    p = sub.add_parser("shadow", help="champion vs challengers, on paired opportunities")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_shadow)
 
     p = sub.add_parser("evidence", help="is there enough evidence to trust the strategy?")
     p.add_argument("--horizon", type=int, default=60)

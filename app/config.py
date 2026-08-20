@@ -175,6 +175,19 @@ class Settings(BaseSettings):
     # The gate counts attempts across cycles, so a busier loop makes
     # promotion HARDER, which is the correct incentive.
     AUTOPILOT_INTERVAL_HOURS: float = 6.0
+    # --- shadow challengers (app/shadow/) ---
+    # Challengers evaluate the same opportunities as the champion and
+    # record what they WOULD have done. They cannot open, close or size a
+    # real paper position - separate tables, no execution client.
+    SHADOW_ENABLED: bool = True
+    # JSON list of parameter overrides. Empty means champion-only
+    # recording, which is still the baseline every comparison needs.
+    # e.g. [{"strategy_id": "tighter", "min_score_to_enter": 72}]
+    SHADOW_CHALLENGERS: str = ""
+    # Notional used for hypothetical fills. Fixed rather than taken from
+    # the risk manager, because sizing depends on live exposure and a
+    # challenger must never read - let alone move - that state.
+    SHADOW_POSITION_USD: float = 100.0
     # --- liquidity-drop exit (app/exits/manager.py) ---
     # A pool being drained while the position is open is the one failure the
     # price-based exits cannot catch in time: the quote looks normal until

@@ -8,7 +8,9 @@ and query directly for the dashboard / audits.
 import datetime as dt
 import enum
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import (
+    JSON, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -499,6 +501,106 @@ class AutopilotChange(Base):
     # False for anything a human still has to approve. Nothing that touches
     # real funds is ever applied, whatever this says.
     applied: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
+class ShadowDecision(Base):
+    """What one strategy would have done about one opportunity.
+
+    Written for the champion AND every enabled challenger, on every
+    opportunity, including the ones where everybody said no. Recording
+    only the entries would produce a dataset in which every strategy looks
+    identical on the trades it did not take, and the whole point of
+    pairing is to see where two strategies DISAGREED.
+
+    `opportunity_id` is derived from the token, the evaluation instant and
+    the price rather than from a row id, so a webhook delivered twice, a
+    scanner cycle that overlaps itself, or a restart replaying the same
+    candidate all collapse onto one opportunity instead of manufacturing
+    extra samples. The unique constraint on (opportunity_id, strategy_id)
+    is what makes that structural rather than best-effort.
+
+    A challenger row is a RECORD, never an instruction. Nothing downstream
+    reads these to open, close or size a real paper position; they exist
+    only to be counted.
+    """
+
+    __tablename__ = "shadow_decisions"
+    __table_args__ = (
+        UniqueConstraint("opportunity_id", "strategy_id", name="uq_shadow_opportunity_strategy"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    opportunity_id: Mapped[str] = mapped_column(String(32), index=True)
+    decided_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    # "champion" or a challenger's configured id.
+    strategy_id: Mapped[str] = mapped_column(String(48), index=True)
+    strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    is_champion: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    token_address: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    chain: Mapped[str] = mapped_column(String(32), default="solana")
+
+    # BUY | REJECT | NO_SIGNAL | EXIT | HOLD
+    decision: Mapped[str] = mapped_column(String(16), index=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signal_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    score_factors: Mapped[list] = mapped_column(JSON, default=list)
+
+    market_regime: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    liquidity_regime: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # What the fill WOULD have been. Present on a BUY decision even when
+    # the simulated fill failed - a strategy that would have tried and
+    # missed is a different observation from one that never tried, and
+    # dropping the misses would quietly inflate every challenger's hit rate.
+    reference_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fill_succeeded: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    fill_failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fee_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slippage_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    size_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ShadowPosition(Base):
+    """A hypothetical position a strategy would have held.
+
+    Deliberately a separate table from `positions`. Sharing one would mean
+    every existing query - the portfolio valuation, the exposure caps, the
+    kill switch's accounting check, the dashboard - had to remember to
+    filter these out, and the first one that forgot would silently let a
+    hypothetical trade affect real paper risk. A separate table cannot be
+    forgotten.
+    """
+
+    __tablename__ = "shadow_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    decision_id: Mapped[int] = mapped_column(Integer, index=True)
+    opportunity_id: Mapped[str] = mapped_column(String(32), index=True)
+    strategy_id: Mapped[str] = mapped_column(String(48), index=True)
+
+    token_address: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    market_regime: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    opened_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), index=True)
+    closed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_price: Mapped[float] = mapped_column(Float)
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    size_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    return_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_favorable_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_adverse_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hold_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fees_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    slippage_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class TokenObservation(Base):
