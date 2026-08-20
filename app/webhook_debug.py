@@ -107,7 +107,10 @@ def parse_body(raw_text: str) -> tuple[Any, str | None]:
     Uses the stdlib decoder rather than a strict one because Pine's
     `str.tostring()` emits a bare `NaN` for an `na` series value, which
     stdlib json accepts and a strict JSON parser would reject - rejecting
-    the alert over an indicator that has not warmed up yet.
+    the alert over an indicator that has not warmed up yet. The resulting
+    non-finite floats are turned into absent values by
+    `TradingViewAlert.non_finite_is_absent`, so none reaches the database;
+    the current Pine script sends `null` outright.
     """
     if not raw_text.strip():
         return None, "body was empty"

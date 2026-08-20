@@ -4,6 +4,7 @@ Matches the JSON built by `pine/memecoin_signal_strategy.pine`'s
 `buildPayload()` function — keep the two in sync if you change one.
 """
 import datetime as dt
+import math
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
@@ -28,6 +29,37 @@ class TradingViewAlert(BaseModel):
     @classmethod
     def normalize_signal(cls, v: str) -> str:
         return v.strip().lower()
+
+    @field_validator(
+        "rsi", "ema9", "ema21", "volume", "volume_sma", "breakout_level", mode="before",
+    )
+    @classmethod
+    def non_finite_is_absent(cls, v):
+        """`NaN` and `Infinity` mean "not measured", so record them as absent.
+
+        Pine's `str.tostring()` renders an `na` series value as a bare `NaN`,
+        which stdlib json accepts (see app/webhook_debug.parse_body - the
+        alert is deliberately not thrown away over an indicator that has yet
+        to warm up). Letting that through as a float would put a NaN in a
+        numeric column, where it reads as a measurement that was taken and
+        came out unrepresentable, rather than one that was never available.
+        """
+        if isinstance(v, float) and not math.isfinite(v):
+            return None
+        return v
+
+    @field_validator("price")
+    @classmethod
+    def price_must_be_finite(cls, v: float) -> float:
+        """Unlike the indicators, an unusable price fails the alert closed.
+
+        Everything downstream - position size, the stop, the take-profit - is
+        computed from it, so a NaN price would silently produce NaN levels
+        instead of no trade.
+        """
+        if not math.isfinite(v):
+            raise ValueError("price must be a finite number")
+        return v
 
     @field_validator("time", mode="before")
     @classmethod

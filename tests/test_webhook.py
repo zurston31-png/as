@@ -496,6 +496,88 @@ def test_iso_time_still_parses():
     assert alert.parsed_time().year == 2026
 
 
+def _current_pine_payload(symbol: str, signal: str) -> str:
+    """What the current `pine/memecoin_signal_strategy.pine` emits.
+
+    Two deliberate differences from `_pine_payload` above, which is kept as
+    the regression case for the numeric form older charts still send:
+      - `time` is quoted, so the payload validates against a server build
+        that predates the int -> str coercion in app/schemas.py.
+      - a `na` indicator is `null`, not `NaN`. Pine's str.tostring() renders
+        na as "NaN", which is not valid JSON, so a single warmup bar made the
+        entire body unparseable and the alert was lost rather than rejected.
+    """
+    return (
+        '{"secret":"' + settings.WEBHOOK_SECRET + '"'
+        ',"symbol":"' + symbol + '"'
+        ',"token_address":"' + symbol + 'TokenAddress111"'
+        ',"chain":"solana"'
+        ',"signal":"' + signal + '"'
+        ',"price":0.001234'
+        ',"time":"1766248800000"'
+        ',"rsi":55.12'
+        ',"ema9":0.00125'
+        ',"ema21":0.00115'
+        ',"volume":null'
+        ',"volume_sma":null'
+        ',"breakout_level":0.0012}'
+    )
+
+
+def test_the_current_pine_payload_is_accepted(_roomy_risk_limits):
+    resp = client.post(
+        settings.WEBHOOK_PATH,
+        content=_current_pine_payload("PINEQUOTEDCOIN", "buy"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "accepted"
+
+
+def test_a_quoted_pine_timestamp_parses_to_the_same_instant_as_the_bare_one():
+    """The script now quotes `time`; that must not shift the recorded bar
+    time, or shadow samples taken from it would be keyed to the wrong bar."""
+    from app.schemas import TradingViewAlert
+
+    quoted = TradingViewAlert(secret="s", symbol="X", signal="buy", price=1.0, time="1766248800000")
+    bare = TradingViewAlert(secret="s", symbol="X", signal="buy", price=1.0, time=1766248800000)
+    assert quoted.parsed_time() == bare.parsed_time()
+
+
+def test_a_nan_indicator_is_recorded_as_absent_rather_than_as_a_number():
+    """Charts still running the previous script send Pine's bare `NaN` for an
+    indicator that has not warmed up. stdlib json accepts it, so the alert is
+    kept - but it must land as absent, not as a NaN float in a numeric column,
+    which would read as a measurement that was taken and came out
+    unrepresentable.
+
+    Asserted at the schema rather than through the endpoint because the point
+    is the stored value, and the response body only carries the signal id.
+    """
+    import json as _json
+
+    from app.schemas import TradingViewAlert
+
+    body = _current_pine_payload("NANCOIN", "buy").replace('"volume":null', '"volume":NaN')
+    alert = TradingViewAlert.model_validate(_json.loads(body))
+    assert alert.volume is None
+
+
+def test_a_nan_price_is_refused_because_the_stop_would_be_nan_too():
+    """The indicators fail soft; the price cannot. Size, stop and take-profit
+    are all derived from it, so a NaN price must reject the alert rather than
+    open a position with NaN levels."""
+    import json as _json
+
+    body = _current_pine_payload("NANPRICECOIN", "buy").replace('"price":0.001234', '"price":NaN')
+    resp = client.post(
+        settings.WEBHOOK_PATH, content=body, headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422
+    assert "price" in " ".join(resp.json()["detail"])
+    assert _json.loads(body)["symbol"] == "NANPRICECOIN"
+
+
 def test_malformed_json_is_reported_rather_than_swallowed():
     resp = client.post(
         settings.WEBHOOK_PATH, content="{not json", headers={"Content-Type": "application/json"},
