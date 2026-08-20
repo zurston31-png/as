@@ -85,6 +85,7 @@ def schedule(
     late_entry_risk: float | None = None,
     momentum_class: str | None = None,
     early_features: dict | None = None,
+    market_regime: str | None = None,
 ) -> int:
     """Create one pending row per horizon for a freshly scored candidate.
 
@@ -119,10 +120,32 @@ def schedule(
                 late_entry_risk=late_entry_risk,
                 momentum_class=momentum_class,
                 early_features=early_features,
+                market_regime=market_regime,
             )
         )
         created += 1
     return created
+
+
+def attach_regime(db: Session, pipeline_event_id: int, market_regime: str | None) -> int:
+    """Complete the regime on rows scheduled before depth was known.
+
+    Forward returns are scheduled inside the scoring block, where only the
+    candle-derived axes exist. The liquidity axis arrives one gate later.
+    Without this back-fill every stored regime would read
+    ".../unknown" and the promotion gate's consistency bar - which needs
+    depth most of all in a memecoin book - would have nothing to group on.
+    """
+    if not market_regime:
+        return 0
+    rows = (
+        db.query(models.ForwardReturn)
+        .filter(models.ForwardReturn.pipeline_event_id == pipeline_event_id)
+        .all()
+    )
+    for row in rows:
+        row.market_regime = market_regime
+    return len(rows)
 
 
 def attach_early(db: Session, pipeline_event_id: int, verdict) -> int:

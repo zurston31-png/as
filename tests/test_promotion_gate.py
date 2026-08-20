@@ -10,8 +10,8 @@ import random
 import pytest
 
 from app.autopilot.promote import (
-    BASE_ALPHA, MIN_EFFECT_R, MIN_OOS_TRADES, MIN_REGIME_TRADES,
-    Arm, bootstrap_p_value, evaluate,
+    BASE_ALPHA, FAIL, INSUFFICIENT_DATA, MIN_EFFECT_R, MIN_OOS_TRADES,
+    MIN_REGIME_TRADES, Arm, bootstrap_p_value, evaluate,
 )
 
 
@@ -207,9 +207,28 @@ def test_profit_factor_is_unknown_rather_than_infinite_without_losers():
     assert Arm("y", [0.2, -0.1]).profit_factor == pytest.approx(2.0)
 
 
-def test_the_verdict_names_the_first_failing_bar():
+def test_a_thin_sample_reads_as_insufficient_data_not_as_failure():
+    """The distinction that matters. A challenger that lost on effect has
+    been WEIGHED and found wanting; one that only fell short on sample size
+    has not been weighed at all. Recording the second as a failure retires
+    an idea that was never tested, and makes the loop look like it is
+    ruling things out when it is only running out of data.
+    """
     champion = _arm("champ", 0.1, n=5, seed=51)
     challenger = _arm("chal", 0.9, n=5, seed=52)
     verdict = evaluate(champion, challenger, attempts=1)
+
+    assert verdict.outcome == INSUFFICIENT_DATA
+    assert verdict.promote is False
+    assert "not evidence against" in verdict.reason()
+    assert "more paper trading" in verdict.reason()
+
+
+def test_a_measurably_worse_challenger_reads_as_a_real_failure():
+    """The other side of the tri-state: this one WAS weighed."""
+    champion = _arm("champ", 0.60, n=80, spread=0.2, seed=61)
+    challenger = _arm("chal", 0.05, n=80, spread=0.2, seed=62)
+
+    verdict = evaluate(champion, challenger, attempts=1)
+    assert verdict.outcome == FAIL
     assert "KEEP champ" in verdict.reason()
-    assert "sample" in verdict.reason()

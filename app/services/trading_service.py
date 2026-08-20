@@ -212,7 +212,13 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     technical_rejected = False
 
     if settings.LIVE_SIGNAL_SCORE_ENABLED:
-        score = await evaluate_live_entry_signal(signal.chain, signal.token_address, signal.symbol)
+        # No liquidity argument here: the market snapshot is fetched by the
+        # market-quality gate further down, and hoisting it would reorder
+        # the gates and change what the funnel means. The depth axis is
+        # filled in below once the snapshot exists.
+        score = await evaluate_live_entry_signal(
+            signal.chain, signal.token_address, signal.symbol
+        )
         if score is None:
             reason = (
                 f"live signal score unavailable for {signal.symbol} - no trustworthy candle data "
@@ -228,6 +234,15 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         signal.signal_score = score.score
         signal.signal_score_reliable = score.reliable
         signal.signal_score_factors = score.as_dict()["factors"]
+
+        # The market condition this decision was made in. Recorded for
+        # every candidate, accepted or rejected, because "did this work in
+        # chop as well as in a trend" is unanswerable if only the winners
+        # carry a regime label.
+        condition = getattr(score, "market_condition", None)
+        if condition is not None:
+            signal.market_regime = condition.full_label
+            signal.regime_features = condition.features()
 
         # Recorded BEFORE the threshold test, and recorded whether or not
         # it passes. A dataset of only the setups that cleared the bar
@@ -259,6 +274,7 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
                 symbol=signal.symbol,
                 score=score.score,
                 price_at_signal=signal.price or 0.0,
+                market_regime=signal.market_regime,
             )
 
         if score.score < settings.MIN_SIGNAL_SCORE_TO_ENTER or not score.reliable:
@@ -300,6 +316,22 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
             db.add(models.RiskEvent(event_type="stale_data_rejected", details=reason, signal_id=signal.id))
             await notifier.notify_rejection(signal, reason)
             return
+
+        # Complete the regime now that depth is known. Trend and volatility
+        # came from the candles at scoring time; this adds the third axis
+        # without re-fetching or re-classifying either of the other two.
+        if market is not None and signal.market_regime:
+            from app.signals.market_regime import classify_liquidity
+
+            depth = classify_liquidity(market.liquidity_usd)
+            trend, volatility, _ = signal.market_regime.split("/")
+            signal.market_regime = f"{trend}/{volatility}/{depth.value}"
+            features = dict(signal.regime_features or {})
+            features["liquidity"] = depth.value
+            features["liquidity_usd"] = market.liquidity_usd
+            signal.regime_features = features
+            if scored_event is not None and forward_returns.enabled():
+                forward_returns.attach_regime(db, scored_event.id, signal.market_regime)
 
         quality = score_market_quality(market, min_liquidity_usd=settings.MIN_LIQUIDITY_USD)
         signal.market_quality_score = quality.score

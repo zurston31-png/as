@@ -79,6 +79,16 @@ class Signal(Base):
     # pass/fail so a rejection is explainable after the fact.
     market_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     market_quality_factors: Mapped[list] = mapped_column(JSON, default=list)
+    # The market condition this decision was made in, on three axes:
+    # trend / volatility / liquidity. Grouped on one axis at a time - the
+    # full cross product is 36 cells and no memecoin bot will ever fill
+    # them, so slicing that finely just produces confident tables built on
+    # three trades each.
+    market_regime: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # The ATR, EMA separation and pool depth the classification came from.
+    # A bare label cannot be audited: "sideways" six weeks ago is not
+    # reviewable unless the numbers behind it sit next to it.
+    regime_features: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class RugCheckResult(Base):
@@ -209,6 +219,10 @@ class Position(Base):
     # the moment there is nothing left to sell into.
     liquidity_at_entry_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     lowest_liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Regime at ENTRY, not at exit. Performance is attributed to the
+    # conditions the decision was made in; a trade opened in a calm market
+    # that closed in a crash was still a calm-market decision.
+    market_regime: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     trailing_stop_active: Mapped[bool] = mapped_column(Boolean, default=False)
     break_even_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     partial_exit_taken: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -436,6 +450,10 @@ class ForwardReturn(Base):
     early_features: Mapped[dict | None] = mapped_column(
         JSON(none_as_null=True), nullable=True
     )
+    # Regime AT SIGNAL TIME, copied here so calibration can group by market
+    # condition without joining back through the signal - and so the
+    # promotion gate's regime-consistency bar has something to read.
+    market_regime: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
 
 class AutopilotChange(Base):

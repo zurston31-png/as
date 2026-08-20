@@ -21,13 +21,16 @@ import logging
 
 from app.config import settings
 from app.data.candles import Timeframe
+from app.signals.market_regime import classify_full
 from app.data.live_provider import fetch_candles
 from app.signals.scoring import SignalScore, score_signal
 
 logger = logging.getLogger(__name__)
 
 
-async def evaluate_live_entry_signal(chain: str, token_address: str, symbol: str) -> SignalScore | None:
+async def evaluate_live_entry_signal(
+    chain: str, token_address: str, symbol: str, liquidity_usd: float | None = None
+) -> SignalScore | None:
     """Fetch live candles for `token_address` and score the setup, or
     return None if a trustworthy score can't be produced."""
     if not token_address:
@@ -51,4 +54,10 @@ async def evaluate_live_entry_signal(chain: str, token_address: str, symbol: str
         )
         return None
 
-    return score_signal(series)
+    score = score_signal(series)
+    # Classify from the SAME series the score was built on. Fetching
+    # separately would cost another request and could land on a different
+    # candle, so the recorded regime would not be the one the decision was
+    # actually made in.
+    score.market_condition = classify_full(series, liquidity_usd=liquidity_usd)
+    return score

@@ -55,6 +55,11 @@ class SignalScore:
     factors: list[Factor] = field(default_factory=list)
     reliable: bool = True
     warnings: list[str] = field(default_factory=list)
+    # The market condition the score was produced in. Optional and
+    # defaulted so every existing caller and test stub keeps working; set
+    # by app/signals/live_gate.py, which already has the series in hand and
+    # would otherwise make the persistence layer fetch it a second time.
+    market_condition: object | None = None
 
     @property
     def supporting(self) -> list[Factor]:

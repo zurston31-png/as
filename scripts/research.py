@@ -10,6 +10,8 @@
     python scripts/research.py sweep       <symbol> <param> <v1,v2,...>
 
     python scripts/research.py readiness               how much data is still needed
+    python scripts/research.py evidence                is there enough evidence yet?
+    python scripts/research.py integrity               observations that must not be counted
     python scripts/research.py diagnose                triage the recorded data
     python scripts/research.py changelog               what autopilot changed, and why
     python scripts/research.py replay                  thresholds on YOUR recorded history
@@ -275,6 +277,40 @@ def cmd_postmortem(args) -> int:
     return 0
 
 
+def cmd_evidence(args) -> int:
+    from app.analysis.evidence import build_evidence_report
+
+    db = SessionLocal()
+    try:
+        report = build_evidence_report(db, horizon_minutes=args.horizon)
+        print(report.render())
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_integrity(args) -> int:
+    from app.analysis.integrity import check_all
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" DATA INTEGRITY")
+        print(RULE)
+        for name, report in check_all(db).items():
+            print(f"\n {name}")
+            print(report.render())
+        if args.json:
+            print(json.dumps(
+                {k: v.as_dict() for k, v in check_all(db).items()}, indent=2
+            ))
+    finally:
+        db.close()
+    return 0
+
+
 def cmd_diagnose(args) -> int:
     from app.autopilot.diagnose import diagnose
 
@@ -497,6 +533,15 @@ def main() -> int:
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_postmortem)
+
+    p = sub.add_parser("evidence", help="is there enough evidence to trust the strategy?")
+    p.add_argument("--horizon", type=int, default=60)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_evidence)
+
+    p = sub.add_parser("integrity", help="observations that must not be counted")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_integrity)
 
     p = sub.add_parser("diagnose", help="problems visible in the recorded data")
     p.add_argument("--json", action="store_true")

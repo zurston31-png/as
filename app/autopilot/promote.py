@@ -115,6 +115,20 @@ class Arm:
         }
 
 
+# Three outcomes, not two. "We have not measured enough to say" is a
+# different answer from "we measured and it is not better", and collapsing
+# them is how a loop concludes that a strategy failed when it was never
+# tested. FAIL means evidence against; INSUFFICIENT_DATA means no evidence
+# either way, and only the first is a reason to stop exploring an idea.
+PASS = "PASS"
+FAIL = "FAIL"
+INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+
+# Bars that can only ever be answered by collecting more data. A failure on
+# any of these is a statement about the SAMPLE, not about the challenger.
+EVIDENCE_BARS = frozenset({"sample", "significance", "out-of-sample", "consistency"})
+
+
 @dataclass
 class Bar:
     """One requirement, and whether it was met."""
@@ -137,13 +151,40 @@ class Verdict:
 
     @property
     def promote(self) -> bool:
-        return bool(self.bars) and all(b.passed for b in self.bars)
+        return self.outcome == PASS
+
+    @property
+    def outcome(self) -> str:
+        """PASS, FAIL, or INSUFFICIENT_DATA.
+
+        The distinction that matters: a challenger that lost on effect or
+        risk has been WEIGHED and found wanting. One that only fell short
+        on sample size or significance has not been weighed at all, and
+        recording that as a failure would retire an idea that was never
+        tested - while also making the loop look like it is ruling things
+        out when it is only running out of data.
+        """
+        if not self.bars:
+            return INSUFFICIENT_DATA
+        if all(b.passed for b in self.bars):
+            return PASS
+        judged = [b for b in self.failed if b.name not in EVIDENCE_BARS]
+        return FAIL if judged else INSUFFICIENT_DATA
 
     @property
     def failed(self) -> list[Bar]:
         return [b for b in self.bars if not b.passed]
 
     def reason(self) -> str:
+        if self.outcome == INSUFFICIENT_DATA:
+            first = self.failed[0] if self.failed else None
+            return (
+                f"INSUFFICIENT_DATA on {self.challenger.label}: "
+                + (f"{first.name} - {first.detail}. " if first else "")
+                + "This is not evidence against the challenger. It has not been measured "
+                "well enough to judge, and the answer is more paper trading, not a "
+                "different challenger."
+            )
         if self.promote:
             lift = (self.challenger.expectancy_r or 0) - (self.champion.expectancy_r or 0)
             return (
@@ -162,6 +203,7 @@ class Verdict:
     def as_dict(self) -> dict:
         return {
             "promote": self.promote,
+            "outcome": self.outcome,
             "reason": self.reason(),
             "attempts": self.attempts,
             "p_value": round(self.p_value, 5) if self.p_value is not None else None,
