@@ -37,3 +37,8 @@ logs/
 
 # diagnostic dumps
 diagnostic_output.json
+
+# handover bundles built by scripts/package.sh. Generated from
+# `git archive HEAD`, so committing one would store a copy of the
+# repository inside itself and add a fresh megabyte on every push.
+/dist/
