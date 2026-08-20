@@ -165,6 +165,16 @@ class Settings(BaseSettings):
 
     TIME_BASED_EXIT_ENABLED: bool = False
     MAX_POSITION_AGE_HOURS: float = 48.0
+    # --- autopilot (app/autopilot/) ---
+    # The self-improvement loop. Diagnoses recorded data, logs proposals,
+    # and judges registered challengers at the promotion gate. It cannot
+    # modify source and cannot reach the live-trading gates.
+    AUTOPILOT_ENABLED: bool = True
+    # Deliberately slow. Running the search more often does not improve
+    # faster - it resamples the same weeks and calls the noise a signal.
+    # The gate counts attempts across cycles, so a busier loop makes
+    # promotion HARDER, which is the correct incentive.
+    AUTOPILOT_INTERVAL_HOURS: float = 6.0
     # --- liquidity-drop exit (app/exits/manager.py) ---
     # A pool being drained while the position is open is the one failure the
     # price-based exits cannot catch in time: the quote looks normal until

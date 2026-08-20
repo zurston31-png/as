@@ -10,6 +10,8 @@
     python scripts/research.py sweep       <symbol> <param> <v1,v2,...>
 
     python scripts/research.py readiness               how much data is still needed
+    python scripts/research.py diagnose                triage the recorded data
+    python scripts/research.py changelog               what autopilot changed, and why
     python scripts/research.py replay                  thresholds on YOUR recorded history
     python scripts/research.py postmortem              per-trade autopsies
     python scripts/research.py early                   the Early Signal Engine
@@ -273,6 +275,42 @@ def cmd_postmortem(args) -> int:
     return 0
 
 
+def cmd_diagnose(args) -> int:
+    from app.autopilot.diagnose import diagnose
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" DIAGNOSIS - problems visible in the recorded data")
+        print(RULE)
+        report = diagnose(db)
+        print(report.render())
+        print(
+            "\n  Findings marked HUMAN change what the strategy believes. Autopilot logs\n"
+            "  them and stops - acting on a correlation in a few hundred rows is how a\n"
+            "  loop fits itself to a fortnight of market."
+        )
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_changelog(args) -> int:
+    from app.autopilot import changelog
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" AUTOPILOT CHANGELOG")
+        print(RULE)
+        print(changelog.render(db, limit=args.limit))
+    finally:
+        db.close()
+    return 0
+
+
 def cmd_readiness(args) -> int:
     from app.analysis.readiness import build_readiness
 
@@ -459,6 +497,14 @@ def main() -> int:
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_postmortem)
+
+    p = sub.add_parser("diagnose", help="problems visible in the recorded data")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_diagnose)
+
+    p = sub.add_parser("changelog", help="what autopilot changed, and why")
+    p.add_argument("--limit", type=int, default=30)
+    p.set_defaults(func=cmd_changelog)
 
     p = sub.add_parser("readiness", help="how much data each question still needs")
     p.add_argument("--horizon", type=int, default=60)

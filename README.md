@@ -1150,6 +1150,80 @@ A failed security lookup raises `LookupFailed` rather than returning empty.
 about a security screen, and collapsing them would let a provider outage
 read as a clean bill of health.
 
+## Autopilot — the self-improvement loop
+
+```
+monitor → diagnose → propose → compare → promote → monitor → roll back if worse
+```
+
+```bash
+python scripts/research.py diagnose     # problems visible in recorded data
+python scripts/research.py changelog    # what autopilot changed, and why
+```
+
+The loop is the easy part. Nearly all of `app/autopilot/` is a brake, and
+here is why.
+
+### The gate is the product
+
+An automated search that keeps generating variations until one beats the
+champion is **an overfitting machine with a reporting layer**. Try two
+hundred parameter sets against a finite history and roughly ten clear
+p < 0.05 on noise alone. The loop will find them, promote them, and attach
+a table that looks exactly like evidence. This gets *worse* the harder the
+loop tries.
+
+So a challenger must clear **six independent bars**:
+
+| Bar | Requirement |
+|---|---|
+| Sample | ≥30 out-of-sample trades |
+| Effect | ≥+0.05R — smaller sits inside the fee/slippage error |
+| Significance | p < 0.05 **÷ number of challengers tried** |
+| Out-of-sample | not judged on the data it was chosen on |
+| Consistency | no worse in *any* comparable market regime |
+| Risk | return not bought with disproportionate drawdown |
+
+The attempt count is **required, not optional** — a caller that forgets
+gets an exception, because an uncorrected bar in an automated search is
+precisely how noise gets promoted. Attempts accumulate *across cycles*
+from the changelog, so running the loop more often makes promotion
+**harder**. That's the correct incentive, and the opposite of what an
+unguarded search does.
+
+Significance uses a **seeded paired bootstrap**, not a t-test: trade
+returns are skewed and fat-tailed, which is exactly where a parametric
+test reports confidence it hasn't earned. Seeded, so the gate can't be
+re-rolled until it agrees.
+
+### What it may and may not change
+
+| | |
+|---|---|
+| ✅ May | Numeric strategy parameters — bounded, reversible, fully described by a changelog row |
+| ✅ May | Bounded operational remedies — back off a failing provider, halt entries. These only ever make the bot *more* conservative |
+| ❌ May not | **Modify its own source.** A loop that edits code also edits the tests that would catch the edit, and a fault in the fixer lands in the trading path |
+| ❌ May not | **Enable live trading, by any path.** The live gates aren't reachable from the package — enforced by a test |
+
+Code-level findings are diagnosed, explained, and logged for a human.
+`diagnose.py` produces a report, never a patch.
+
+### Rollback is automatic; promotion is earned
+
+Deliberately asymmetric. Promotion needs every bar; rollback needs only
+that live paper results drifted below what the challenger promised. Being
+slow to adopt costs an opportunity — being slow to revert compounds.
+
+### Refusing to keep trying
+
+Rejections are logged as prominently as promotions. A search that logs
+only its wins will retry a rejected idea until variance lets it through,
+and the changelog would show one clean promotion with no trace of the
+fifteen attempts before it. A parameter that has been changed and reverted
+repeatedly is marked **oscillating** and left alone — that isn't
+optimisation converging, it's a value being fitted to whichever weeks are
+in the window.
+
 ## Debugging paper mode
 
 Everything below reads the bot's own recorded history. None of it needs a

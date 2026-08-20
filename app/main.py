@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.dashboard.routes import router as dashboard_router
 from app import backup
+from app.autopilot import loop as autopilot_loop
 from app.database import SessionLocal, init_db
 from app.early import loop as early_loop
 from app.monitor import forward_return_worker, position_monitor
@@ -37,6 +38,7 @@ _scanner_task: asyncio.Task | None = None
 _forward_task: asyncio.Task | None = None
 _early_task: asyncio.Task | None = None
 _backup_task: asyncio.Task | None = None
+_autopilot_task: asyncio.Task | None = None
 
 
 async def _snapshot_forever() -> None:
@@ -65,6 +67,7 @@ async def _snapshot_forever() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _monitor_task, _scanner_task, _forward_task, _early_task, _backup_task
+    global _autopilot_task
 
     # BEFORE init_db(). A wiped disk leaves no database at all, and
     # init_db() would create an empty one - after which the restore has
@@ -117,6 +120,12 @@ async def lifespan(app: FastAPI):
     if settings.BACKUP_ENABLED:
         _backup_task = asyncio.create_task(_snapshot_forever())
 
+    autopilot_blocked = autopilot_loop.blocked_reason()
+    if autopilot_blocked:
+        logger.info("autopilot disabled: %s", autopilot_blocked)
+    else:
+        _autopilot_task = asyncio.create_task(autopilot_loop.run_forever())
+
     scanner_blocked = scanner_loop.scanner_blocked_reason()
     if scanner_blocked:
         logger.info("automatic token scanner disabled: %s", scanner_blocked)
@@ -149,12 +158,14 @@ async def lifespan(app: FastAPI):
         _early_task.cancel()
     if _backup_task:
         _backup_task.cancel()
+    if _autopilot_task:
+        _autopilot_task.cancel()
 
     # cancel() only schedules the cancellation; the loops are still between
     # await points until control returns here. Wait for them before the
     # shutdown snapshot, otherwise it races the writes it exists to capture.
     pending = [t for t in (_monitor_task, _scanner_task, _forward_task,
-                           _early_task, _backup_task) if t is not None]
+                           _early_task, _backup_task, _autopilot_task) if t is not None]
     if pending:
         await asyncio.wait(pending, timeout=10)
 

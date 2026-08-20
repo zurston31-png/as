@@ -438,6 +438,51 @@ class ForwardReturn(Base):
     )
 
 
+class AutopilotChange(Base):
+    """Every automatic change the self-improvement loop made, and why.
+
+    Append-only, and deliberately verbose. An autonomous loop that adjusts
+    a strategy without leaving an explanation is indistinguishable from
+    drift: six weeks later nobody can say why the entry threshold is 68,
+    whether it was chosen or crept there, or what it displaced.
+
+    `before` and `after` hold the full parameter maps rather than a diff,
+    so a rollback needs no reconstruction and no assumption that the code
+    that wrote the row still exists in the same shape.
+
+    `evidence` carries the promotion verdict verbatim - every bar, the
+    p-value, and crucially how many challengers were tried. Without the
+    attempt count a past decision cannot be re-judged, because the same
+    p-value means different things after one try and after fifty.
+    """
+
+    __tablename__ = "autopilot_changes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    occurred_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    # "promotion" | "rollback" | "remedy" | "proposal" | "rejection"
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    # Which knob, or which subsystem for an operational remedy.
+    target: Mapped[str] = mapped_column(String(64), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    # The human-readable case for the change. Written even for rejections,
+    # so a rejected idea is not silently retried until it passes.
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    before: Mapped[dict] = mapped_column(JSON, default=dict)
+    after: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    from_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    to_version: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Set when a later row reverted this one, so a flip-flopping parameter
+    # is visible as a pattern rather than as two unrelated events.
+    reverted_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # False for anything a human still has to approve. Nothing that touches
+    # real funds is ever applied, whatever this says.
+    applied: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
 class TokenObservation(Base):
     """One stored market snapshot for a token, at a point in time.
 
