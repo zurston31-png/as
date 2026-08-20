@@ -198,6 +198,17 @@ class Position(Base):
 
     # --- smart-exit tracking (Stage 4) ---
     highest_price_since_entry: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The other half of the path. Without a low-water mark a post-mortem can
+    # only report where a trade ENDED, so a +5% winner that first went -30%
+    # reads identically to one that never dipped - and those are not the same
+    # trade. Together these give per-position MFE/MAE.
+    lowest_price_since_entry: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Pool depth when the position was opened, and the lowest depth seen
+    # since. A liquidity pull while holding is a total loss and nothing else
+    # in the exit stack is watching for it: price can look fine right up to
+    # the moment there is nothing left to sell into.
+    liquidity_at_entry_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lowest_liquidity_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_stop_active: Mapped[bool] = mapped_column(Boolean, default=False)
     break_even_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     partial_exit_taken: Mapped[bool] = mapped_column(Boolean, default=False)

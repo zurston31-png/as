@@ -10,6 +10,8 @@
     python scripts/research.py sweep       <symbol> <param> <v1,v2,...>
 
     python scripts/research.py readiness               how much data is still needed
+    python scripts/research.py replay                  thresholds on YOUR recorded history
+    python scripts/research.py postmortem              per-trade autopsies
     python scripts/research.py early                   the Early Signal Engine
     python scripts/research.py early-ablate            which early factors earn it
     python scripts/research.py early-walkforward       is the early threshold stable?
@@ -218,6 +220,59 @@ def cmd_sweep(args) -> int:
     return 0
 
 
+def cmd_replay(args) -> int:
+    from app.research.replay import replay_thresholds
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" THRESHOLD REPLAY - re-scoring the candidates this bot actually saw")
+        print(RULE)
+        thresholds = tuple(float(v) for v in args.thresholds.split(","))
+        report = replay_thresholds(
+            db, horizon_minutes=args.horizon, thresholds=thresholds,
+            strategy_version=args.version,
+        )
+        print(report.table())
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_postmortem(args) -> int:
+    from app.analysis.postmortem import recent_postmortems
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" TRADE POST-MORTEMS")
+        print(RULE)
+        reports = recent_postmortems(db, limit=args.limit)
+        if not reports:
+            print(" No closed positions yet.")
+            return 0
+        for pm in reports:
+            print(f"  {pm.headline()}")
+            if args.verbose:
+                d = pm.as_dict()
+                for key in ("entry_price", "exit_price", "fees_usd", "execution_cost_pct",
+                            "capture", "liquidity_drop_pct", "signal_score", "samples"):
+                    print(f"      {key:<22}{d[key]}")
+                print()
+        gave_back = sum(1 for p in reports if p.gave_back_a_winner)
+        survived = sum(1 for p in reports if p.survived_a_drawdown)
+        print(f"\n  {len(reports)} closed | {gave_back} gave back a 20%+ winner "
+              f"| {survived} closed green after a 20%+ drawdown")
+        print("  MFE/MAE come from polled prices, so both are LOWER bounds on the true path.")
+        if args.json:
+            print(json.dumps([p.as_dict() for p in reports], indent=2))
+    finally:
+        db.close()
+    return 0
+
+
 def cmd_readiness(args) -> int:
     from app.analysis.readiness import build_readiness
 
@@ -391,6 +446,19 @@ def main() -> int:
     p.add_argument("param", help="BacktestConfig field name")
     p.add_argument("values", help="comma-separated values, e.g. 60,62.5,65,67.5,70")
     p.set_defaults(func=cmd_sweep)
+
+    p = sub.add_parser("replay", help="thresholds re-scored on the bot's own history")
+    p.add_argument("--horizon", type=int, default=60)
+    p.add_argument("--thresholds", default="50,55,60,65,70,75,80")
+    p.add_argument("--version", help="restrict to one strategy version label")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_replay)
+
+    p = sub.add_parser("postmortem", help="per-trade autopsies with MFE/MAE")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--verbose", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_postmortem)
 
     p = sub.add_parser("readiness", help="how much data each question still needs")
     p.add_argument("--horizon", type=int, default=60)

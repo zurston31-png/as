@@ -65,6 +65,9 @@ class _OpenPosition:
     market_regime: str
     risk_amount_usd: float
     highest_price_since_entry: float | None = None
+    # Mirrors the same field on models.Position. record_price_tick writes
+    # both water marks, so a stand-in missing this one breaks every backtest.
+    lowest_price_since_entry: float | None = None
     trailing_stop_active: bool = False
     break_even_applied: bool = False
     partial_exit_taken: bool = False

@@ -165,6 +165,18 @@ class Settings(BaseSettings):
 
     TIME_BASED_EXIT_ENABLED: bool = False
     MAX_POSITION_AGE_HOURS: float = 48.0
+    # --- liquidity-drop exit (app/exits/manager.py) ---
+    # A pool being drained while the position is open is the one failure the
+    # price-based exits cannot catch in time: the quote looks normal until
+    # the depth is gone, and by then the stop-loss fills into nothing.
+    LIQUIDITY_EXIT_ENABLED: bool = True
+    # Fraction of entry liquidity below which the position is closed outright.
+    LIQUIDITY_EXIT_DROP_PCT: float = 0.50
+    # A softer drop takes the partial-exit route instead of a full close.
+    LIQUIDITY_WARN_DROP_PCT: float = 0.30
+    # Floor in dollars, independent of the entry level. A pool that started
+    # thin and got thinner is dangerous even if the ratio looks survivable.
+    LIQUIDITY_EXIT_FLOOR_USD: float = 5_000.0
 
     # --- Live signal score (Stage 2's scoring engine, wired into live entries) ---
     # Master switch. False skips the score gate entirely (loud warning

@@ -393,6 +393,39 @@ def breakdown_by_liquidity(
     return _build_breakdown("entry liquidity USD", pairs, [25_000, 50_000, 100_000, 250_000])
 
 
+def breakdown_by_token_age(
+    trades: list[models.Trade], age_hours_by_signal: dict[int, float | None]
+) -> Breakdown:
+    """Does the bot do better on brand-new pools or established ones?
+
+    The edges bracket the windows that actually differ in character: the
+    first hour is launch chaos, the first day is where most rugs happen,
+    and past a week a memecoin has either found holders or died.
+    """
+    pairs = [(age_hours_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    return _build_breakdown("token age", pairs, [1, 6, 24, 168], unit="h")
+
+
+def breakdown_by_market_cap(
+    trades: list[models.Trade], mcap_by_signal: dict[int, float | None]
+) -> Breakdown:
+    pairs = [(mcap_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    return _build_breakdown("market cap USD", pairs, [100_000, 500_000, 2_000_000, 10_000_000])
+
+
+def breakdown_by_rug_score(
+    trades: list[models.Trade], rug_by_signal: dict[int, float | None]
+) -> Breakdown:
+    """Do the trades that cleared security by a wide margin do better?
+
+    A binary pass/fail hides this entirely. If the 60-79 bucket performs as
+    well as the 0-19 one, the rug score is not carrying information about
+    outcomes and its threshold is doing all the work.
+    """
+    pairs = [(rug_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    return _build_breakdown("rug risk score", pairs, [20, 40, 60, 80])
+
+
 def breakdown_by_holding_time(trades: list[models.Trade]) -> Breakdown:
     pairs = [(holding_time_hours(t), t) for t in closed_trades(trades)]
     return _build_breakdown("holding time", pairs, [1, 4, 12, 24, 72], unit="h")

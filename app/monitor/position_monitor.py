@@ -12,7 +12,7 @@ import logging
 from app import models
 from app.config import settings
 from app.database import SessionLocal
-from app.exits.manager import ExitManager
+from app.exits.manager import ExitManager, evaluate_liquidity, record_liquidity_tick
 from app.monitor.devwallet import check_dev_wallet_exit
 from app.early import watchlist
 from app.services import price_feed
@@ -28,7 +28,23 @@ async def _evaluate_position(db, pos: models.Position) -> None:
     if not pos.token_address:
         return
 
-    price = await price_feed.get_price_usd(pos.token_address)
+    # One snapshot serves three purposes - price, the stored observation the
+    # correlation model reads, and pool depth for the liquidity exit - so it
+    # replaces the bare price lookup rather than adding a second request.
+    market = await price_feed.get_market_snapshot(pos.token_address)
+    price = market.price_usd if market else await price_feed.get_price_usd(pos.token_address)
+
+    if market is not None:
+        record_liquidity_tick(pos, market.liquidity_usd)
+        action = evaluate_liquidity(pos, market.liquidity_usd)
+        if action.kind == "full":
+            await close_position(db, pos, reason=action.reason)
+            return
+        if action.kind == "partial" and not pos.partial_exit_taken:
+            await partial_close_position(db, pos, action.fraction, reason=action.reason)
+            if pos.status != models.PositionStatus.OPEN.value:
+                return
+
     if price is not None:
         # Keep the reading. This loop is the only place the bot observes a
         # token it HOLDS - the early engine watches candidates, and a

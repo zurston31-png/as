@@ -63,18 +63,92 @@ NO_EXIT = ExitAction(kind="none")
 
 
 def record_price_tick(position: models.Position, price: float, now: dt.datetime | None = None) -> None:
-    """Update peak-price tracking and the rolling sample buffer.
+    """Update the high/low water marks and the rolling sample buffer.
 
     Called on every monitor tick regardless of whether an exit fires, so the
     buffers stay populated even for positions that never trigger anything.
+
+    Both extremes are tracked, not just the peak. The peak alone drives the
+    trailing stop, but a post-mortem needs the trough too: a trade that
+    closed +5% after dipping -30% is a different trade from one that never
+    dipped, and the closing price cannot tell them apart.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
     if position.highest_price_since_entry is None or price > position.highest_price_since_entry:
         position.highest_price_since_entry = price
+    if position.lowest_price_since_entry is None or price < position.lowest_price_since_entry:
+        position.lowest_price_since_entry = price
 
     samples = list(position.recent_prices or [])
     samples.append([now.isoformat(), price])
     position.recent_prices = samples[-MAX_RECENT_PRICE_SAMPLES:]
+
+
+def record_liquidity_tick(position: models.Position, liquidity_usd: float | None) -> None:
+    """Track pool depth alongside price.
+
+    Seeds the entry level on the first reading rather than at fill time, so
+    a position opened before this existed still gets a baseline instead of
+    being permanently unassessable.
+    """
+    if liquidity_usd is None or liquidity_usd <= 0:
+        return
+    if position.liquidity_at_entry_usd is None:
+        position.liquidity_at_entry_usd = liquidity_usd
+    if position.lowest_liquidity_usd is None or liquidity_usd < position.lowest_liquidity_usd:
+        position.lowest_liquidity_usd = liquidity_usd
+
+
+def evaluate_liquidity(
+    position: models.Position, liquidity_usd: float | None
+) -> ExitAction:
+    """Close, trim, or hold based on how much of the pool is left.
+
+    Deliberately separate from the price-based ladder in ExitManager,
+    because it answers a different question. Every other exit asks "is this
+    trade going badly?"; this one asks "will there still be something to
+    sell into?". A drained pool looks fine on price right up until the stop
+    fills at whatever is left, which is usually nothing.
+
+    A MISSING reading is not a drop. The feed going quiet for one tick is
+    common and would otherwise dump every open position at once - turning a
+    provider hiccup into a portfolio-wide market sell.
+    """
+    if not settings.LIQUIDITY_EXIT_ENABLED or liquidity_usd is None or liquidity_usd <= 0:
+        return NO_EXIT
+
+    if liquidity_usd < settings.LIQUIDITY_EXIT_FLOOR_USD:
+        return ExitAction(
+            kind="full",
+            reason=(
+                f"liquidity ${liquidity_usd:,.0f} is below the ${settings.LIQUIDITY_EXIT_FLOOR_USD:,.0f} "
+                "floor - too thin to exit cleanly at any price"
+            ),
+        )
+
+    entry = position.liquidity_at_entry_usd
+    if not entry or entry <= 0:
+        return NO_EXIT
+
+    remaining = liquidity_usd / entry
+    if remaining <= (1 - settings.LIQUIDITY_EXIT_DROP_PCT):
+        return ExitAction(
+            kind="full",
+            reason=(
+                f"liquidity fell {(1 - remaining) * 100:.0f}% since entry "
+                f"(${entry:,.0f} to ${liquidity_usd:,.0f}) - the pool is being drained"
+            ),
+        )
+    if remaining <= (1 - settings.LIQUIDITY_WARN_DROP_PCT):
+        return ExitAction(
+            kind="partial",
+            fraction=0.5,
+            reason=(
+                f"liquidity fell {(1 - remaining) * 100:.0f}% since entry "
+                f"(${entry:,.0f} to ${liquidity_usd:,.0f}) - trimming while there is depth to sell into"
+            ),
+        )
+    return NO_EXIT
 
 
 class ExitManager:
