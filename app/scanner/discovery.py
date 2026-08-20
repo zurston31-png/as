@@ -43,6 +43,10 @@ logger = logging.getLogger(__name__)
 DEXSCREENER_TOKEN_PROFILES = "https://api.dexscreener.com/token-profiles/latest/v1"
 DEXSCREENER_TOKEN_BOOSTS = "https://api.dexscreener.com/token-boosts/latest/v1"
 DEXSCREENER_TOKENS = "https://api.dexscreener.com/latest/dex/tokens/{addresses}"
+# Used by app/analysis/resolve_symbol.py to turn a chart symbol into the mint
+# it refers to. Not part of discovery itself - the scanner never searches by
+# symbol, precisely because symbols are not unique.
+DEXSCREENER_SEARCH = "https://api.dexscreener.com/latest/dex/search"
 
 # DexScreener accepts a comma-separated batch on the tokens endpoint; keeping
 # batches modest keeps each URL short and each failure small.

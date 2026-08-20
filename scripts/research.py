@@ -14,6 +14,7 @@
     python scripts/research.py shadow                  champion vs challengers, paired
     python scripts/research.py integrity               observations that must not be counted
     python scripts/research.py preflight               can this machine collect at all?
+    python scripts/research.py resolve   [symbols...]  which mint does a symbol mean?
     python scripts/research.py collection              is the paper run collecting cleanly?
     python scripts/research.py counterfactual          what the filters rejected, and its worth
     python scripts/research.py degradation             has recent behaviour drifted from baseline?
@@ -455,6 +456,75 @@ def cmd_preflight(args) -> int:
     return 1 if report.blocking else 0
 
 
+def cmd_resolve(args) -> int:
+    import asyncio
+
+    from app.analysis.resolve_symbol import (
+        MIN_CREDIBLE_LIQUIDITY_USD, resolve_many,
+    )
+    from app.config import settings
+
+    symbols = [s.strip() for s in ",".join(args.symbols).split(",") if s.strip()]
+    if not symbols:
+        symbols = [s.strip() for s in settings.SYMBOLS_WATCHLIST.split(",") if s.strip()]
+
+    chain = None if args.any_chain else (args.chain or settings.CHAIN)
+
+    print(RULE)
+    print(" RESOLVE - which mint does each chart symbol actually mean?")
+    print(RULE)
+    print(f"   chain          {chain or 'any'}")
+    print(f"   symbols        {', '.join(symbols)}")
+    print(
+        "\n   A symbol is a label, not an identity - anyone can mint a token called\n"
+        "   BONK, and copycats do it on purpose. Paste the address into the Pine\n"
+        "   script's Token/Contract Address input, one chart at a time.\n"
+    )
+
+    results = asyncio.run(resolve_many(symbols, chain))
+
+    for res in results:
+        print(f" {res.symbol}  [{res.verdict()}]")
+        if res.error:
+            print(f"        could not reach the listing source: {res.error}")
+            print()
+            continue
+        if not res.candidates:
+            print(
+                f"        nothing on {chain or 'any chain'} lists this symbol. If the chart is a\n"
+                f"        CEX or index symbol it has no mint, and this bot cannot trade it."
+            )
+            print()
+            continue
+        for rank, c in enumerate(res.candidates):
+            marker = "->" if rank == 0 and res.unambiguous else "  "
+            thin = "" if c.credible else "   <- below the credible-liquidity floor"
+            print(f"   {marker} {c.token_address}{thin}")
+            print(
+                f"        {c.chain:<10} {(c.name or '?')[:34]:<34} "
+                f"liq ${c.liquidity_usd or 0:,.0f} · vol24h ${c.volume_24h_usd or 0:,.0f} "
+                f"· {c.pair_count} pair(s)"
+            )
+        if not res.unambiguous and res.candidates[0].credible:
+            print(
+                "        Two or more credible claimants. Do NOT pick by size - check the\n"
+                "        one your chart actually tracks on the token's own listing page."
+            )
+        print()
+
+    resolved = [r for r in results if r.unambiguous]
+    print(RULE)
+    print(f" {len(resolved)} of {len(results)} symbol(s) resolved to a single credible mint.")
+    if len(resolved) < len(results):
+        print(
+            f" The rest need a human. A mint below ${MIN_CREDIBLE_LIQUIDITY_USD:,.0f} of liquidity or\n"
+            " sharing its symbol with a rival is exactly the case where guessing costs money."
+        )
+    if args.json:
+        print(json.dumps([r.as_dict() for r in results], indent=2))
+    return 0
+
+
 def cmd_degradation(args) -> int:
     from app.analysis.degradation import build_degradation
 
@@ -803,6 +873,19 @@ def main() -> int:
     p.add_argument("--no-probe", action="store_true", help="skip the live upstream probes")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("resolve", help="which mint does a chart symbol actually mean?")
+    p.add_argument(
+        "symbols", nargs="*",
+        help="symbols to resolve; defaults to SYMBOLS_WATCHLIST from .env",
+    )
+    p.add_argument("--chain", help="restrict to one chain (default: CHAIN from .env)")
+    p.add_argument(
+        "--any-chain", action="store_true",
+        help="do not filter by chain - shows the same symbol across every chain listing it",
+    )
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_resolve)
 
     p = sub.add_parser("degradation", help="has recent behaviour moved away from the baseline?")
     p.add_argument("--recent", type=int, default=30, help="trades in the recent window")
