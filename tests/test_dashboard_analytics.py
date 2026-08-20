@@ -82,3 +82,4 @@ def test_equity_curve_svg_color_reflects_net_direction():
     down = [(START, 1000.0), (START + dt.timedelta(days=1), 900.0)]
     assert "#3ddc97" in equity_curve_svg(up)
     assert "#ff5c7a" in equity_curve_svg(down)
+

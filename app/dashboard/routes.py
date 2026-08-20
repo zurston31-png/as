@@ -14,6 +14,8 @@ from fastapi.templating import Jinja2Templates
 from app import backup, models
 from app.analysis.funnel import build_funnel
 from app.analysis.calibration import HORIZONS_MINUTES, build_calibration
+from app.analysis.collection import check_collection
+from app.analysis.dataset import build_dataset_report, milestone_gap
 from app.analysis.forward_returns import coverage as forward_coverage
 from app.analysis.research_report import build_research_report
 from app.analysis.score_distribution import build_score_distribution
@@ -455,6 +457,43 @@ async def api_pipeline(hours: float = 24.0, user: str = Depends(check_auth)):
             "stages": build_stage_funnel(db, window_hours=hours if hours > 0 else None).as_dict(),
             "health": [h.as_dict() for h in api_health.snapshot()],
             "scanner_blocked": scanner_blocked_reason(),
+        })
+    finally:
+        db.close()
+
+
+@router.get("/dataset")
+async def dataset(request: Request, user: str = Depends(check_auth)):
+    """How much usable data exists, across every source at once.
+
+    Separate from /research on purpose. That page asks whether the strategy
+    is any good; this one asks whether there is yet enough data to ask. Put
+    them together and the coverage numbers become a footnote under a
+    headline expectancy, which is the reading order this whole project
+    exists to avoid.
+    """
+    db = SessionLocal()
+    try:
+        report = build_dataset_report(db)
+        return templates.TemplateResponse(
+            request,
+            "dataset.html",
+            {"report": report, "gaps": milestone_gap(report),
+             "collection": check_collection(db)},
+        )
+    finally:
+        db.close()
+
+
+@router.get("/api/dataset")
+async def api_dataset(user: str = Depends(check_auth)):
+    db = SessionLocal()
+    try:
+        report = build_dataset_report(db)
+        return JSONResponse({
+            "dataset": report.as_dict(),
+            "gaps": milestone_gap(report),
+            "collection": check_collection(db).as_dict(),
         })
     finally:
         db.close()

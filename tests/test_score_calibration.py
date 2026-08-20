@@ -10,6 +10,7 @@ import pytest
 
 from app import models
 from app.analysis.calibration import (
+    MIN_ROWS_FOR_CORRELATION,
     ALL_BUCKETS,
     MIN_BUCKET_SAMPLE,
     bucket_label,
@@ -184,7 +185,14 @@ def test_a_useless_score_is_reported_as_useless(clean_db):
     assert "without improving trade quality" in verdict
 
 
-def test_a_non_monotonic_but_positive_gradient_is_called_weak(clean_db):
+def test_a_non_monotonic_but_positive_gradient_is_quantified(clean_db):
+    """`monotonic` answers yes/no; the interesting question is HOW badly.
+
+    Here the middle bucket beats the top one by 3 points across a 5-point
+    spread. That is the score ranking wrongly, not wobbling, and the
+    verdict says so with the magnitude and the boundary to look at rather
+    than with an adjective.
+    """
     for _ in range(MIN_BUCKET_SAMPLE):
         _forward(clean_db, 58.0, -2.0)
         _forward(clean_db, 68.0, 6.0)     # middle bucket out of order
@@ -193,7 +201,15 @@ def test_a_non_monotonic_but_positive_gradient_is_called_weak(clean_db):
 
     table = build_calibration(clean_db, horizon_minutes=60)
     assert table.monotonic is False
-    assert "weak ranking" in table.verdict()
+    assert table.calibration_error_pct == pytest.approx(3.0)
+    assert table.spread_pct == pytest.approx(5.0)
+    assert table.calibration_grade() == "FAIL"          # 3.0 > 25% of 5.0
+    assert table.worst_inversion == ("65-70", "80+", pytest.approx(3.0))
+
+    verdict = table.verdict()
+    assert "NOT monotonically" in verdict
+    assert "3.00 points of inversion" in verdict
+    assert "65-70 -> 80+" in verdict
 
 
 def test_thin_buckets_cannot_produce_a_verdict(clean_db):
@@ -411,3 +427,111 @@ def test_coverage_reports_how_complete_the_dataset_is(clean_db):
     assert stats["resolved"] == 1
     assert stats["pending"] == 1
     assert stats["coverage_pct"] == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# calibration error - a magnitude, not a yes/no
+# ---------------------------------------------------------------------------
+
+def test_a_perfectly_ordered_table_has_zero_calibration_error(clean_db):
+    for _ in range(MIN_BUCKET_SAMPLE):
+        _forward(clean_db, 58.0, -2.0)
+        _forward(clean_db, 68.0, 1.0)
+        _forward(clean_db, 82.0, 6.0)
+    clean_db.commit()
+
+    table = build_calibration(clean_db, horizon_minutes=60)
+    assert table.monotonic is True
+    assert table.calibration_error_pct == pytest.approx(0.0)
+    assert table.worst_inversion is None
+    assert table.calibration_grade() == "PASS"
+
+
+def test_a_small_wobble_on_a_wide_table_still_passes(clean_db):
+    """Graded against the table's own spread, not a fixed points count. A
+    tenth of a point of inversion across a thirty-point range is noise;
+    the same tenth across a half-point range is the whole signal."""
+    for _ in range(MIN_BUCKET_SAMPLE):
+        _forward(clean_db, 58.0, -10.0)
+        _forward(clean_db, 68.0, 5.2)
+        _forward(clean_db, 72.0, 5.0)     # backwards by 0.2 of a 30-point spread
+        _forward(clean_db, 82.0, 20.0)
+    clean_db.commit()
+
+    table = build_calibration(clean_db, horizon_minutes=60)
+    assert table.monotonic is False
+    assert table.calibration_error_pct == pytest.approx(0.2)
+    assert table.spread_pct == pytest.approx(30.0)
+    assert table.calibration_grade() == "PASS"
+
+
+def test_calibration_error_is_none_rather_than_zero_without_two_buckets(clean_db):
+    """Zero would read as "perfectly calibrated". One bucket is nothing to
+    compare, which is a different statement entirely."""
+    for _ in range(MIN_BUCKET_SAMPLE):
+        _forward(clean_db, 68.0, 4.0)
+    clean_db.commit()
+
+    table = build_calibration(clean_db, horizon_minutes=60)
+    assert table.calibration_error_pct is None
+    assert table.spread_pct is None
+    assert table.worst_inversion is None
+    assert table.calibration_grade() == "INSUFFICIENT_DATA"
+
+
+def test_thin_buckets_are_excluded_from_the_error(clean_db):
+    """A bucket below the sample floor is reported but never used to
+    justify a change - including the change of declaring the score
+    miscalibrated."""
+    for _ in range(MIN_BUCKET_SAMPLE):
+        _forward(clean_db, 58.0, -2.0)
+        _forward(clean_db, 82.0, 6.0)
+    for _ in range(3):
+        _forward(clean_db, 68.0, -50.0)          # wild, but only 3 samples
+    clean_db.commit()
+
+    table = build_calibration(clean_db, horizon_minutes=60)
+    assert table.calibration_error_pct == pytest.approx(0.0)
+    assert [b.bucket for b in table.ordered_buckets] == ["55-60", "80+"]
+
+
+def test_the_rank_correlation_is_row_level_and_ordered(clean_db):
+    """Bucket boundaries are an arbitrary choice, and four buckets give a
+    rank correlation almost no power. Correlating raw score against raw
+    return asks the same question without either handicap."""
+    for i in range(MIN_ROWS_FOR_CORRELATION + 10):
+        _forward(clean_db, 55.0 + i * 0.4, -5.0 + i * 0.3)
+    clean_db.commit()
+
+    table = build_calibration(clean_db, horizon_minutes=60)
+    assert table.correlation_rows == MIN_ROWS_FOR_CORRELATION + 10
+    assert table.rank_correlation == pytest.approx(1.0)
+
+
+def test_the_rank_correlation_is_withheld_below_the_row_floor(clean_db):
+    for i in range(10):
+        _forward(clean_db, 55.0 + i, -5.0 + i)
+    clean_db.commit()
+
+    table = build_calibration(clean_db, horizon_minutes=60)
+    assert table.rank_correlation is None
+    assert "needs" in table.verdict() or "INSUFFICIENT" in table.verdict()
+
+
+def test_a_constant_score_yields_no_correlation_rather_than_zero(clean_db):
+    """A correlation with a constant is undefined. Reporting zero would
+    read as "no relationship" when the truth is "no variation to relate"."""
+    for i in range(MIN_ROWS_FOR_CORRELATION + 5):
+        _forward(clean_db, 70.0, -5.0 + i * 0.5)
+    clean_db.commit()
+
+    assert build_calibration(clean_db, horizon_minutes=60).rank_correlation is None
+
+
+def test_ties_are_averaged_rather_than_ordered_arbitrarily(clean_db):
+    """Assigning tied values consecutive integers would invent an ordering
+    the data does not contain - and in a score with many repeats that is
+    most of the ordering."""
+    from app.analysis.calibration import _ranks
+
+    assert _ranks([3.0, 1.0, 1.0, 2.0]) == [4.0, 1.5, 1.5, 3.0]

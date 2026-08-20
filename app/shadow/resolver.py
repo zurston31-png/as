@@ -50,6 +50,7 @@ import datetime as dt
 import logging
 import math
 
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -151,6 +152,50 @@ def positions_awaiting_horizons(
         .filter(
             models.ShadowPosition.opened_at <= now - dt.timedelta(minutes=min(windows)),
             models.ShadowPosition.opened_at >= earliest_due - give_up,
+        )
+        .order_by(models.ShadowPosition.opened_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+
+def positions_with_sealed_horizons(
+    db: Session, *, now: dt.datetime, limit: int
+) -> list[models.ShadowPosition]:
+    """Positions whose horizons are permanently past and still unrecorded.
+
+    The hole this closes: `positions_awaiting_horizons` stops looking at a
+    position once its longest horizon is far enough in the past, so a
+    horizon that never found a quote simply stayed absent - and absence is
+    ambiguous. "Never came due", "came due and could not be measured" and
+    "nobody looked" are three different facts that all render as no row.
+
+    Selection is by a NOT-ALL-RECORDED count rather than a time window, so
+    a position drops out of this query the moment it is sealed and the
+    scan does not grow without bound as history accumulates.
+    """
+    windows = horizons()
+    if not windows:
+        return []
+    cutoff = (
+        now
+        - dt.timedelta(minutes=max(windows))
+        - dt.timedelta(hours=settings.SHADOW_UNMEASURABLE_AFTER_HOURS)
+    )
+    recorded = (
+        db.query(
+            models.ShadowHorizonReturn.position_id.label("position_id"),
+            func.count().label("n"),
+        )
+        .group_by(models.ShadowHorizonReturn.position_id)
+        .subquery()
+    )
+    return (
+        db.query(models.ShadowPosition)
+        .outerjoin(recorded, recorded.c.position_id == models.ShadowPosition.id)
+        .filter(
+            models.ShadowPosition.opened_at < cutoff,
+            or_(recorded.c.n.is_(None), recorded.c.n < len(windows)),
         )
         .order_by(models.ShadowPosition.opened_at.asc())
         .limit(limit)
@@ -333,6 +378,7 @@ async def resolve_once(
     summary = {
         "considered": 0, "closed": 0, "still_open": 0, "abandoned": 0,
         "no_candles": 0, "horizons_recorded": 0, "horizons_unmeasurable": 0,
+        "horizons_sealed": 0,
     }
     if not getattr(settings, "SHADOW_RESOLVER_ENABLED", True):
         return summary
@@ -350,6 +396,9 @@ async def resolve_once(
         if row.id is not None:
             work[row.id] = row
     if not work:
+        # Still seal: a backlog of permanently-unmeasurable horizons can
+        # outlive every position the measuring pass still cares about.
+        summary["horizons_sealed"] = _seal_horizons(db, now=now, limit=limit)
         return summary
     summary["considered"] = len(work)
 
@@ -442,7 +491,44 @@ async def resolve_once(
                 ):
                     summary["horizons_recorded"] += 1
 
+    summary["horizons_sealed"] = _seal_horizons(db, now=now, limit=limit)
     return summary
+
+
+def _seal_horizons(db: Session, *, now: dt.datetime, limit: int) -> int:
+    """Write an explicit unmeasurable row for every horizon nobody will fill.
+
+    Runs after the measuring pass, over positions the measuring pass has
+    permanently stopped looking at. No candle fetch: by construction these
+    horizons are past the give-up window, so the point is not to try once
+    more, it is to replace an ambiguous absence with a stated fact.
+
+    Without this, a gap in the table could mean the horizon never came
+    due, or that it came due and no quote existed, or that the resolver
+    was never running. Reading a dataset means knowing which.
+    """
+    sealed = 0
+    windows = horizons()
+    rows = positions_with_sealed_horizons(db, now=now, limit=limit)
+    already = _recorded_horizons(db, [r.id for r in rows])
+
+    for row in rows:
+        opened_at = _aware(row.opened_at)
+        for minutes in windows:
+            if (row.id, minutes) in already:
+                continue
+            due_at = opened_at + dt.timedelta(minutes=minutes)
+            if _record_horizon(
+                db, row, horizon_minutes=minutes, due_at=due_at, price=None,
+                failure_reason=(
+                    f"never measured: the {minutes}m mark passed "
+                    f"{(now - due_at).total_seconds() / 3600:.1f}h ago and is now beyond the "
+                    f"{settings.SHADOW_UNMEASURABLE_AFTER_HOURS:g}h give-up window - recorded "
+                    "as unmeasurable so its absence is not mistaken for a flat outcome"
+                ),
+            ):
+                sealed += 1
+    return sealed
 
 
 def coverage(db: Session) -> dict:

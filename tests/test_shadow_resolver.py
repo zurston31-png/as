@@ -432,3 +432,94 @@ async def test_the_resolver_falls_back_to_that_source_when_none_is_injected(db, 
 
     assert calls == [("solana", "ShadowMint1", Timeframe.M5)]
     assert position.exit_reason == "take-profit"
+
+
+# ---------------------------------------------------------------------------
+# sealing - absence is ambiguous, so it gets replaced with a stated fact
+# ---------------------------------------------------------------------------
+
+# A position that was stopped out early and whose feed then went quiet. The
+# measuring pass stops looking at it: it is closed, so the open-position
+# query skips it, and it is older than the longest horizon plus the give-up
+# window, so the horizon query skips it too. Its unmeasured horizons are
+# orphaned - which is exactly the ambiguity the seal exists to remove.
+STOPPED_OUT = [bar(0, 1.0, 1.02, 0.80, 0.82)]
+
+
+async def test_an_orphaned_horizon_is_sealed_with_a_stated_reason(db):
+    """A gap in the table could mean the horizon never came due, or that it
+    came due and no quote existed, or that the resolver was never running.
+    Reading a dataset means knowing which."""
+    position = make_position(db)
+    await resolver.resolve_once(
+        db, now=OPENED + dt.timedelta(minutes=30), fetch=feed(STOPPED_OUT)
+    )
+    db.commit()
+    assert position.exit_reason == "stop-loss"          # closed, so out of the working set
+    assert db.query(models.ShadowHorizonReturn).count() == 1   # only 15m came due
+
+    summary = await resolver.resolve_once(
+        db, now=OPENED + dt.timedelta(days=5), fetch=no_feed()
+    )
+    db.commit()
+
+    sealed = db.query(models.ShadowHorizonReturn).filter_by(horizon_minutes=60).one()
+    assert sealed.return_pct is None
+    assert sealed.price_at_horizon is None
+    assert "never measured" in sealed.failure_reason
+    assert summary["horizons_sealed"] == 1
+
+
+async def test_sealing_never_overwrites_a_measured_horizon(db):
+    """The seal is a last resort. A horizon that was measured keeps its
+    number forever - re-sealing it would destroy the observation."""
+    make_position(db)
+    await resolver.resolve_once(
+        db, now=OPENED + dt.timedelta(minutes=30), fetch=feed(STOPPED_OUT)
+    )
+    db.commit()
+    measured = db.query(models.ShadowHorizonReturn).filter_by(horizon_minutes=15).one()
+    before = (measured.return_pct, measured.price_at_horizon)
+    assert before[0] is not None
+
+    await resolver.resolve_once(db, now=OPENED + dt.timedelta(days=5), fetch=no_feed())
+    db.commit()
+    db.refresh(measured)
+    assert (measured.return_pct, measured.price_at_horizon) == before
+
+
+async def test_sealing_is_idempotent_and_stops_selecting_a_sealed_position(db):
+    """Selection is by unrecorded count, not by a time window, so a sealed
+    position leaves the query instead of being rescanned forever as history
+    grows."""
+    make_position(db)
+    await resolver.resolve_once(
+        db, now=OPENED + dt.timedelta(minutes=30), fetch=feed(STOPPED_OUT)
+    )
+    db.commit()
+
+    now = OPENED + dt.timedelta(days=5)
+    first = await resolver.resolve_once(db, now=now, fetch=no_feed())
+    db.commit()
+    second = await resolver.resolve_once(db, now=now, fetch=no_feed())
+    db.commit()
+
+    assert first["horizons_sealed"] == 1
+    assert second["horizons_sealed"] == 0
+    assert resolver.positions_with_sealed_horizons(db, now=now, limit=10) == []
+    assert db.query(models.ShadowHorizonReturn).count() == 2
+
+
+async def test_an_open_position_still_gets_its_unmeasurable_horizons_from_the_main_pass(db):
+    """The seal is the backstop, not the primary path. While a position is
+    still in the working set the measuring pass files its own unmeasurable
+    rows, and the two must not double-count."""
+    make_position(db)
+    summary = await resolver.resolve_once(
+        db, now=OPENED + dt.timedelta(days=5), fetch=no_feed()
+    )
+    db.commit()
+
+    assert summary["horizons_unmeasurable"] == 2
+    assert summary["horizons_sealed"] == 0
+    assert db.query(models.ShadowHorizonReturn).count() == 2

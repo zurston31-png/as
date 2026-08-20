@@ -13,6 +13,9 @@
     python scripts/research.py evidence                is there enough evidence yet?
     python scripts/research.py shadow                  champion vs challengers, paired
     python scripts/research.py integrity               observations that must not be counted
+    python scripts/research.py collection              is the paper run collecting cleanly?
+    python scripts/research.py counterfactual          what the filters rejected, and its worth
+    python scripts/research.py degradation             has recent behaviour drifted from baseline?
     python scripts/research.py diagnose                triage the recorded data
     python scripts/research.py changelog               what autopilot changed, and why
     python scripts/research.py replay                  thresholds on YOUR recorded history
@@ -123,6 +126,17 @@ def cmd_calibration(args) -> int:
         for horizon in HORIZONS_MINUTES:
             table = build_calibration(db, horizon_minutes=horizon)
             print(f" {horizon}m: {table.verdict()}")
+            error = table.calibration_error_pct
+            if error is not None:
+                rho = (
+                    f"{table.rank_correlation:+.3f}"
+                    if table.rank_correlation is not None else "n/a"
+                )
+                print(
+                    f"    calibration error {error:>6.2f} pts   spread "
+                    f"{table.spread_pct:>6.2f} pts   rank corr {rho:>7}   "
+                    f"[{table.calibration_grade()}]"
+                )
             usable = [b for b in table.buckets if b.sample_size]
             if usable:
                 print(f"    {'bucket':<10}{'n':>6}{'mean %':>10}{'median %':>10}"
@@ -410,6 +424,114 @@ def cmd_integrity(args) -> int:
     return 0
 
 
+def cmd_degradation(args) -> int:
+    from app.analysis.degradation import build_degradation
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" DEGRADATION - has recent behaviour moved away from the baseline?")
+        print(RULE)
+        report = build_degradation(db, recent_trades=args.recent)
+        print(f" version: {report.strategy_version}   trades: {report.total_trades}"
+              f"   baseline {report.baseline_n} / recent {report.recent_n}")
+        if report.shifts:
+            print()
+            for shift in report.shifts:
+                print(shift.render())
+        comparable = [g for g in report.groups if g.comparable]
+        if comparable:
+            print("\n BY CONDITION (directional - no significance test on a split this thin)")
+            for group in comparable:
+                delta = f"{group.delta:+.2f}" if group.delta is not None else "n/a"
+                print(f"  {group.axis:<12}{group.group:<20}"
+                      f"{group.baseline:>8.2f}% -> {group.recent:>8.2f}%  ({delta})"
+                      f"  n={group.baseline_n}/{group.recent_n}")
+        print(f"\n {report.verdict()}")
+        print(
+            "\n The baseline is this version's OWN earlier trades. A strategy that never\n"
+            " worked will not show as degrading - that question belongs to calibration.\n"
+            " Nothing here changes a threshold, halts trading, or loosens a filter."
+        )
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_counterfactual(args) -> int:
+    from app.analysis.counterfactual import MIN_COHORT, build_counterfactual
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" REJECTED-SIGNAL COUNTERFACTUAL - what the filters turned down")
+        print(RULE)
+        report = build_counterfactual(db, horizon_minutes=args.horizon)
+        print(f" horizon: {args.horizon}m   accepted cohort: {report.accepted.n}"
+              f"   unmatched: {report.unmatched}")
+        if report.invisible_stages:
+            print(
+                f"\n NOT MEASURABLE: {', '.join(report.invisible_stages)} run before "
+                "forward-return\n tracking begins, so their rejects have no recorded outcome. "
+                "Absent, not innocent."
+            )
+        print()
+        for gate in report.gates:
+            tag = " [SAFETY]" if gate.protected else ""
+            print(f" [{gate.grade():<17}] {gate.stage}{tag}")
+            print(f"   {gate.note()}")
+        print(f"\n {report.verdict()}")
+        print(
+            f"\n Cohorts below {MIN_COHORT} on either side are not compared. Nothing here "
+            "changes\n a filter: a result worth acting on becomes a challenger and earns its "
+            "way\n through the promotion gate on a paired sample."
+        )
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+    finally:
+        db.close()
+    return 0
+
+
+def cmd_collection(args) -> int:
+    from app.analysis.collection import TARGET_PAIRS, check_collection
+
+    db = SessionLocal()
+    try:
+        print(RULE)
+        print(" COLLECTION HEALTH - is the run producing usable observations?")
+        print(RULE)
+        report = check_collection(db)
+        for check in report.checks:
+            print(f"\n [{check.status:<17}] {check.name}")
+            print(f"   {check.detail}")
+            if check.counts:
+                print("   " + "  ".join(f"{k}={v}" for k, v in check.counts.items()))
+
+        print(f"\n{RULE}")
+        if report.paired:
+            print(" PAIRED SAMPLE PROGRESS")
+            for name, n in sorted(report.paired.items()):
+                bar = "#" * int(min(n / TARGET_PAIRS, 1.0) * 40)
+                print(f"   {name:<16} {n:>5} / {TARGET_PAIRS}  |{bar:<40}|")
+        print(f"\n {report.verdict()}")
+        print(
+            "\n This checks whether the DATA is usable. It says nothing about whether any\n"
+            " strategy is good - that question needs the promotion gate, and the gate needs\n"
+            " the sample above to be full first."
+        )
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+        # A failed check means the observations being written right now are
+        # not trustworthy, which is worth a non-zero exit so a cron job or a
+        # CI step notices instead of scrolling past.
+        return 1 if report.failures else 0
+    finally:
+        db.close()
+
+
 def cmd_diagnose(args) -> int:
     from app.autopilot.diagnose import diagnose
 
@@ -645,6 +767,20 @@ def main() -> int:
     p = sub.add_parser("integrity", help="observations that must not be counted")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_integrity)
+
+    p = sub.add_parser("degradation", help="has recent behaviour moved away from the baseline?")
+    p.add_argument("--recent", type=int, default=30, help="trades in the recent window")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_degradation)
+
+    p = sub.add_parser("counterfactual", help="did the filters reject the better opportunities?")
+    p.add_argument("--horizon", type=int, default=60)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_counterfactual)
+
+    p = sub.add_parser("collection", help="is the paper run producing usable observations?")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_collection)
 
     p = sub.add_parser("diagnose", help="problems visible in the recorded data")
     p.add_argument("--json", action="store_true")

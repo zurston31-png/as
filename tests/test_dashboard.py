@@ -541,3 +541,43 @@ def test_replay_rejects_a_malformed_threshold_list():
 def test_the_new_endpoints_require_auth():
     for path in ("/api/postmortems", "/api/replay"):
         assert client.get(path).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /dataset - coverage before conclusions
+# ---------------------------------------------------------------------------
+
+def test_the_dataset_page_renders_on_an_empty_database():
+    """Every analytics page has to survive the state it spends its first
+    week in. A dataset view that only works once there is data is useless
+    exactly when it is most needed."""
+    resp = client.get("/dataset", auth=AUTH)
+    assert resp.status_code == 200
+    assert "Dataset" in resp.text
+    assert "Coverage by source" in resp.text
+
+
+def test_the_dataset_page_requires_auth():
+    assert client.get("/dataset").status_code == 401
+    assert client.get("/api/dataset").status_code == 401
+
+
+def test_the_dataset_api_reports_coverage_and_the_gap():
+    body = client.get("/api/dataset", auth=AUTH).json()
+    assert set(body) == {"dataset", "gaps", "collection"}
+    names = {s["name"] for s in body["dataset"]["sources"]}
+    assert {"forward returns", "shadow positions", "shadow horizons",
+            "shadow decisions"} <= names
+    # With no data the milestone gap must be stated, not implied by silence.
+    assert "paired" in body["gaps"]
+
+
+def test_the_dataset_page_shows_no_return_figures():
+    """Coverage first, conclusions after. A screen that puts expectancy
+    next to sample size invites reading the second before the first is
+    adequate - which is the reading order this project exists to avoid."""
+    import pathlib
+
+    template = pathlib.Path("app/dashboard/templates/dataset.html").read_text()
+    for forbidden in ("expectancy", "win_rate", "pnl", "return_pct"):
+        assert forbidden not in template
