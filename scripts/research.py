@@ -459,16 +459,63 @@ def cmd_preflight(args) -> int:
 def cmd_resolve(args) -> int:
     import asyncio
 
-    from app.analysis.resolve_symbol import (
-        MIN_CREDIBLE_LIQUIDITY_USD, resolve_many,
-    )
+    from app.analysis.resolve_symbol import describe_address, resolve_many
     from app.config import settings
+
+    chain = None if args.any_chain else (args.chain or settings.CHAIN)
+
+    def _show(res, *, address_mode=False):
+        print(f" {res.symbol}  [{res.verdict()}]")
+        if res.error:
+            print(f"        could not reach the listing source: {res.error}")
+            print()
+            return
+        if not res.candidates:
+            if address_mode:
+                print(
+                    f"        no pool on {chain or 'any chain'} holds this mint. Either it is not\n"
+                    f"        traded on a DEX, or the address is not a token."
+                )
+            else:
+                print(
+                    f"        nothing on {chain or 'any chain'} lists this symbol. If the chart is a\n"
+                    f"        CEX or index symbol it has no mint, and this bot cannot trade it."
+                )
+            print()
+            return
+
+        for c in res.candidates:
+            marker = "->" if c is res.best and res.unambiguous else "  "
+            turnover = "" if c.turnover is None else f" · turnover {c.turnover:.4f}"
+            print(f"   {marker} {c.token_address}")
+            print(
+                f"        {c.chain:<10} {(c.name or '?')[:30]:<30} "
+                f"liq ${c.liquidity_usd or 0:,.0f} · vol24h ${c.volume_24h_usd or 0:,.0f} "
+                f"· {c.pair_count} pair(s){turnover}"
+            )
+            if not c.live:
+                print(f"        REJECTED: {c.why_not_live()}")
+
+        if len(res.live_candidates) > 1 and not res.unambiguous:
+            print(
+                "        More than one genuinely traded claimant. Do NOT pick by size -\n"
+                "        open each on its listing page and match it to your chart."
+            )
+        print()
+
+    if args.address:
+        print(RULE)
+        print(" RESOLVE - what is this mint?")
+        print(RULE)
+        print(f"   chain          {chain or 'any'}")
+        print(f"   address        {args.address}\n")
+        res = asyncio.run(describe_address(args.address, chain))
+        _show(res, address_mode=True)
+        return 0 if res.candidates else 1
 
     symbols = [s.strip() for s in ",".join(args.symbols).split(",") if s.strip()]
     if not symbols:
         symbols = [s.strip() for s in settings.SYMBOLS_WATCHLIST.split(",") if s.strip()]
-
-    chain = None if args.any_chain else (args.chain or settings.CHAIN)
 
     print(RULE)
     print(" RESOLVE - which mint does each chart symbol actually mean?")
@@ -477,48 +524,23 @@ def cmd_resolve(args) -> int:
     print(f"   symbols        {', '.join(symbols)}")
     print(
         "\n   A symbol is a label, not an identity - anyone can mint a token called\n"
-        "   BONK, and copycats do it on purpose. Paste the address into the Pine\n"
-        "   script's Token/Contract Address input, one chart at a time.\n"
+        "   BONK, and copycats do it on purpose. Ranked by traded volume, NOT by\n"
+        "   reported liquidity: a pool can claim any figure it likes, and the\n"
+        "   copycats claim enormous ones. Volume is what somebody actually did.\n"
     )
 
     results = asyncio.run(resolve_many(symbols, chain))
-
     for res in results:
-        print(f" {res.symbol}  [{res.verdict()}]")
-        if res.error:
-            print(f"        could not reach the listing source: {res.error}")
-            print()
-            continue
-        if not res.candidates:
-            print(
-                f"        nothing on {chain or 'any chain'} lists this symbol. If the chart is a\n"
-                f"        CEX or index symbol it has no mint, and this bot cannot trade it."
-            )
-            print()
-            continue
-        for rank, c in enumerate(res.candidates):
-            marker = "->" if rank == 0 and res.unambiguous else "  "
-            thin = "" if c.credible else "   <- below the credible-liquidity floor"
-            print(f"   {marker} {c.token_address}{thin}")
-            print(
-                f"        {c.chain:<10} {(c.name or '?')[:34]:<34} "
-                f"liq ${c.liquidity_usd or 0:,.0f} · vol24h ${c.volume_24h_usd or 0:,.0f} "
-                f"· {c.pair_count} pair(s)"
-            )
-        if not res.unambiguous and res.candidates[0].credible:
-            print(
-                "        Two or more credible claimants. Do NOT pick by size - check the\n"
-                "        one your chart actually tracks on the token's own listing page."
-            )
-        print()
+        _show(res)
 
     resolved = [r for r in results if r.unambiguous]
     print(RULE)
-    print(f" {len(resolved)} of {len(results)} symbol(s) resolved to a single credible mint.")
+    print(f" {len(resolved)} of {len(results)} symbol(s) resolved to a single traded mint.")
     if len(resolved) < len(results):
         print(
-            f" The rest need a human. A mint below ${MIN_CREDIBLE_LIQUIDITY_USD:,.0f} of liquidity or\n"
-            " sharing its symbol with a rival is exactly the case where guessing costs money."
+            " The rest need a human. If you already have an address in hand, confirm it\n"
+            " directly - that does not depend on the search returning the right token:\n"
+            "     python scripts/research.py resolve --address <mint>"
         )
     if args.json:
         print(json.dumps([r.as_dict() for r in results], indent=2))
@@ -878,6 +900,9 @@ def main() -> int:
     p.add_argument(
         "symbols", nargs="*",
         help="symbols to resolve; defaults to SYMBOLS_WATCHLIST from .env",
+    )
+    p.add_argument(
+        "--address", help="ask what one specific mint is, instead of searching by symbol",
     )
     p.add_argument("--chain", help="restrict to one chain (default: CHAIN from .env)")
     p.add_argument(
