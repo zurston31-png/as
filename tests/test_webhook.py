@@ -644,3 +644,54 @@ def test_the_secret_is_never_written_to_the_log(caplog, _roomy_risk_limits):
     assert caplog.text, "the webhook must log what it received"
     assert settings.WEBHOOK_SECRET not in caplog.text
     assert "LOGCOIN" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# 401: the two causes need opposite fixes
+# ---------------------------------------------------------------------------
+
+def test_an_unconfigured_server_secret_says_so_rather_than_blaming_tradingview(monkeypatch):
+    """The Pine script's default Webhook Secret input is the SAME
+    placeholder the server ships. A deployer who has set neither end sends
+    a value that matches exactly and is still refused, because
+    verify_webhook_secret refuses the placeholder outright.
+
+    "invalid webhook secret" then points at the TradingView side, which is
+    the half that is already consistent. The message has to name the .env.
+    """
+    from app.security import PLACEHOLDER_SECRET
+
+    monkeypatch.setattr(settings, "WEBHOOK_SECRET", PLACEHOLDER_SECRET)
+    resp = client.post(settings.WEBHOOK_PATH, json=_payload("PLACEHOLDERCOIN", "buy",
+                                                            secret=PLACEHOLDER_SECRET))
+    assert resp.status_code == 401
+    detail = resp.json()["detail"]
+    assert "WEBHOOK_SECRET in .env" in detail
+    assert "no matter what it sends" in detail
+
+
+def test_an_empty_server_secret_is_treated_the_same_as_the_placeholder(monkeypatch):
+    monkeypatch.setattr(settings, "WEBHOOK_SECRET", "")
+    resp = client.post(settings.WEBHOOK_PATH, json=_payload("EMPTYCOIN", "buy", secret="anything"))
+    assert resp.status_code == 401
+    assert "no webhook secret configured" in resp.json()["detail"]
+
+
+def test_a_genuine_mismatch_points_at_the_pine_input():
+    """The other direction: the server IS configured, so the fix is on the
+    chart - and the message must not send the user to edit .env."""
+    resp = client.post(settings.WEBHOOK_PATH, json=_payload("MISMATCHCOIN", "buy",
+                                                            secret="not-the-real-secret"))
+    assert resp.status_code == 401
+    detail = resp.json()["detail"]
+    assert "does not match" in detail
+    assert "recreate the alert" in detail
+    assert "WEBHOOK_SECRET in .env is unset" not in detail
+
+
+def test_the_secret_value_is_never_returned_in_a_401_body():
+    """Whichever branch fires, the body goes back to TradingView and into
+    its alert log. Neither message may carry the secret itself."""
+    resp = client.post(settings.WEBHOOK_PATH, json=_payload("LEAKCOIN", "buy", secret="wrong"))
+    assert settings.WEBHOOK_SECRET not in resp.text
+    assert "wrong" not in resp.text

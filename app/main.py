@@ -27,7 +27,7 @@ from app.early import loop as early_loop
 from app.monitor import forward_return_worker, position_monitor, shadow_resolver_worker
 from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
-from app.security import verify_webhook_secret
+from app.security import secret_is_configured, verify_webhook_secret
 from app.services import api_health
 from app.startup_checks import log_config_coherence
 from app.strategy.version import register_current_version
@@ -261,11 +261,27 @@ async def tradingview_webhook(request: Request):
         return JSONResponse(status_code=422, content={"detail": problems})
 
     if not verify_webhook_secret(alert.secret):
+        # Say which of the two failures this is. They need opposite fixes,
+        # and the placeholder case is the one where TradingView is already
+        # correct - see app/security.py::secret_is_configured.
+        if not secret_is_configured():
+            detail = (
+                "the server has no webhook secret configured - WEBHOOK_SECRET in .env is unset "
+                "or still the placeholder, so every alert is refused no matter what it sends. "
+                "Set it to a long random string, restart the bot, and put the same value in the "
+                "Pine script's Webhook Secret input"
+            )
+        else:
+            detail = (
+                "webhook secret does not match the one in the server's .env - check the Pine "
+                "script's Webhook Secret input, and recreate the alert if you edited it after "
+                "the alert was created"
+            )
         logger.warning(
-            "webhook -> 401 invalid secret for %s (secret %s)",
-            alert.symbol, webhook_debug.secret_presence(payload),
+            "webhook -> 401 for %s: %s (secret as received: %s)",
+            alert.symbol, detail, webhook_debug.secret_presence(payload),
         )
-        return JSONResponse(status_code=401, content={"detail": "invalid webhook secret"})
+        return JSONResponse(status_code=401, content={"detail": detail})
 
     db = SessionLocal()
     try:
