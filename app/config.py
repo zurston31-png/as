@@ -180,10 +180,17 @@ class Settings(BaseSettings):
     # record what they WOULD have done. They cannot open, close or size a
     # real paper position - separate tables, no execution client.
     SHADOW_ENABLED: bool = True
-    # JSON list of parameter overrides. Empty means champion-only
-    # recording, which is still the baseline every comparison needs.
-    # e.g. [{"strategy_id": "tighter", "min_score_to_enter": 72}]
-    SHADOW_CHALLENGERS: str = ""
+    # JSON list of parameter overrides. The shipped pair brackets the
+    # champion's entry threshold and changes NOTHING else, so the answer
+    # to "did the challenger do better" is an answer about the threshold
+    # rather than about twenty parameters that all moved at once. Weight
+    # experiments come after this one concludes, one factor at a time.
+    SHADOW_CHALLENGERS: str = (
+        '[{"strategy_id": "strict-70", "min_score_to_enter": 70,'
+        ' "description": "entry threshold +5 vs champion; nothing else changed"},'
+        ' {"strategy_id": "loose-60", "min_score_to_enter": 60,'
+        ' "description": "entry threshold -5 vs champion; nothing else changed"}]'
+    )
     # Notional used for hypothetical fills. Fixed rather than taken from
     # the risk manager, because sizing depends on live exposure and a
     # challenger must never read - let alone move - that state.

@@ -4,6 +4,11 @@ Two properties carry the whole feature: the label must be deterministic (or
 it identifies a process, not a strategy), and it must change on behavioural
 settings only (or history fragments on a log-level change and analytics
 loses power for nothing).
+
+A third, added later: the constants that live in CODE - the scoring weights
+and the regime boundaries - have to count too. They change every score and
+every regime label, and a settings-only hash would leave two different
+strategies sharing one version with nothing to say so.
 """
 from app import models
 from app.config import settings
@@ -100,3 +105,34 @@ def test_a_changed_strategy_gets_its_own_row(db_session, monkeypatch):
 
     assert changed.id != original.id
     assert changed.label != original.label
+
+
+def test_editing_a_scoring_weight_mints_a_new_version(monkeypatch):
+    """The silent-mixing hole this closes: weights live in code, so before
+    this a weight edit changed every score while the settings-only hash
+    stayed put, and history pooled two different strategies under one
+    label with nothing to say so."""
+    from app.signals import scoring
+
+    before = compute_label(current_config())
+    monkeypatch.setitem(scoring.DEFAULT_WEIGHTS, "rsi", 0.25)
+    assert compute_label(current_config()) != before
+
+
+def test_moving_a_regime_boundary_mints_a_new_version(monkeypatch):
+    """The regime label is the grouping the promotion gate's consistency
+    bar reads. Redrawing the boundary relabels past observations without
+    re-measuring them, so it has to be a different version."""
+    from app.signals import market_regime
+
+    before = compute_label(current_config())
+    monkeypatch.setattr(market_regime, "DEEP_LIQUIDITY_USD", 400_000.0)
+    assert compute_label(current_config()) != before
+
+
+def test_the_shadow_measurement_settings_are_versioned():
+    """Not entry logic, but a change to any of them changes the recorded
+    outcome for identical trading - a coarser candle hides a stop breach,
+    a different horizon set answers a different question."""
+    for name in ("SHADOW_RESOLUTION_TIMEFRAME", "SHADOW_HORIZONS_MINUTES", "SHADOW_POSITION_USD"):
+        assert name in BEHAVIORAL_SETTINGS

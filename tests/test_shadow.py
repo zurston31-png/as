@@ -482,3 +482,44 @@ def test_an_unresolved_entry_stays_out_of_both_series(db):
     assert result.champion_returns == []
     assert result.champion_trade_returns == []
     assert result.unresolved == 2
+
+
+# ---------------------------------------------------------------------------
+# the shipped experiment - one hypothesis per challenger
+# ---------------------------------------------------------------------------
+
+def test_the_shipped_challengers_change_exactly_one_thing_each():
+    """A challenger that moved ten weights at once can be measured but not
+    interpreted: "this version happened to perform better" is not a finding.
+    The shipped pair brackets the champion's entry threshold and changes
+    nothing else, so the collection run can answer "did the threshold cause
+    this" rather than shrugging at twenty simultaneous edits.
+
+    A future experiment that varies a weight instead is fine - what this
+    guards is varying several dimensions in one arm.
+    """
+    from app.config import settings as live_settings
+    from app.shadow.challengers import enabled as shipped
+
+    challengers = shipped()
+    assert len(challengers) == 2, "two arms: one stricter, one looser"
+
+    for challenger in challengers:
+        varied = [
+            name for name, changed in (
+                ("weights", bool(challenger.weight_overrides)),
+                ("threshold", challenger.min_score_to_enter is not None),
+                ("stop_loss", challenger.stop_loss_pct is not None),
+                ("take_profit", challenger.take_profit_pct is not None),
+            ) if changed
+        ]
+        assert varied == ["threshold"], (
+            f"{challenger.strategy_id} varies {varied}; one arm must vary one dimension"
+        )
+
+    thresholds = sorted(c.threshold() for c in challengers)
+    champion = live_settings.MIN_SIGNAL_SCORE_TO_ENTER
+    assert thresholds[0] < champion < thresholds[1], (
+        "the pair must bracket the champion - two challengers on the same side "
+        "of it measure the same direction twice"
+    )

@@ -19,6 +19,16 @@ noisy:
   DETERMINISTIC. The same configuration always produces the same label,
   across restarts and machines, so a version genuinely identifies a
   strategy rather than a process lifetime.
+
+CODE IS PART OF THE CONFIGURATION
+
+Some things that decide trades are not settings at all. The scoring weight
+map and the regime boundaries live in code, and an edit to either changes
+every score and every regime label while leaving a settings-only hash
+untouched - so history would pool observations from two different
+strategies under one version and nothing would say so. Those constants are
+therefore digested into the label alongside the settings. Editing a weight
+mints a new version, which is the whole point.
 """
 from __future__ import annotations
 
@@ -90,15 +100,48 @@ BEHAVIORAL_SETTINGS = (
     "PAPER_SPREAD_PCT",
     "PAPER_ALLOW_FAILED_FILLS",
     "SLIPPAGE_BPS",
+    # how a shadow observation is measured. Not entry logic, but a change
+    # to any of these changes the recorded outcome for identical trading:
+    # a coarser candle hides a stop breach, a different horizon set
+    # answers a different question, and a different notional moves the
+    # modeled price impact and therefore the fill.
+    "SHADOW_POSITION_USD",
+    "SHADOW_RESOLUTION_TIMEFRAME",
+    "SHADOW_HORIZONS_MINUTES",
 )
+
+
+def _code_constants() -> dict:
+    """Behavioral constants that live in code rather than in settings.
+
+    Imported lazily: app.signals imports settings, and pulling it in at
+    module scope here would close an import cycle.
+    """
+    from app.signals.market_regime import (
+        DEEP_LIQUIDITY_USD, HIGH_VOLATILITY_ATR, LOW_VOLATILITY_ATR,
+        THIN_LIQUIDITY_USD, TREND_SEPARATION,
+    )
+    from app.signals.scoring import DEFAULT_WEIGHTS
+
+    return {
+        "scoring_weights": dict(sorted(DEFAULT_WEIGHTS.items())),
+        "regime_trend_separation": TREND_SEPARATION,
+        "regime_high_volatility_atr": HIGH_VOLATILITY_ATR,
+        "regime_low_volatility_atr": LOW_VOLATILITY_ATR,
+        "liquidity_thin_usd": THIN_LIQUIDITY_USD,
+        "liquidity_deep_usd": DEEP_LIQUIDITY_USD,
+    }
+
 
 _cached_label: str | None = None
 _cached_config: dict | None = None
 
 
 def current_config() -> dict:
-    """The behavioral settings, as a plain sorted dict."""
-    return {name: getattr(settings, name, None) for name in sorted(BEHAVIORAL_SETTINGS)}
+    """The behavioral settings and constants, as a plain sorted dict."""
+    config = {name: getattr(settings, name, None) for name in sorted(BEHAVIORAL_SETTINGS)}
+    config.update(_code_constants())
+    return config
 
 
 def compute_label(config: dict | None = None) -> str:
