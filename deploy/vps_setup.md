@@ -39,6 +39,20 @@ cd memecoin-bot
 cp .env.example .env
 nano .env   # set WEBHOOK_SECRET, risk limits, notification tokens, etc.
 
+# Point the database and backups at a host path OUTSIDE this clone, so a
+# redeploy - unpacking a new version into a fresh directory - does not
+# start a new history. The compose file below expects exactly this path.
+mkdir -p /data
+# in .env, set:
+#   DATABASE_URL=sqlite:////data/memecoin_bot.db   (four slashes)
+#   BACKUP_DIR=/data/backups
+#   BACKUP_DIR_IS_PERSISTENT=true
+# docker-compose.yml's volumes entry (`/data:/data`) must match whatever
+# absolute path you choose here - it is not ./data relative to this clone,
+# on purpose. Getting the two out of sync is silent: the container starts
+# fine and just writes to a location that disappears with it, so a trade
+# recorded one run is gone on the next `docker compose up`.
+
 docker compose up -d --build
 docker compose logs -f bot   # confirm it started in PAPER mode
 curl http://localhost:8000/health
