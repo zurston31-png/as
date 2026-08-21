@@ -17,6 +17,7 @@ from app.analysis.calibration import HORIZONS_MINUTES, build_calibration
 from app.analysis.collection import check_collection
 from app.analysis.dataset import build_dataset_report, milestone_gap
 from app.analysis.forward_returns import coverage as forward_coverage
+from app.analysis.rejections import NEAR_MISS_POINTS, build_rejection_report
 from app.analysis.research_report import build_research_report
 from app.analysis.score_distribution import build_score_distribution
 from app.analysis.stage_funnel import build_stage_funnel
@@ -427,6 +428,46 @@ async def pipeline(request: Request, hours: float = 24.0, user: str = Depends(ch
                 "hours": hours,
                 "scanner_blocked": scanner_blocked_reason(),
             },
+        )
+    finally:
+        db.close()
+
+
+@router.get("/rejections")
+async def rejections(request: Request, hours: float = 24.0, user: str = Depends(check_auth)):
+    """Where candidates are lost, attributed per mint rather than per event.
+
+    Separate from /pipeline on purpose. That page answers "is the scanner
+    running?" and counts evaluations; this one answers "which gate is
+    costing me candidates?" and counts distinct mints, because one token
+    re-evaluated forty times would otherwise dominate a table it should
+    appear in once.
+    """
+    db = SessionLocal()
+    try:
+        report = build_rejection_report(db, window_hours=hours if hours > 0 else None)
+        return templates.TemplateResponse(
+            request,
+            "rejections.html",
+            {
+                "r": report.as_dict() | {
+                    "has_data": report.has_data,
+                    "stages": [s.as_dict() for s in report.stages],
+                },
+                "hours": int(hours),
+                "near_miss_points": int(NEAR_MISS_POINTS),
+            },
+        )
+    finally:
+        db.close()
+
+
+@router.get("/api/rejections")
+async def api_rejections(hours: float = 24.0, user: str = Depends(check_auth)):
+    db = SessionLocal()
+    try:
+        return JSONResponse(
+            build_rejection_report(db, window_hours=hours if hours > 0 else None).as_dict()
         )
     finally:
         db.close()

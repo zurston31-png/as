@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Rejection Analytics — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  h3 { font-size: 13px; margin: 18px 0 8px; font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  .muted { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stage-row { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .stage-row .name { width: 160px; font-size: 12px; font-weight: 600; letter-spacing: .04em; flex-shrink: 0; }
+  .bar-wrap { flex: 1; background: rgba(255,255,255,.04); border-radius: 5px; height: 26px; position: relative; overflow: hidden; }
+  .bar { height: 100%; background: linear-gradient(90deg, rgba(255,92,122,.5), rgba(255,92,122,.22)); border-radius: 5px; min-width: 2px; }
+  .bar-label { position: absolute; left: 10px; top: 0; line-height: 26px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+  .warn { background: rgba(245,195,68,.08); border: 1px solid rgba(245,195,68,.35); border-radius: 8px; padding: 10px 14px; font-size: 13px; line-height: 1.5; margin-bottom: 18px; }
+  .empty { padding: 26px 10px; color: var(--muted); font-size: 13px; text-align: center; line-height: 1.6; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+  .pill.hot { background: rgba(245,195,68,.16); color: var(--amber); }
+  .pill.quiet { background: rgba(139,147,167,.15); color: var(--muted); }
+  .windows a { margin-right: 10px; }
+  .windows a.active { font-weight: 700; text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚧 Rejection Analytics</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/pipeline">Pipeline</a>
+    &nbsp;&nbsp;<a class="navlink" href="/research">Research</a>
+    &nbsp;&nbsp;<a class="navlink" href="/dataset">Dataset</a>
+  </div>
+</header>
+<main>
+
+  <div class="card">
+    <h2>Window</h2>
+    <div class="windows">
+      {% for h, label in [(6, '6h'), (24, '24h'), (72, '3d'), (168, '7d'), (0, 'all time')] %}
+        <a class="navlink {% if hours == h %}active{% endif %}" href="/rejections?hours={{ h }}">{{ label }}</a>
+      {% endfor %}
+    </div>
+    <div class="note">
+      Every figure on this page is counted from recorded pipeline events. Nothing here is
+      modelled, estimated or back-filled &mdash; a stage with no rows had no events recorded,
+      which is not the same as having rejected nobody.
+    </div>
+  </div>
+
+  {% if not r.has_data %}
+    <div class="card">
+      <div class="empty">
+        {{ r.note or "No pipeline events in this window." }}<br>
+        Widen the window, or check the scanner on the <a class="navlink" href="/pipeline">pipeline page</a>.
+      </div>
+    </div>
+  {% else %}
+
+  <div class="card">
+    <h2>Where candidates stop</h2>
+    <p class="note" style="margin-top:0">
+      One row per <strong>distinct mint</strong>, counted at the deepest stage it ever reached.
+      A token re-evaluated forty times and rejected forty times counts once here &mdash; which is
+      why these numbers are smaller than the event counts on the pipeline page, and why they are
+      the ones to reason about.
+    </p>
+    {% set worst = r.terminal_stage_counts.values() | list | max if r.terminal_stage_counts else 0 %}
+    {% for stage in r.stages %}
+      {% set stopped = r.terminal_stage_counts.get(stage.stage, 0) %}
+      <div class="stage-row">
+        <div class="name">{{ stage.stage }}</div>
+        <div class="bar-wrap">
+          <div class="bar" style="width: {{ (100 * stopped / worst) if worst else 0 }}%"></div>
+          <div class="bar-label">
+            {{ stopped }} mint{{ '' if stopped == 1 else 's' }} stopped here
+            {%- if stage.stop_rate_pct is not none %}
+              <span class="muted">&nbsp;&middot;&nbsp;{{ stage.stop_rate_pct }}% of {{ stage.mints_reaching }} that reached it</span>
+            {%- elif stage.mints_reaching %}
+              <span class="muted">&nbsp;&middot;&nbsp;{{ stage.mints_reaching }} reached it (too few for a rate)</span>
+            {%- endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+    <div class="note">
+      {{ r.mints_seen }} distinct mint{{ '' if r.mints_seen == 1 else 's' }} seen;
+      {{ r.mints_reaching_a_position }} reached a position.
+      {% if r.note %}<br>{{ r.note }}{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Why, by stage</h2>
+    <p class="note" style="margin-top:0">
+      <strong>Mints</strong> is how many distinct tokens a reason stopped. <strong>Events</strong>
+      is how many times it fired. When events greatly exceed mints, one token is being
+      re-evaluated rather than many tokens failing &mdash; the &ldquo;per mint&rdquo; column makes
+      that visible instead of letting it inflate the ranking.
+    </p>
+    {% for stage in r.stages %}
+      {% if stage.reasons %}
+        <h3>{{ stage.stage }}
+          <span class="muted" style="font-weight:400">
+            &mdash; {{ stage.events_failed }} failed of {{ stage.events }} evaluation{{ '' if stage.events == 1 else 's' }}
+          </span>
+        </h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Reason</th>
+              <th class="num">Mints</th>
+              <th class="num">Events</th>
+              <th class="num">Per mint</th>
+              <th>Example</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for reason in stage.reasons[:12] %}
+            <tr>
+              <td>{{ reason.reason }}</td>
+              <td class="num">{{ reason.mints }}</td>
+              <td class="num">{{ reason.events }}</td>
+              <td class="num">
+                {%- if reason.repeats_per_mint is not none -%}
+                  {% if reason.repeats_per_mint >= 3 %}<span class="pill hot">{{ reason.repeats_per_mint }}&times;</span>
+                  {% else %}{{ reason.repeats_per_mint }}{% endif %}
+                {%- else -%}<span class="muted">&mdash;</span>{%- endif -%}
+              </td>
+              <td class="muted">{{ reason.example_symbol or '—' }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {% set scored = r.stages | selectattr('scored_rejections') | list %}
+  {% if scored %}
+  <div class="card">
+    <h2>Near misses</h2>
+    <p class="note" style="margin-top:0">
+      Rejections within {{ near_miss_points }} points of the configured threshold. A gate that
+      rejects candidates far below its line is discriminating; one whose rejections cluster
+      against the line is closer to a coin flip. This is an observation about the score
+      distribution, <strong>not</strong> a reason to move a threshold &mdash; whether the rejected
+      tokens would have made money is a forward-return question, and it is answered on the
+      <a class="navlink" href="/research">research page</a>, not here.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Stage</th>
+          <th class="num">Scored rejections</th>
+          <th class="num">Within {{ near_miss_points }} pts</th>
+          <th class="num">Share</th>
+          <th class="num">Median rejected score</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for stage in scored %}
+        <tr>
+          <td>{{ stage.stage }}</td>
+          <td class="num">{{ stage.scored_rejections }}</td>
+          <td class="num">{{ stage.near_misses }}</td>
+          <td class="num">
+            {%- if stage.near_miss_share_pct is not none %}{{ stage.near_miss_share_pct }}%{% else %}<span class="muted">&mdash;</span>{% endif -%}
+          </td>
+          <td class="num">
+            {%- if stage.median_rejected_score is not none %}{{ '%.1f' | format(stage.median_rejected_score) }}{% else %}<span class="muted">&mdash;</span>{% endif -%}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>How to read this</h2>
+    <div class="note">
+      <p style="margin-top:0">
+        The stage that stops the most candidates is nearly always the earliest one, because it is
+        the only stage that runs on everything. That is arithmetic, not evidence that it is set
+        too strictly.
+      </p>
+      <p>
+        This page answers <em>where</em> candidates are lost. It cannot answer whether losing them
+        was right &mdash; that needs the forward returns of the tokens each filter rejected,
+        compared against the ones it passed, which is what
+        <code>app/analysis/filter_quality.py</code> measures and the research page reports once
+        enough outcomes have been collected.
+      </p>
+    </div>
+  </div>
+
+  {% endif %}
+</main>
+</body>
+</html>
