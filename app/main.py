@@ -287,12 +287,25 @@ async def tradingview_webhook(request: Request):
 
     db = SessionLocal()
     try:
-        signal = await handle_alert(db, alert)
+        outcome = await handle_alert(db, alert)
         db.commit()
+        if outcome.duplicate:
+            # 200, not an error: the sender did nothing wrong, and a retry
+            # that gets a 4xx looks to TradingView like a delivery to fix
+            # rather than one already honoured. Saying "duplicate" makes
+            # the alert log readable when someone is chasing a double fill.
+            logger.info(
+                "webhook -> 200 duplicate %s %s already processed as signal_id=%s",
+                alert.signal, alert.symbol, outcome.signal.id,
+            )
+            return JSONResponse(
+                {"status": "duplicate", "signal_id": outcome.signal.id}
+            )
         logger.info(
-            "webhook -> 200 accepted %s %s signal_id=%s", alert.signal, alert.symbol, signal.id,
+            "webhook -> 200 accepted %s %s signal_id=%s",
+            alert.signal, alert.symbol, outcome.signal.id,
         )
-        return JSONResponse({"status": "accepted", "signal_id": signal.id})
+        return JSONResponse({"status": "accepted", "signal_id": outcome.signal.id})
     except Exception:
         db.rollback()
         logger.exception("webhook -> 500 failed to process alert for %s", alert.symbol)

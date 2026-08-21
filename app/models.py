@@ -9,7 +9,7 @@ import datetime as dt
 import enum
 
 from sqlalchemy import (
-    JSON, Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint,
+    JSON, Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,7 +47,22 @@ class Signal(Base):
 
     __tablename__ = "signals"
 
+    # Replay protection, enforced by the database rather than by a
+    # look-then-insert in the application - see app/idempotency.py for why
+    # the gap between those two statements is exactly the window a
+    # duplicate delivery lands in. Declared as an Index rather than
+    # `unique=True` on the column so app/migrations.py picks it up: that
+    # pass creates missing INDEXES, and a bare UniqueConstraint on an
+    # existing table would never be created on an upgraded database.
+    __table_args__ = (
+        Index("ix_signals_idempotency_key", "idempotency_key", unique=True),
+    )
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # NULL means "this alert could not be checked for replay", not "no
+    # duplicate found". Both SQLite and Postgres allow repeated NULLs in a
+    # unique index, so unkeyable alerts coexist without weakening the rest.
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     received_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     symbol: Mapped[str] = mapped_column(String(64), index=True)
     token_address: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)

@@ -10,10 +10,12 @@ duplicated.
 """
 import datetime as dt
 import logging
+from dataclasses import dataclass
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import models, pipeline
+from app import idempotency, models, pipeline
 from app.analysis import forward_returns
 from app.config import settings
 from app.concurrency import AlreadyReserved, reserve_entry
@@ -57,8 +59,62 @@ def _open_position_for(db: Session, symbol: str, token_address: str | None):
     return None
 
 
-async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
+@dataclass
+class AlertOutcome:
+    """What happened to one inbound alert.
+
+    `duplicate` is separate from the signal because a replay returns the
+    ORIGINAL signal row - the caller needs to be able to tell "here is the
+    signal I just created" from "here is the one you already sent me", and
+    they are otherwise indistinguishable.
+    """
+
+    signal: models.Signal
+    duplicate: bool = False
+    unprotected_reason: str | None = None
+
+
+def _find_by_key(db: Session, key: str) -> models.Signal | None:
+    return db.query(models.Signal).filter(models.Signal.idempotency_key == key).first()
+
+
+async def handle_alert(db: Session, alert: TradingViewAlert) -> AlertOutcome:
+    """Process one alert, exactly once.
+
+    A replayed alert is recognised and returned untouched: no second
+    signal row, no second trip through the buy or sell path. The check is
+    a SELECT first because it saves a pointless INSERT in the common case,
+    but the SELECT is not what makes this safe - the unique index is. See
+    app/idempotency.py.
+    """
+    event_time = alert.parsed_time()
+    key = idempotency.alert_key(
+        source="tradingview",
+        symbol=alert.symbol,
+        token_address=alert.token_address,
+        signal_type=alert.signal,
+        event_time=event_time,
+        price=alert.price,
+    )
+    unprotected = idempotency.unprotected_reason(event_time)
+
+    if key is not None:
+        existing = _find_by_key(db, key)
+        if existing is not None:
+            logger.warning(
+                "duplicate alert ignored: %s %s matches signal id=%s already processed at %s",
+                alert.signal, describe(alert.symbol, alert.token_address),
+                existing.id, existing.received_at,
+            )
+            return AlertOutcome(existing, duplicate=True)
+    else:
+        logger.warning(
+            "alert for %s has no replay protection: %s",
+            describe(alert.symbol, alert.token_address), unprotected,
+        )
+
     signal = models.Signal(
+        idempotency_key=key,
         symbol=alert.symbol,
         token_address=alert.token_address,
         chain=alert.chain,
@@ -76,7 +132,23 @@ async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
     )
     register_current_version(db)
     db.add(signal)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # The authoritative check. Between the SELECT above and this
+        # INSERT, a concurrent delivery of the same alert committed first;
+        # the unique index caught what the application could not see.
+        db.rollback()
+        existing = _find_by_key(db, key) if key else None
+        if existing is None:
+            # A constraint other than the idempotency index. Not ours to
+            # swallow - re-raise rather than report a duplicate that isn't.
+            raise
+        logger.warning(
+            "duplicate alert lost the insert race: %s %s already recorded as signal id=%s",
+            alert.signal, describe(alert.symbol, alert.token_address), existing.id,
+        )
+        return AlertOutcome(existing, duplicate=True)
 
     try:
         if alert.signal == "buy":
@@ -90,7 +162,7 @@ async def handle_alert(db: Session, alert: TradingViewAlert) -> models.Signal:
         await notifier.notify_error(f"Unhandled error processing signal {signal.id} ({signal.symbol}) - see server logs")
         raise
 
-    return signal
+    return AlertOutcome(signal, duplicate=False, unprotected_reason=unprotected)
 
 
 async def handle_discovered_token(
