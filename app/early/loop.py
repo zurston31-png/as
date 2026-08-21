@@ -35,8 +35,8 @@ from app import models, pipeline
 from app.config import settings
 from app.database import SessionLocal
 from app.early import watchlist as wl
+from app.monitor.supervisor import run_supervised
 from app.early.engine import Decision, evaluate
-from app.notifications.notifier import notifier
 from app.services import price_feed
 
 logger = logging.getLogger(__name__)
@@ -186,10 +186,12 @@ async def evaluate_once(db: Session | None = None) -> dict:
 
         summary["pruned"] = wl.prune_observations(db)
         db.commit()
-    except Exception as exc:
-        logger.exception("watchlist pass failed")
+    except Exception:
         db.rollback()
-        await notifier.notify_worker_failure("early watchlist", exc)
+        # Re-raised rather than swallowed: the supervisor owns failure
+        # accounting, the throttled notification and the backoff, and a
+        # pass that reports its own error looks like a success to it.
+        raise
     finally:
         if owns_session:
             db.close()
@@ -216,16 +218,15 @@ async def run_forever() -> None:
         )
     _stop_event.clear()
 
-    while not _stop_event.is_set():
-        summary = await evaluate_once()
-        if summary.get("evaluated"):
+    def report(summary) -> None:
+        if summary and summary.get("evaluated"):
             logger.info(
                 "watchlist: %d evaluated, %d confirmed, %d failed, %d expired",
                 summary["evaluated"], summary["confirmed"], summary["failed"], summary["expired"],
             )
-        try:
-            await asyncio.wait_for(_stop_event.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            continue
 
+    await run_supervised(
+        "early watchlist", evaluate_once,
+        interval_seconds=interval, stop_event=_stop_event, on_result=report,
+    )
     logger.info("early signal watchlist stopped")

@@ -16,7 +16,7 @@ import logging
 
 from app.config import settings
 from app.database import SessionLocal
-from app.notifications.notifier import notifier
+from app.monitor.supervisor import run_supervised
 from app.shadow import resolver
 
 logger = logging.getLogger(__name__)
@@ -35,11 +35,12 @@ async def resolve_once() -> dict:
         summary = await resolver.resolve_once(db)
         db.commit()
         return summary
-    except Exception as exc:
-        logger.exception("shadow resolution pass failed")
+    except Exception:
         db.rollback()
-        await notifier.notify_worker_failure("shadow resolver", exc)
-        return {"considered": 0, "closed": 0, "error": True}
+        # Re-raised rather than swallowed: the supervisor owns failure
+        # accounting, the throttled notification and the backoff, and a
+        # pass that reports its own error looks like a success to it.
+        raise
     finally:
         db.close()
 
@@ -56,9 +57,8 @@ async def run_forever() -> None:
     logger.info("shadow resolver started (every %ss)", interval)
     _stop_event.clear()
 
-    while not _stop_event.is_set():
-        summary = await resolve_once()
-        if summary.get("considered"):
+    def report(summary) -> None:
+        if summary and summary.get("considered"):
             logger.info(
                 "shadow: %d considered, %d closed, %d still open, %d abandoned, "
                 "%d horizons recorded",
@@ -66,9 +66,9 @@ async def run_forever() -> None:
                 summary.get("still_open", 0), summary.get("abandoned", 0),
                 summary.get("horizons_recorded", 0),
             )
-        try:
-            await asyncio.wait_for(_stop_event.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            continue
 
+    await run_supervised(
+        "shadow resolver", resolve_once,
+        interval_seconds=interval, stop_event=_stop_event, on_result=report,
+    )
     logger.info("shadow resolver stopped")

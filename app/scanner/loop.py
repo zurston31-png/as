@@ -35,9 +35,9 @@ from sqlalchemy.orm import Session
 from app import models, pipeline
 from app.config import settings
 from app.database import SessionLocal
+from app.monitor.supervisor import run_supervised
 from app.scanner.discovery import DiscoveredToken, discover_tokens
 from app.analysis import forward_returns
-from app.notifications.notifier import notifier
 from app.scanner.filters import prescreen
 from app.services.trading_service import handle_discovered_token
 
@@ -289,10 +289,12 @@ async def scan_once(db: Session | None = None, rng: random.Random | None = None)
                 _record(db, token, stage=STAGE_EVALUATED, reason="evaluation raised an error - see server logs")
 
         db.commit()
-    except Exception as exc:
-        logger.exception("scanner cycle failed")
+    except Exception:
         db.rollback()
-        await notifier.notify_worker_failure("scanner", exc)
+        # Re-raised rather than swallowed: the supervisor owns failure
+        # accounting, the throttled notification and the backoff, and a
+        # pass that reports its own error looks like a success to it.
+        raise
     finally:
         if owns_session:
             db.close()
@@ -318,12 +320,10 @@ async def run_forever() -> None:
         f"{settings.SCANNER_MIN_LIQUIDITY_USD:,.0f}",
         f"{settings.SCANNER_MIN_VOLUME_24H_USD:,.0f}",
     )
-    while not _stop_event.is_set():
-        await scan_once()
-        try:
-            await asyncio.wait_for(_stop_event.wait(), timeout=settings.SCANNER_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            pass
+    await run_supervised(
+        "scanner", scan_once,
+        interval_seconds=settings.SCANNER_INTERVAL_SECONDS, stop_event=_stop_event,
+    )
 
 
 def stop() -> None:

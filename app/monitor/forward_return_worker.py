@@ -17,7 +17,7 @@ import logging
 from app.analysis import forward_returns
 from app.config import settings
 from app.database import SessionLocal
-from app.notifications.notifier import notifier
+from app.monitor.supervisor import run_supervised
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,12 @@ async def resolve_once() -> dict:
         )
         db.commit()
         return summary
-    except Exception as exc:
-        logger.exception("forward-return resolution pass failed")
+    except Exception:
         db.rollback()
-        await notifier.notify_worker_failure("forward-return resolver", exc)
-        return {"due": 0, "resolved": 0, "abandoned": 0, "unavailable": 0, "error": True}
+        # Re-raised rather than swallowed: the supervisor owns failure
+        # accounting, the throttled notification and the backoff, and a
+        # pass that reports its own error looks like a success to it.
+        raise
     finally:
         db.close()
 
@@ -58,17 +59,16 @@ async def run_forever() -> None:
     logger.info("forward-return worker started (every %ss)", interval)
     _stop_event.clear()
 
-    while not _stop_event.is_set():
-        summary = await resolve_once()
-        if summary.get("due"):
+    def report(summary) -> None:
+        if summary and summary.get("due"):
             logger.info(
                 "forward returns: %d due, %d resolved, %d still unavailable, %d abandoned",
                 summary["due"], summary["resolved"],
                 summary.get("unavailable", 0), summary.get("abandoned", 0),
             )
-        try:
-            await asyncio.wait_for(_stop_event.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            continue
 
+    await run_supervised(
+        "forward-return resolver", resolve_once,
+        interval_seconds=interval, stop_event=_stop_event, on_result=report,
+    )
     logger.info("forward-return worker stopped")

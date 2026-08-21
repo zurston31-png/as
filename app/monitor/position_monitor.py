@@ -12,10 +12,10 @@ import logging
 from app import models
 from app.config import settings
 from app.database import SessionLocal
+from app.monitor.supervisor import run_supervised
 from app.exits.manager import ExitManager, evaluate_liquidity, record_liquidity_tick
 from app.monitor.devwallet import check_dev_wallet_exit
 from app.early import watchlist
-from app.notifications.notifier import notifier
 from app.services import price_feed
 from app.services.trading_service import close_position, partial_close_position
 
@@ -78,22 +78,32 @@ async def _check_positions_once() -> None:
             except Exception:
                 logger.exception("error evaluating position id=%s (%s)", pos.id, pos.symbol)
         db.commit()
-    except Exception as exc:
-        logger.exception("position monitor tick failed")
+    except Exception:
         db.rollback()
-        await notifier.notify_worker_failure("position monitor", exc)
+        # Re-raised rather than swallowed: the supervisor owns failure
+        # accounting, the throttled notification and the backoff, and a
+        # pass that reports its own error looks like a success to it.
+        raise
     finally:
         db.close()
 
 
 async def run_forever() -> None:
+    """The stop-loss loop.
+
+    Supervised rather than looped by hand: this is the only thing in the
+    bot that fires a stop, and a pass that failed before its own try
+    block - SessionLocal() raising on a full disk, say - used to kill the
+    task silently, since nothing awaits it until shutdown. See
+    app/monitor/supervisor.py.
+    """
     logger.info("position monitor loop starting (interval=%ss)", settings.PRICE_POLL_INTERVAL_SECONDS)
-    while not _stop_event.is_set():
-        await _check_positions_once()
-        try:
-            await asyncio.wait_for(_stop_event.wait(), timeout=settings.PRICE_POLL_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            pass
+    await run_supervised(
+        "position monitor",
+        _check_positions_once,
+        interval_seconds=settings.PRICE_POLL_INTERVAL_SECONDS,
+        stop_event=_stop_event,
+    )
 
 
 def stop() -> None:

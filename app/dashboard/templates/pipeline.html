@@ -190,6 +190,47 @@
 </div>
 
 <div class="card">
+  <h2>Background workers</h2>
+  {% if workers %}
+  <table>
+    <tr><th>Worker</th><th style="width:100px">Status</th><th class="num">Passes</th>
+      <th class="num">Failures</th><th class="num">In a row</th>
+      <th class="num">Last success</th><th>Last error</th></tr>
+    {% for w in workers %}
+    <tr>
+      <td>{{ w.worker }}</td>
+      <td>
+        {%- if w.stopped %}<span class="pill unused">STOPPED</span>
+        {%- elif w.overdue %}<span class="pill down">OVERDUE</span>
+        {%- elif w.consecutive_failures %}<span class="pill degraded">FAILING</span>
+        {%- else %}<span class="pill ok">RUNNING</span>{% endif -%}
+      </td>
+      <td class="num">{{ w.passes }}</td>
+      <td class="num">{{ w.failures }}</td>
+      <td class="num">{{ w.consecutive_failures }}</td>
+      <td class="num">
+        {%- if w.seconds_since_success is not none %}{{ '%.0f' | format(w.seconds_since_success) }}s ago
+        {%- else %}never{% endif -%}
+      </td>
+      <td class="muted"><code>{{ (w.last_error or '')[:90] }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="note">
+    The position monitor is the only thing in the bot that fires a stop-loss. If it shows
+    OVERDUE, exits are not being checked — everything else on this page is secondary to
+    that. A worker is called overdue after three missed intervals, not one, so a pass that
+    runs slightly long does not cry wolf.
+    <br>These counters live in process memory and reset on restart, which is correct: they
+    describe whether <em>this</em> process is working, and a fresh one has no history to
+    inherit.
+  </div>
+  {% else %}
+  <div class="empty">No background workers have started in this process.</div>
+  {% endif %}
+</div>
+
+<div class="card">
   <h2>Upstream data sources</h2>
   {% if health %}
   <table>

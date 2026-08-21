@@ -21,6 +21,7 @@ from app.analysis.ablation import build_ablation
 from app.analysis.filter_quality import build_filter_quality
 from app.analysis.rejections import NEAR_MISS_POINTS, build_rejection_report
 from app.analysis.resolver_health import check_resolver_health
+from app.monitor.supervisor import heartbeats as worker_heartbeats
 from app.analysis.research_report import build_research_report
 from app.analysis.score_distribution import build_score_distribution
 from app.analysis.stage_funnel import build_stage_funnel
@@ -427,6 +428,11 @@ async def pipeline(request: Request, hours: float = 24.0, user: str = Depends(ch
                 "stages": stages,
                 "integrity": integrity,
                 "health": [h.as_dict() for h in api_health.snapshot()],
+                # Upstream health says whether the data sources answer.
+                # This says whether the loops that call them are alive -
+                # a stalled position monitor and a quiet market look
+                # identical without it.
+                "workers": [w.as_dict() for w in worker_heartbeats()],
                 "recent_tokens": recent,
                 "hours": hours,
                 "scanner_blocked": scanner_blocked_reason(),
@@ -513,6 +519,7 @@ async def api_pipeline(hours: float = 24.0, user: str = Depends(check_auth)):
             "funnel": build_funnel(db, window_hours=hours if hours > 0 else None).as_dict(),
             "stages": build_stage_funnel(db, window_hours=hours if hours > 0 else None).as_dict(),
             "health": [h.as_dict() for h in api_health.snapshot()],
+            "workers": [w.as_dict() for w in worker_heartbeats()],
             "scanner_blocked": scanner_blocked_reason(),
         })
     finally:

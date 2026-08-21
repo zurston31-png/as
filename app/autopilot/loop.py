@@ -35,7 +35,7 @@ from app.autopilot import changelog, diagnose as triage
 from app.autopilot.promote import Arm, evaluate
 from app.config import settings
 from app.database import SessionLocal
-from app.notifications.notifier import notifier
+from app.monitor.supervisor import run_supervised
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +149,12 @@ async def run_once(db: Session | None = None) -> dict:
         summary["remedies"] = apply_remedies(db, diagnosis)
         summary["headline"] = diagnosis.headline()
         db.commit()
-    except Exception as exc:
-        logger.exception("autopilot cycle failed")
+    except Exception:
         db.rollback()
-        summary["error"] = True
-        await notifier.notify_worker_failure("autopilot", exc)
+        # Re-raised rather than swallowed: the supervisor owns failure
+        # accounting, the throttled notification and the backoff, and a
+        # pass that reports its own error looks like a success to it.
+        raise
     finally:
         if owns:
             db.close()
@@ -168,12 +169,8 @@ async def run_forever() -> None:
 
     interval = max(settings.AUTOPILOT_INTERVAL_HOURS, 1.0) * 3600
     logger.info("autopilot running every %.1fh", settings.AUTOPILOT_INTERVAL_HOURS)
-    while not _stop_event.is_set():
-        try:
-            await asyncio.sleep(interval)
-            summary = await run_once()
-            logger.info("autopilot cycle: %s", summary)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("autopilot loop error - continuing")
+    await run_supervised(
+        "autopilot", run_once,
+        interval_seconds=interval, stop_event=_stop_event,
+        on_result=lambda summary: logger.info("autopilot cycle: %s", summary),
+    )
