@@ -26,7 +26,12 @@ restart — fine for development, not for a 24/7 bot, hence the VPS step below.
 
 ```bash
 # on the VPS
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin
+# docker-compose-v2, NOT docker-compose-plugin: the latter is the package
+# name in Docker's own apt repo, and is not in Ubuntu's. Getting it wrong
+# is worse than it sounds - apt installs nothing at all when one name in
+# the list is unresolvable, so docker.io silently does not arrive either
+# and the next command fails with "docker: command not found".
+sudo apt update && sudo apt install -y docker.io docker-compose-v2
 sudo usermod -aG docker $USER && newgrp docker
 
 git clone <your-fork-url> memecoin-bot
