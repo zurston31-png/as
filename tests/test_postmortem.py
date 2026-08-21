@@ -160,10 +160,17 @@ def test_a_liquidity_drop_during_the_hold_is_reported(db):
 
 
 def test_sample_count_is_reported_so_the_path_is_not_overtrusted(db):
-    """MFE/MAE come from polled prices, so they are lower bounds. The
-    sample count is what tells the reader how loose those bounds are."""
+    """MFE/MAE come from polled prices, so they are lower bounds, and the
+    observation count is what tells the reader how loose those bounds are.
+
+    `samples` is the retained buffer depth, which is capped - the fixture
+    writes recent_prices directly, so it is 12 here. The count that does
+    not saturate is `price_ticks`, and it is None on this position
+    because nothing ever called record_price_tick: not recorded rather
+    than zero. tests/test_postmortem_costs.py covers the distinction."""
     pm = build_postmortem(db, _closed(db))
     assert pm.samples == 12
+    assert pm.price_ticks is None
 
 
 def test_recent_postmortems_returns_newest_first(db):

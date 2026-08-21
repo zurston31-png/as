@@ -257,6 +257,19 @@ class Position(Base):
     # memecoins wired in yet, so these are built from actual observed prices
     # during the trade rather than invented indicator data.
     recent_prices: Mapped[list] = mapped_column(JSON, default=list)
+    # How many monitor ticks this position was actually priced on.
+    #
+    # `recent_prices` cannot answer this: it is trimmed to
+    # MAX_RECENT_PRICE_SAMPLES on every tick, so it saturates and a
+    # position held for 30 ticks and one held for 3,000 both report 30.
+    # The high/low water marks ARE updated on every tick and never
+    # trimmed, so the post-mortem needs the true count to say how tight a
+    # lower bound its MFE/MAE actually are.
+    #
+    # Nullable with no default on purpose. Old rows, and positions closed
+    # before a single tick landed, mean "not recorded" - writing 0 there
+    # would assert we observed nothing, which is a different claim.
+    price_ticks_observed: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class RiskEvent(Base):

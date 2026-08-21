@@ -72,6 +72,10 @@ class _OpenPosition:
     break_even_applied: bool = False
     partial_exit_taken: bool = False
     recent_prices: list = field(default_factory=list)
+    # Also mirrors models.Position: record_price_tick counts every tick
+    # here too, so the field has to exist for the same reason the low
+    # water mark above does.
+    price_ticks_observed: int | None = None
     realized_pnl_usd: float = 0.0
     realized_fees_usd: float = 0.0
 

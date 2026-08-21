@@ -23,8 +23,23 @@ WHAT IS ESTIMATED AND WHAT IS MEASURED
 
 MFE/MAE come from polled prices, not from tick data. A spike between two
 polls is invisible, so both are LOWER BOUNDS on the true excursion, and
-`samples` reports how many observations they were drawn from. Fees and
+`price_ticks` reports how many observations they were drawn from. Fees and
 execution cost are exact - the paper fill model records them per leg.
+
+`price_ticks` is NOT `samples`. The stored price buffer is trimmed to the
+last 30 entries, so it saturates: a position priced 30 times and one
+priced 3,000 times both leave 30 samples behind. The excursion bound
+tightens with the real count, so that is the one reported next to it, and
+it is None on positions that predate the counter rather than 0.
+
+UNITS
+
+Every `_pct` field on this record is a PERCENT, including the two that
+come out of the fill model as fractions. `Trade.execution_cost_pct` is a
+fraction on the row (see app/analysis/trade_analytics.py); it is
+multiplied here so that a post-mortem cannot put 0.0087 next to a
+return of 5.2 and leave the reader to guess that one of them is 100x
+off.
 """
 from __future__ import annotations
 
@@ -66,7 +81,8 @@ class PostMortem:
     rug_risk_score: float | None
     liquidity_at_entry_usd: float | None
     lowest_liquidity_usd: float | None
-    samples: int
+    samples: int                        # price buffer depth, capped at 30
+    price_ticks: int | None             # true observation count, None if unrecorded
     strategy_version: str | None
 
     @property
@@ -161,6 +177,7 @@ class PostMortem:
             "liquidity_at_entry_usd": self.liquidity_at_entry_usd,
             "liquidity_drop_pct": r(self.liquidity_drop_pct, 1),
             "samples": self.samples,
+            "price_ticks": self.price_ticks,
             "strategy_version": self.strategy_version,
             "gave_back_a_winner": self.gave_back_a_winner,
             "survived_a_drawdown": self.survived_a_drawdown,
@@ -190,6 +207,36 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
     # the entry fee would understate the cost of the exit logic that split it.
     fees = sum(t.fee_usd or 0.0 for t in legs)
     costs = [t.execution_cost_pct for t in legs if t.execution_cost_pct is not None]
+
+    # Slippage is measured PER LEG and then averaged, never by subtracting
+    # a total from an average.
+    #
+    # The previous formula took the mean execution cost across legs and
+    # subtracted every leg's fees divided by the ENTRY notional. Those are
+    # not commensurable: the fee term grows with the exit notional while
+    # the cost term does not, so the answer tracked the trade's return
+    # rather than its execution. A flat round trip understated slippage by
+    # the exit fee; a 10x winner reported -1.75% slippage, and a 50x
+    # winner -11.75%, i.e. execution paying the desk. Regressing execution
+    # cost against outcome on that column finds a "winners fill better"
+    # effect that is pure arithmetic.
+    #
+    # Per leg the fill model gives total_cost = impact + spread + fee, all
+    # fractions of that leg's own notional (app/execution/fill_model.py),
+    # so the slippage component is total_cost - fee/notional. This mirrors
+    # app/shadow/recorder.py, which already does the subtraction per fill.
+    leg_slippage: list[float] = []
+    for leg in legs:
+        if leg.execution_cost_pct is None:
+            continue
+        price = leg.exit_price if leg.side == "sell" else leg.entry_price
+        notional = (price or 0.0) * (leg.qty or 0.0)
+        if notional <= 0:
+            # No notional means the fee cannot be turned into a rate, and
+            # a leg whose fee share is unknown is dropped rather than
+            # counted as fee-free - that would overstate slippage.
+            continue
+        leg_slippage.append(leg.execution_cost_pct - (leg.fee_usd or 0.0) / notional)
 
     exit_price = None
     if exit_legs:
@@ -229,15 +276,14 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
         max_gain_pct=_pct(position.highest_price_since_entry, position.entry_price),
         max_loss_pct=_pct(position.lowest_price_since_entry, position.entry_price),
         fees_usd=fees,
-        execution_cost_pct=(sum(costs) / len(costs)) if costs else None,
+        # x100: the column is a fraction, this record is in percent.
+        execution_cost_pct=(sum(costs) / len(costs) * 100) if costs else None,
         # Execution cost minus the fee component is what actually moved the
         # fill away from mid. Reported separately because a fee is a known
         # constant and slippage is not - conflating them hides which one is
         # eating the edge.
         slippage_pct=(
-            (sum(costs) / len(costs)) * 100 - (fees / (position.entry_price * (position.initial_qty or position.qty)) * 100)
-            if costs and position.entry_price and (position.initial_qty or position.qty)
-            else None
+            sum(leg_slippage) / len(leg_slippage) * 100 if leg_slippage else None
         ),
         signal_score=signal.signal_score if signal else None,
         market_quality_score=signal.market_quality_score if signal else None,
@@ -245,6 +291,7 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
         liquidity_at_entry_usd=position.liquidity_at_entry_usd,
         lowest_liquidity_usd=position.lowest_liquidity_usd,
         samples=len(position.recent_prices or []),
+        price_ticks=getattr(position, "price_ticks_observed", None),
         strategy_version=getattr(position, "strategy_version", None),
     )
 

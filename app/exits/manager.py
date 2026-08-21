@@ -72,6 +72,9 @@ def record_price_tick(position: models.Position, price: float, now: dt.datetime 
     trailing stop, but a post-mortem needs the trough too: a trade that
     closed +5% after dipping -30% is a different trade from one that never
     dipped, and the closing price cannot tell them apart.
+
+    The tick counter is maintained here rather than derived later because
+    the sample buffer it would have to be derived from is lossy.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
     if position.highest_price_since_entry is None or price > position.highest_price_since_entry:
@@ -82,6 +85,13 @@ def record_price_tick(position: models.Position, price: float, now: dt.datetime 
     samples = list(position.recent_prices or [])
     samples.append([now.isoformat(), price])
     position.recent_prices = samples[-MAX_RECENT_PRICE_SAMPLES:]
+
+    # Counted separately from the buffer because the buffer is trimmed and
+    # the water marks above are not. Without this the post-mortem has no
+    # way to say whether an MFE came from 8 observations or 800, and it
+    # would report 30 for both. Purely a record of what was observed - no
+    # exit rule reads it.
+    position.price_ticks_observed = (position.price_ticks_observed or 0) + 1
 
 
 def record_liquidity_tick(position: models.Position, liquidity_usd: float | None) -> None:

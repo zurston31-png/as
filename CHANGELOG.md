@@ -1,23 +1,24 @@
 # Autopilot session — 21 August 2026
 
-Nine commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab` to
-`2d71d3b`. 47 files changed, ~6,600 lines added.
+Twelve commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab`
+to the post-mortem accounting fix. 51 files changed, ~7,000 lines added.
 
 **Strategy version is unchanged at `v-83c77cda` throughout.** Nothing in
 this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,621 passing**, of which **213 are new this session**
-across 13 new test files. Every commit was pushed and CI was green on
+**Test suite: 1,638 passing**, of which **230 are new this session**
+across 14 new test files. Every commit was pushed and CI was green on
 every one checked.
 
 ---
 
 ## What this session found
 
-Nine genuine defects, two of them found in a second review round — one of
-which was a fail-open in safety code written earlier in this same session.
+Twelve genuine defects, two of them found in a second review round — one
+of which was a fail-open in safety code written earlier in this same
+session — and three more found by auditing the post-mortem record.
 The suite that existed before this session passed
 against every one of them, so each got a test reproducing the exact
 condition rather than a nearby one. They are listed before the features
@@ -157,6 +158,75 @@ scope note now says plainly that the guard covers one process and cannot
 detect a second.
 
 ---
+
+### 8. Recorded slippage was a function of the trade's return — post-mortem audit
+
+The worst of the three, because it does not crash, does not look wrong,
+and produces a confident false finding.
+
+`build_postmortem` took the **mean** execution cost across a position's
+legs and subtracted **every leg's fees** divided by the **entry**
+notional. Those two terms are not commensurable: the fee term grows with
+the exit notional, the cost term does not. So the column named
+`slippage_pct` was partly a measure of how much the trade made.
+
+Measured against the real fill model (0.25% fee + 0.75% impact/spread per
+leg, so 0.75% true slippage throughout):
+
+| exit | reported slippage | true |
+|---|---|---|
+| flat | +0.500% | 0.750% |
+| 2x | +0.250% | 0.750% |
+| 4x | −0.250% | 0.750% |
+| 10x | −1.750% | 0.750% |
+| 50x | −11.750% | 0.750% |
+
+A 50x winner recorded execution *paying* 11.75%. Regress execution cost
+against outcome on that column and you find "our winners fill better" —
+an artefact of arithmetic that would survive review because the column is
+named `slippage_pct` and the number is plausible at small returns.
+
+Now measured per leg and then averaged: `execution_cost_pct −
+fee_usd/leg_notional`, which is the subtraction `app/shadow/recorder.py`
+already did per fill. A leg with no recorded price is **dropped**, not
+counted as fee-free — counting it would report its whole cost as slippage
+and invent a cost that was never measured.
+
+### 9. Execution cost was emitted as a fraction beside real percents
+
+`Trade.execution_cost_pct` is a fraction on the row — `trade_analytics.py`
+says so and `performance.html` multiplies by 100 to display it. The
+post-mortem passed it through raw, so `/api/postmortems` returned
+`execution_cost_pct: 0.0087` next to `return_pct: 5.2` and
+`slippage_pct: 0.74`. Same suffix, one of them 100x off. Now converted at
+the boundary, with the unit stated in the module docstring.
+
+### 10. The observation count saturated at 30 and then lied flat
+
+The post-mortem's honesty mechanism: MFE/MAE come from polled prices, so
+they are lower bounds, and `samples` was supposed to say how loose those
+bounds are. It was `len(position.recent_prices)` — a buffer trimmed to
+`MAX_RECENT_PRICE_SAMPLES = 30` on every tick. The water marks it
+qualifies are updated on every tick and never trimmed. So a position
+priced 30 times and one priced 3,000 times both reported 30, and the
+number meant to grade confidence stopped varying with confidence.
+
+Added `Position.price_ticks_observed`, incremented in `record_price_tick`
+alongside the water marks it describes. Additive, nullable, **no
+default** — existing rows land `NULL`, which reads as "not recorded",
+where a `0` would have asserted that the excursion came from no
+observations at all. Verified against a database built without the
+column: the additive migration adds it and the pre-existing row is
+`NULL`.
+
+The post-mortem reports both, because they bound different things:
+`samples` is what the momentum exits could see, `price_ticks` is how
+tight MFE/MAE are.
+
+Three defects, 17 new tests in `tests/test_postmortem_costs.py`. 13 of
+the 17 fail against the previous code; the other 4 cover the new counter.
+No existing test asserted either cost figure, which is how both survived
+every prior review.
 
 ## Risk work, all behind one disabled flag
 
