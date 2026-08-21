@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app import idempotency, models, pipeline
 from app.analysis import forward_returns
 from app.config import settings
-from app.concurrency import AlreadyReserved, reserve_entry
+from app.concurrency import AlreadyReserved, reserve_entry, reserve_exit
 from app.execution import get_execution_client
 from app.identity import describe, instrument_key
 from app.notifications.notifier import notifier
@@ -854,10 +854,74 @@ async def _handle_sell_signal(db: Session, signal: models.Signal) -> None:
     await close_position(db, position, reason="sell signal from TradingView", signal_id=signal.id)
 
 
+def _still_open(db: Session, position: models.Position, reason: str) -> bool:
+    """Re-read the position's status before selling it.
+
+    The reservation below stops two exits OVERLAPPING. This catches the
+    sequential case it cannot: the monitor loads a batch of open positions,
+    a sell alert closes one of them and commits, and the monitor then
+    reaches that row still holding the object it loaded before - open, as
+    far as its own session's identity map is concerned. The refresh costs
+    one round-trip and is the difference between a stale read and a second
+    sale of a position that is already gone.
+    """
+    if position.status != models.PositionStatus.OPEN.value:
+        logger.info(
+            "skipping exit (%s) for position %s: already %s",
+            reason, position.id, position.status,
+        )
+        return False
+
+    # A column query rather than db.refresh(). refresh() reloads the whole
+    # row and DISCARDS unflushed changes - and the exit manager sets
+    # position.partial_exit_taken before calling in here
+    # (app/exits/manager.py), so refreshing would quietly undo it and let
+    # the same partial exit fire again on the next tick.
+    #
+    # SessionLocal is autoflush=False, so this reads what is committed
+    # rather than what this session is holding; the attribute check above
+    # covers this session's own pending close, and this one covers the
+    # other session's committed close. Both are needed.
+    committed = (
+        db.query(models.Position.status)
+        .filter(models.Position.id == position.id)
+        .scalar()
+    )
+    if committed is None:
+        logger.warning("position %s no longer exists - refusing to exit it", position.id)
+        return False
+    if committed != models.PositionStatus.OPEN.value:
+        logger.info(
+            "skipping exit (%s) for position %s: another session already closed it (%s)",
+            reason, position.id, committed,
+        )
+        return False
+    return True
+
+
 async def close_position(db: Session, position: models.Position, reason: str, signal_id: int | None = None) -> None:
     """Exit an open position. Called for TradingView sell signals AND for
     stop-loss / take-profit / dev-wallet-sell triggers from the monitor loop.
+
+    Both of those callers run on one event loop, and the body below awaits
+    the sell between reading `position.qty` and marking the row closed. A
+    stop firing while a sell alert is in flight would otherwise have both
+    of them sell the same position and both credit the proceeds - the paper
+    account paid twice for a position it held once. See app/concurrency.py.
     """
+    try:
+        async with reserve_exit(position.id):
+            if not _still_open(db, position, reason):
+                return
+            await _close_position(db, position, reason, signal_id)
+    except AlreadyReserved:
+        logger.info(
+            "skipping exit (%s) for position %s: another exit is already in flight",
+            reason, position.id,
+        )
+
+
+async def _close_position(db: Session, position: models.Position, reason: str, signal_id: int | None) -> None:
     instrument = _instrument_id(position.symbol, position.token_address)
     client = get_execution_client()
     result = await client.sell(instrument, position.qty, settings.SLIPPAGE_BPS)
@@ -934,6 +998,29 @@ async def close_position(db: Session, position: models.Position, reason: str, si
 
 async def partial_close_position(
     db: Session, position: models.Position, fraction: float, reason: str, signal_id: int | None = None
+) -> None:
+    """Sell part of an open position, under the same exit reservation.
+
+    A partial exit races a full one exactly as badly: both read the same
+    `position.qty`, both await the sell, and the second subtraction is
+    applied to a qty the first already reduced. Sharing one reservation
+    per position - rather than one per exit KIND - is what makes a partial
+    and a full exit mutually exclusive rather than merely each unique.
+    """
+    try:
+        async with reserve_exit(position.id):
+            if not _still_open(db, position, reason):
+                return
+            await _partial_close_position(db, position, fraction, reason, signal_id)
+    except AlreadyReserved:
+        logger.info(
+            "skipping partial exit (%s) for position %s: another exit is already in flight",
+            reason, position.id,
+        )
+
+
+async def _partial_close_position(
+    db: Session, position: models.Position, fraction: float, reason: str, signal_id: int | None
 ) -> None:
     """Sell part of an open position and leave the rest open.
 
