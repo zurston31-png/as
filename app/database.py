@@ -20,8 +20,21 @@ def _connect_args() -> dict:
     return {}
 
 
-if settings.DATABASE_URL.startswith("sqlite:///./"):
-    db_path = settings.DATABASE_URL.replace("sqlite:///./", "", 1)
+if settings.DATABASE_URL.startswith("sqlite:///"):
+    # Absolute paths are created too, not only relative ones.
+    #
+    # The default URL is relative, which means the database lives beside
+    # whatever directory the bot was started from - so a deployment that
+    # unpacks each new build into its own folder silently starts a fresh
+    # history every upgrade, and the dashboard resets to zero trades. The
+    # fix is to point DATABASE_URL at one absolute path shared by every
+    # build, and that only works if the directory is created for it: the
+    # relative-only branch this replaces left an absolute path to fail at
+    # connect time with "unable to open database file", which reads as a
+    # permissions problem rather than a missing folder.
+    db_path = settings.DATABASE_URL.replace("sqlite:///", "", 1)
+    if db_path.startswith("./"):
+        db_path = db_path[2:]
     parent = os.path.dirname(db_path)
     if parent:
         os.makedirs(parent, exist_ok=True)

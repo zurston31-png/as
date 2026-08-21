@@ -6,6 +6,8 @@ COLUMN to a table that already exists, so every deployment running an
 earlier build would come back up with tables missing everything added
 since, and die on the first query.
 """
+import os
+import pathlib
 import sqlite3
 
 import pytest
@@ -13,6 +15,8 @@ from sqlalchemy import create_engine, inspect
 
 from app.database import Base
 from app.migrations import apply_additive_migrations
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Column set as it existed before Stages 8/9 added the score + source fields.
 OLD_SIGNALS_DDL = """
@@ -175,3 +179,43 @@ def test_every_model_index_exists_after_create_all_plus_migrate(old_db):
         expected = {ix.name for ix in table.indexes}
         missing = expected - actual
         assert not missing, f"{table.name} still missing index(es) {missing} after migration"
+
+
+# ---------------------------------------------------------------------------
+# where the database lives
+# ---------------------------------------------------------------------------
+
+def test_an_absolute_sqlite_path_gets_its_directory_created(tmp_path):
+    """The default DATABASE_URL is relative, so a deployment that unpacks
+    each build into its own folder starts a fresh history every upgrade and
+    the dashboard resets to zero trades. Pointing every build at one
+    absolute path is the fix, and it only works if the directory is created
+    - the relative-only branch this covers left an absolute path failing at
+    connect time with "unable to open database file", which reads as a
+    permissions problem rather than a missing folder.
+
+    Run in a subprocess on purpose. app.database builds its engine at
+    import time, so exercising a different DATABASE_URL in-process means
+    reloading the module out from under every other module holding a
+    reference to the old engine.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    target = tmp_path / "shared" / "nested" / "bot.db"
+    assert not target.parent.exists()
+
+    script = textwrap.dedent(f"""
+        import os, sys
+        sys.path.insert(0, {str(REPO_ROOT)!r})
+        from app.database import init_db
+        init_db()
+        print("OK", os.path.isdir({str(target.parent)!r}), os.path.exists({str(target)!r}))
+    """)
+    env = {**os.environ, "DATABASE_URL": f"sqlite:///{target}"}
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK True True" in result.stdout, result.stdout
