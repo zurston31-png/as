@@ -171,14 +171,16 @@ def volume_acceleration(series: CandleSeries) -> list[Feature]:
     short = _safe_ratio(recent_5, previous_5)
     out.append(
         Feature("volume_accel_short", short, short is not None,
-                f"last 5 bars are {short:.2f}x the previous 5" if short else "no previous volume",
+                f"last 5 bars are {short:.2f}x the previous 5"
+                if short is not None else "no previous volume",
                 "candles")
     )
 
     medium = _safe_ratio(recent_15 / 15, baseline_per_bar)
     out.append(
         Feature("volume_accel_medium", medium, medium is not None,
-                f"last 15 bars average {medium:.2f}x the 30-bar baseline" if medium else "no baseline",
+                f"last 15 bars average {medium:.2f}x the 30-bar baseline"
+                    if medium is not None else "no baseline",
                 "candles")
     )
 
@@ -415,11 +417,21 @@ def flow_features(observations: list) -> list[Feature]:
                      f"last two observations are only {elapsed_minutes * 60:.0f}s apart - "
                      "the difference would be rounding, not flow", "observations")
         )
-    elif latest.buys_1h is None or previous.buys_1h is None:
+    elif (
+        # BOTH sides of BOTH observations. The old guard checked only
+        # buys_1h and then folded a missing sells_1h to zero with `or 0`,
+        # so a half-reported observation was published as a complete one -
+        # a measurement that could not be taken, recorded as a zero.
+        # `pressure()` below already gets this right.
+        latest.buys_1h is None
+        or latest.sells_1h is None
+        or previous.buys_1h is None
+        or previous.sells_1h is None
+    ):
         out.append(_missing("txn_rate_change", "transaction counts not reported", "observations"))
     else:
-        now_total = (latest.buys_1h or 0) + (latest.sells_1h or 0)
-        then_total = (previous.buys_1h or 0) + (previous.sells_1h or 0)
+        now_total = latest.buys_1h + latest.sells_1h
+        then_total = previous.buys_1h + previous.sells_1h
         change = _safe_ratio(now_total, then_total)
         out.append(
             Feature("txn_rate_change", change, change is not None,
@@ -486,16 +498,27 @@ def flow_features(observations: list) -> list[Feature]:
         )
         # Stability across the whole stored window. A pool whose depth
         # swings violently is not "growing", it is being manipulated.
-        depths = [o.liquidity_usd for o in ordered[-6:] if o.liquidity_usd]
-        if len(depths) >= 3:
+        # `is not None`, not truthiness. A pool that drained to zero
+        # reports 0.0, and dropping those readings left the swing computed
+        # over only the surviving non-zero ones - so a pool that emptied
+        # looked STABLE, which is the one direction that matters.
+        depths = [o.liquidity_usd for o in ordered[-6:] if o.liquidity_usd is not None]
+        if len(depths) < 3:
+            out.append(_missing("liquidity_stability", "fewer than 3 liquidity readings", "observations"))
+        elif max(depths) <= 0:
+            # Every reading is zero. The pool is gone; "stability" is not a
+            # meaningful description of it, and the division below would
+            # raise. Recorded as unmeasurable rather than as perfectly
+            # stable, which is what 1.0 would have claimed.
+            out.append(_missing("liquidity_stability", "pool depth is zero across the window",
+                                "observations"))
+        else:
             swing = (max(depths) - min(depths)) / max(depths)
             out.append(
                 Feature("liquidity_stability", 1.0 - min(swing, 1.0), True,
                         f"liquidity swung {swing:.0%} across the last {len(depths)} observations",
                         "observations")
             )
-        else:
-            out.append(_missing("liquidity_stability", "fewer than 3 liquidity readings", "observations"))
 
     return out
 
@@ -512,14 +535,16 @@ def snapshot_features(market: MarketSnapshot | None) -> list[Feature]:
     vtl = _safe_ratio(market.volume_24h_usd, market.liquidity_usd)
     out.append(
         Feature("volume_to_liquidity", vtl, vtl is not None,
-                f"{vtl:.1f}x turnover against pool depth" if vtl else "volume or liquidity missing",
+                f"{vtl:.1f}x turnover against pool depth"
+                if vtl is not None else "volume or liquidity missing",
                 "snapshot")
     )
 
     ltm = _safe_ratio(market.liquidity_usd, market.market_cap_usd)
     out.append(
         Feature("liquidity_to_marketcap", ltm, ltm is not None,
-                f"pool is {ltm:.1%} of market cap" if ltm else "market cap or liquidity missing",
+                f"pool is {ltm:.1%} of market cap"
+                if ltm is not None else "market cap or liquidity missing",
                 "snapshot")
     )
 

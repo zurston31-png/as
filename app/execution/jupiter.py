@@ -181,7 +181,16 @@ class JupiterExecutionClient(ExecutionClient):
         if not settings.SOLANA_PRIVATE_KEY:
             return SwapResult(success=False, error="SOLANA_PRIVATE_KEY not configured")
 
-        keypair = Keypair.from_base58_string(settings.SOLANA_PRIVATE_KEY)
+        try:
+            keypair = Keypair.from_base58_string(settings.SOLANA_PRIVATE_KEY)
+        except Exception as exc:
+            # A malformed key raised straight out of the client, so the
+            # caller skipped its failed-trade record and its notification -
+            # the trade simply vanished instead of being reported.
+            return SwapResult(
+                success=False,
+                error=f"SOLANA_PRIVATE_KEY could not be parsed: {type(exc).__name__}",
+            )
 
         # idempotent: /swap BUILDS an unsigned transaction, it does not
         # submit one. Nothing reaches the chain until the signed bytes are
@@ -227,6 +236,18 @@ class JupiterExecutionClient(ExecutionClient):
         # obtained is reported even on the failure path - without it there
         # is no way to find out afterwards whether the swap landed, and the
         # position would be reconciled as never opened.
+        # The signature is determined by the signed bytes, so it is known
+        # BEFORE submission. Captured here so an ambiguous send failure can
+        # still name the transaction: "it may have been broadcast" is not
+        # actionable without the id to go and look it up with.
+        presubmit_signature = None
+        try:
+            signatures = getattr(signed_tx, "signatures", None)
+            if signatures:
+                presubmit_signature = str(signatures[0])
+        except Exception:                       # pragma: no cover - defensive
+            presubmit_signature = None
+
         async with AsyncClient(settings.SOLANA_RPC_URL) as rpc:
             try:
                 send_result = await rpc.send_raw_transaction(
@@ -235,10 +256,12 @@ class JupiterExecutionClient(ExecutionClient):
                 signature = send_result.value
             except Exception as exc:
                 return SwapResult(
-                    success=False,
+                    success=False, tx_hash=presubmit_signature,
                     error=f"submitting the swap failed: {type(exc).__name__}: {exc}. "
-                          "The transaction may still have been broadcast - check the wallet "
-                          "before retrying",
+                          "The transaction may still have been broadcast - check "
+                          + (f"signature {presubmit_signature}" if presubmit_signature
+                             else "the wallet")
+                          + " before retrying",
                 )
 
             try:

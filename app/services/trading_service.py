@@ -671,6 +671,7 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     trade.fee_usd = result.fee_usd
     trade.execution_cost_pct = result.execution_cost_pct
     trade.fill_delay_seconds = result.fill_delay_seconds
+    trade.fill_estimated_from_quote = result.fill_estimated_from_quote
     db.add(trade)
     db.flush()
 
@@ -969,6 +970,7 @@ async def _close_position(db: Session, position: models.Position, reason: str, s
     trade.fee_usd = result.fee_usd
     trade.execution_cost_pct = result.execution_cost_pct
     trade.fill_delay_seconds = result.fill_delay_seconds
+    trade.fill_estimated_from_quote = result.fill_estimated_from_quote
     db.add(trade)
 
     position.status = models.PositionStatus.CLOSED.value
@@ -1083,6 +1085,7 @@ async def _partial_close_position(
     trade.fee_usd = result.fee_usd
     trade.execution_cost_pct = result.execution_cost_pct
     trade.fill_delay_seconds = result.fill_delay_seconds
+    trade.fill_estimated_from_quote = result.fill_estimated_from_quote
     db.add(trade)
 
     position.qty -= result.filled_qty

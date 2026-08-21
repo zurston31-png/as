@@ -29,27 +29,56 @@ def pause_and_exit(code: int = 0) -> None:
     sys.exit(code)
 
 
+def _env_flag_is_enabled(raw: str) -> bool:
+    """Does this .env value mean "on"?
+
+    Matches what pydantic-settings accepts for a bool, not just the literal
+    string "true". `LIVE_TRADING=1`, `yes` and `on` all produce a live
+    application, and a guard that only recognised "true" would wave them
+    through - a fail-open in the very check that exists to prevent one.
+
+    Anything unrecognised counts as ENABLED. This is a refusal path: an
+    unparseable value means the configuration cannot be confirmed safe, and
+    the wrong way to resolve that is to assume it is.
+    """
+    value = raw.strip().strip('"').strip("'").lower()
+    if value in {"false", "0", "no", "off", "n", "f", ""}:
+        return False
+    return True
+
+
+def _live_flags_enabled_in_env(env_file) -> list[str]:
+    """Which live-execution flags are switched on in `env_file`."""
+    if not env_file.exists():
+        return []
+    enabled = []
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        # `export FOO=bar` is valid in a .env a human has edited by hand.
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):].lstrip()
+        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
+            if stripped.startswith(flag + "="):
+                if _env_flag_is_enabled(stripped.split("=", 1)[1]):
+                    enabled.append(flag)
+    return sorted(set(enabled))
+
+
 def refuse_if_live_configured() -> None:
     """Do not send a buy signal into a live-configured bot.
 
     This script is deliberately stdlib-only - it reads .env and posts HTTP,
     with no app import - so it reads the flags the same way it reads the
     secret rather than importing app.safety.paper_only. Both flags are
-    checked: LIVE_TRADING=false with the acknowledgement left on is one
-    restart away from real orders, and this script's own banner promises
-    "nothing here involves real money".
+    checked, and the value parsing matches what the application accepts:
+    this script's own banner promises "nothing here involves real money".
     """
-    if not ENV_FILE.exists():
-        return
-    enabled = []
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
-            if line.strip().startswith(flag + "="):
-                if line.split("=", 1)[1].strip().strip('"\'').lower() == "true":
-                    enabled.append(flag)
+    enabled = _live_flags_enabled_in_env(ENV_FILE)
     if enabled:
         print("REFUSING to send a test signal.")
-        print(f"  {' and '.join(sorted(set(enabled)))} is set to true in .env.")
+        print(f"  {' and '.join(enabled)} is enabled in .env.")
         print("  This project is paper-only. Set both to false and try again.")
         pause_and_exit(1)
 

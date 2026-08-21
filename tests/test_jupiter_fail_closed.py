@@ -323,7 +323,30 @@ async def test_a_quote_derived_fill_is_marked_as_an_estimate(client, live, monke
     assert result.fill_estimated_from_quote is True
 
 
-def test_the_paper_engine_does_not_claim_its_fills_are_estimates():
+async def test_the_paper_engine_does_not_claim_its_fills_are_estimates(monkeypatch):
     """The paper fill IS the simulated execution, so the flag stays off and
-    the marker keeps meaning something."""
-    assert SwapResult(success=True).fill_estimated_from_quote is False
+    the marker keeps meaning something.
+
+    Driven through the real PaperExecutionClient rather than the dataclass
+    default: a backend that explicitly set the flag would satisfy a default
+    check while making the marker meaningless.
+    """
+    from app.execution import paper
+
+    async def price(_addr):
+        return 0.05
+
+    async def snapshot(_addr):
+        return None
+
+    monkeypatch.setattr(paper.price_feed, "get_price_usd", price)
+    monkeypatch.setattr(paper.price_feed, "get_market_snapshot", snapshot)
+
+    client = paper.PaperExecutionClient()
+    bought = await client.buy("MintPAPER", 100.0, 150)
+    assert bought.success
+    assert bought.fill_estimated_from_quote is False
+
+    sold = await client.sell("MintPAPER", bought.filled_qty, 150)
+    assert sold.success
+    assert sold.fill_estimated_from_quote is False

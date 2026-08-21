@@ -165,6 +165,43 @@ def write_env_file() -> str | None:
     return dashboard_password
 
 
+def _env_flag_is_enabled(raw: str) -> bool:
+    """Does this .env value mean "on"?
+
+    Matches what pydantic-settings accepts for a bool, not just the literal
+    string "true". `LIVE_TRADING=1`, `yes` and `on` all produce a live
+    application, and a guard that only recognised "true" would wave them
+    through - a fail-open in the very check that exists to prevent one.
+
+    Anything unrecognised counts as ENABLED. This is a refusal path: an
+    unparseable value means the configuration cannot be confirmed safe, and
+    the wrong way to resolve that is to assume it is.
+    """
+    value = raw.strip().strip('"').strip("'").lower()
+    if value in {"false", "0", "no", "off", "n", "f", ""}:
+        return False
+    return True
+
+
+def _live_flags_enabled_in_env(env_file) -> list[str]:
+    """Which live-execution flags are switched on in `env_file`."""
+    if not env_file.exists():
+        return []
+    enabled = []
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        # `export FOO=bar` is valid in a .env a human has edited by hand.
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):].lstrip()
+        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
+            if stripped.startswith(flag + "="):
+                if _env_flag_is_enabled(stripped.split("=", 1)[1]):
+                    enabled.append(flag)
+    return sorted(set(enabled))
+
+
 def refuse_if_live_configured() -> None:
     """Refuse to launch a live-configured bot.
 
@@ -173,21 +210,14 @@ def refuse_if_live_configured() -> None:
     .env directly instead.
 
     This matters most on the KEPT-.env path above: write_env_file() returns
-    early when .env already exists, so a file carrying LIVE_TRADING=true
-    from some earlier experiment survives untouched and the launcher would
-    start the server against it without a word.
+    early when .env already exists, so a file carrying a live flag from
+    some earlier experiment survives untouched and the launcher would start
+    the server against it without a word.
     """
-    if not ENV_FILE.exists():
-        return
-    enabled = []
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
-            if line.strip().startswith(flag + "="):
-                if line.split("=", 1)[1].strip().strip('"\'').lower() == "true":
-                    enabled.append(flag)
+    enabled = _live_flags_enabled_in_env(ENV_FILE)
     if enabled:
         fail(
-            f"{' and '.join(sorted(set(enabled)))} is set to true in your .env.\n"
+            f"{' and '.join(enabled)} is enabled in your .env.\n"
             "    This project is paper-only: no wallet keys, no real funds, no live\n"
             "    orders. Set both LIVE_TRADING and LIVE_EXECUTION_ACKNOWLEDGED to\n"
             "    false and run this again."

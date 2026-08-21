@@ -188,6 +188,13 @@ class Trade(Base):
     fee_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     execution_cost_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     fill_delay_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # True when qty/price came from a pre-trade QUOTE rather than from the
+    # executed transaction (app/execution/base.py). Persisted because the
+    # flag is useless if it stops at SwapResult: a quote-derived fill would
+    # then be indistinguishable from a measured one in every later P&L and
+    # calibration query. NULL on rows written before this existed, which
+    # correctly means "not recorded at the time" rather than "measured".
+    fill_estimated_from_quote: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Which strategy configuration produced this trade (StrategyVersion
     # label). Results from materially different configurations must never
     # be silently pooled - a stats table mixing v1 and v3 trades answers a

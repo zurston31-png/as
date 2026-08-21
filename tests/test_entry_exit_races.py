@@ -94,16 +94,20 @@ class _SlowSeller:
         return _Result(qty)
 
 
-class _Result:
-    def __init__(self, qty):
-        self.success = True
-        self.filled_qty = qty
-        self.avg_price = 1.10
-        self.tx_hash = "0xrace"
-        self.fee_usd = 0.0
-        self.execution_cost_pct = 0.0
-        self.fill_delay_seconds = 0.0
-        self.error = None
+def _Result(qty):
+    """The real SwapResult, not a look-alike.
+
+    A hand-rolled stub drifts: this one was missing
+    `fill_estimated_from_quote` the moment that field was added, and the
+    failure surfaced as an AttributeError deep in the close path rather
+    than as anything to do with the race under test.
+    """
+    from app.execution.base import SwapResult
+
+    return SwapResult(
+        success=True, filled_qty=qty, avg_price=1.10, tx_hash="0xrace",
+        fee_usd=0.0, execution_cost_pct=0.0, fill_delay_seconds=0.0,
+    )
 
 
 @pytest.fixture()

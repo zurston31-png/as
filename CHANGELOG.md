@@ -8,15 +8,17 @@ this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,591 passing**, of which **184 are new this session**
-across 11 new test files. Every commit was pushed and CI was green on
+**Test suite: 1,621 passing**, of which **213 are new this session**
+across 13 new test files. Every commit was pushed and CI was green on
 every one checked.
 
 ---
 
 ## What this session found
 
-Seven genuine defects. The suite that existed before this session passed
+Nine genuine defects, two of them found in a second review round — one of
+which was a fail-open in safety code written earlier in this same session.
+The suite that existed before this session passed
 against every one of them, so each got a test reproducing the exact
 condition rather than a nearby one. They are listed before the features
 because they matter more.
@@ -110,7 +112,44 @@ which told the operator to fund a wallet and set `LIVE_TRADING=true` —
 are replaced with a paper-run checklist. A test greps the docs so they
 cannot come back.
 
-### 5. A documented safety mechanism did not exist — `c642a20`
+### 5. A drained pool looked perfectly stable — round 2
+
+`liquidity_stability` collected depth readings with `if o.liquidity_usd`,
+which is falsy for `0.0`. Every zero reading was dropped, so the swing was
+computed over only the surviving non-zero depths — and a pool that went
+from $50,000 to zero came out with a stability of **1.0, perfectly
+stable.** Verified against the old code: it really did report 1.0.
+
+Two siblings in the same file, same root cause — a measurement that could
+not be taken, or a genuine zero, treated as interchangeable:
+
+- `txn_rate_change` guarded on `buys_1h` alone and then folded a missing
+  `sells_1h` to zero with `or 0`, publishing a half-reported observation
+  as a complete one. `pressure()` two functions below already required
+  both counts.
+- Four detail strings used `if value` rather than `if value is not None`,
+  so a genuine 0.0 ratio was described as "volume or liquidity missing"
+  when both had been measured.
+
+Fixing the liquidity filter also exposed a latent `ZeroDivisionError` when
+every reading is zero — now reported as unmeasurable rather than as the
+1.0 that would have claimed perfect stability for a pool that no longer
+exists.
+
+### 6. The paper-only guard did not recognise `LIVE_TRADING=1` — round 2
+
+A fail-open in the guard added earlier in this same session. The launcher
+and test-signal sender are stdlib-only, so they parse `.env` by hand — and
+they matched only the literal string `true`. pydantic-settings accepts
+`1`, `yes`, `on`, `y`, `t` and `True` as well, so a bot configured with
+any of those was live while the guard waved it through, reporting a safety
+it was not providing.
+
+Both now share a parser checked against pydantic's actual behaviour, skip
+commented lines, handle `export FOO=bar`, and treat an unparseable value
+as ENABLED — a refusal path should not resolve "I cannot tell" as "safe".
+
+### 7. A documented safety mechanism did not exist — `c642a20`
 
 `app/concurrency.py`'s docstring claimed `reserved_elsewhere` made the
 two-process case fail loudly. No such function existed, and never had. The
@@ -295,9 +334,11 @@ Reported as findings-of-no-finding rather than skipped:
 
 - **The Jupiter fill is estimated from the quote, not read from the
   chain.** `SwapResult.fill_estimated_from_quote` labels it rather than
-  passing it off as a measurement. Reading the executed amounts needs the
-  transaction's token balance deltas, which this backend does not parse.
-  Live path only — unreachable while the flags are off.
+  passing it off as a measurement, and the flag is now persisted on the
+  `Trade` row so a quote-derived fill cannot masquerade as a measured one
+  in later P&L. Reading the executed amounts needs the transaction's token
+  balance deltas, which this backend does not parse. Live path only —
+  unreachable while the flags are off.
 - **The VPS is still running bundle `b21a6ab`.** Everything in this
   changelog is on the branch and in the delivered zips, but nothing has
   been deployed — that needs your terminal.
