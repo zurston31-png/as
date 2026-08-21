@@ -249,6 +249,47 @@ class RiskManager:
         )
         return RiskDecision(not assessment.breached, assessment.reason)
 
+    async def evaluate_open_risk(
+        self,
+        db: Session,
+        *,
+        prospective_size_usd: float = 0.0,
+        prospective_liquidity_usd: float | None = None,
+    ) -> RiskDecision:
+        """Refuse a new entry whose worst case would spend a day's budget
+        that the open book has already committed.
+
+        Behind the same flag as the equity-aware daily loss, because it is
+        the same risk model seen from the other end - one measures what
+        the day has already cost, this one what it is still on the hook
+        for - and a deployment that had one without the other would be
+        answering half the question.
+        """
+        if not settings.RISK_EQUITY_AWARE_DAILY_LOSS:
+            return RiskDecision(True)
+
+        from app.risk import daily_loss, open_risk
+
+        day = await daily_loss.assess(db, daily_loss_limit_pct=self.daily_loss_limit_pct)
+        if day.breached:
+            return RiskDecision(False, day.reason)
+
+        risk = await open_risk.assess(
+            db,
+            remaining_daily_loss_budget_usd=day.remaining_budget_usd,
+            prospective_size_usd=prospective_size_usd,
+            prospective_stop_loss_pct=self.stop_loss_pct,
+            prospective_liquidity_usd=prospective_liquidity_usd,
+        )
+        if risk.remaining_daily_loss_budget_after_open_risk_usd < 0:
+            return RiskDecision(
+                False,
+                f"worst-case open risk ${risk.stress_loss_if_all_stops_hit_usd:,.2f} exceeds the "
+                f"${day.remaining_budget_usd:,.2f} left of today's loss budget - every stop in the "
+                f"book hitting would breach the daily limit before this trade adds to it",
+            )
+        return RiskDecision(True)
+
     def evaluate_consecutive_losses(self, db: Session) -> RiskDecision:
         """Halt after N losing trades in a row, regardless of daily P&L.
 

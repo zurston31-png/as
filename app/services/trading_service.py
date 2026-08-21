@@ -534,6 +534,24 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
         await notifier.notify_rejection(signal, cluster.reason)
         return
 
+    # --- worst-case open risk -------------------------------------------
+    # The last gate, and the only one that asks about the future: if every
+    # stop already in the book were hit, plus this one, would the day's
+    # loss limit be breached? Placed here because it needs the sized
+    # notional - a check that ran before sizing could not include the
+    # trade it is deciding on. No-op unless RISK_EQUITY_AWARE_DAILY_LOSS
+    # is set; see app/risk/open_risk.py.
+    open_risk_gate = await risk_manager.evaluate_open_risk(
+        db, prospective_size_usd=size_usd, prospective_liquidity_usd=trusted_liquidity,
+    )
+    if not open_risk_gate.allowed:
+        db.add(models.RiskEvent(
+            event_type="open_risk_rejected", details=open_risk_gate.reason, signal_id=signal.id,
+        ))
+        _stage(db, signal, pipeline.RISK, False, open_risk_gate.reason)
+        await notifier.notify_rejection(signal, open_risk_gate.reason)
+        return
+
     instrument = _instrument_id(signal.symbol, signal.token_address)
     client = get_execution_client()
     result = await client.buy(instrument, size_usd, settings.SLIPPAGE_BPS)
