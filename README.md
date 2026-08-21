@@ -684,27 +684,36 @@ docker compose logs -f bot
 `deploy/systemd/memecoin-bot.service`) means the bot comes back automatically
 after a crash or reboot — no manual restart needed.
 
-## Going-live checklist
+## Paper-run checklist
 
-1. **Paper trade for at least 1–2 weeks.** Review every simulated trade,
-   rejection, and halt in the dashboard/DB. Confirm the strategy and risk
-   limits behave the way you expect.
-2. Fund a **dedicated** wallet/exchange sub-account with only the capital
-   you're fully prepared to lose. Memecoins carry substantial risk of total
-   loss, including from tokens that pass the rug-check filter — the filter
-   reduces but does not eliminate scam risk.
-3. Set `PORTFOLIO_STARTING_BALANCE_USD` to match what you actually funded —
-   in live mode the bot tracks P&L against this figure via an internal
-   ledger, it does not poll a wallet/exchange balance automatically.
-4. Double-check `MAX_PORTFOLIO_PCT_PER_TRADE`, `DAILY_LOSS_LIMIT_PCT`,
-   `MAX_CONCURRENT_POSITIONS`, `MAX_TRADE_SIZE_USD`,
-   `MAX_EXPOSURE_PER_TOKEN_PCT`, `MAX_TOTAL_EXPOSURE_PCT`,
-   `MAX_CONSECUTIVE_LOSSES`, `MAX_DAILY_TRADES`, and `TRADE_COOLDOWN_SECONDS`
-   for your real risk tolerance.
-5. Set `SOLANA_PRIVATE_KEY` (or CEX API keys), `pip install -r
-   requirements-live.txt`, then set `LIVE_TRADING=true` and restart.
-6. Watch the first several live trades closely and confirm Telegram/Discord
-   alerts are arriving.
+This project is **paper only**. `LIVE_TRADING` and
+`LIVE_EXECUTION_ACKNOWLEDGED` stay `false`, there are no wallet keys, no
+real funds, and no live-order execution. The launcher, the scanner one-shot
+and the test-signal sender all refuse to run if either flag is turned on
+(`app/safety/paper_only.py`), so this is enforced rather than advised.
+
+What to do instead of going live:
+
+1. **Collect.** Leave the bot running and let it accumulate observations.
+   `python scripts/research.py preflight` confirms the deployment can
+   actually record what it needs to.
+2. **Watch the funnel, not the P&L.** `/pipeline` shows where candidates
+   are lost and whether the background workers are alive; `/rejections`
+   attributes losses per mint and shows what each filter uniquely
+   contributes.
+3. **Check the evidence grade before believing a number.** `/research`
+   labels every statistic INSUFFICIENT / EARLY / USABLE / STRONG by sample
+   size (`app/analysis/evidence_grade.py`). A grade describes precision,
+   never quality - a well-measured loss grades STRONG.
+4. **Do not tune the frozen parameters.** Scoring formulas, thresholds,
+   weights, exit policy, fees, the slippage model and the regime and
+   liquidity classifiers are covered by the strategy version hash. Editing
+   one mints a new version and splits the dataset. A change worth making
+   becomes a new challenger, not an edit to the champion - see `CLAUDE.md`.
+5. **Judge a filter by outcomes, not by rejection counts.** The tempting
+   inference - "liquidity rejects the most, so loosen it" - is exactly the
+   one the rejection data cannot support. `/rejections` links to the
+   forward-return comparison that can, once enough outcomes exist.
 
 ## Backtesting
 

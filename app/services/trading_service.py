@@ -287,6 +287,13 @@ async def _evaluate_and_enter(db: Session, signal: models.Signal) -> None:
     # gates finish. Reading it back off the signal would work too, but the
     # score object carries the factor breakdown the observation wants.
     _last_score = None
+    # Assigned only when scoring actually runs, but read further down by the
+    # regime back-fill and by the early engine - and BOTH of those run
+    # independently of LIVE_SIGNAL_SCORE_ENABLED. Without this, disabling
+    # scoring while the early engine is on raised UnboundLocalError inside a
+    # try that logs and continues, so the early engine silently stopped
+    # working for every candidate and nothing said why.
+    scored_event = None
 
     if settings.LIVE_SIGNAL_SCORE_ENABLED:
         # No liquidity argument here: the market snapshot is fetched by the

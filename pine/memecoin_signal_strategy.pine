@@ -102,8 +102,13 @@ jsonNum(value, fmt) =>
 jsonStr(value) =>
     str.replace_all(str.replace_all(value, "\\", "\\\\"), "\"", "\\\"")
 
-PRICE_FMT = "#.############"
-IND_FMT   = "#.####"
+// A LEADING ZERO IS REQUIRED. Pine's "#" is an optional digit, so
+// str.tostring(0.00042, "#.############") yields ".00042" - and a bare
+// leading "." is not a valid JSON number, so the whole alert payload is
+// rejected. Memecoin prices are almost always below 1, which made this the
+// normal case rather than an edge case. "0" forces the digit.
+PRICE_FMT = "0.############"
+IND_FMT   = "0.####"
 
 // ---------------- Webhook payload ----------------
 buildPayload(signalType) =>

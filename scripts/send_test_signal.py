@@ -29,6 +29,31 @@ def pause_and_exit(code: int = 0) -> None:
     sys.exit(code)
 
 
+def refuse_if_live_configured() -> None:
+    """Do not send a buy signal into a live-configured bot.
+
+    This script is deliberately stdlib-only - it reads .env and posts HTTP,
+    with no app import - so it reads the flags the same way it reads the
+    secret rather than importing app.safety.paper_only. Both flags are
+    checked: LIVE_TRADING=false with the acknowledgement left on is one
+    restart away from real orders, and this script's own banner promises
+    "nothing here involves real money".
+    """
+    if not ENV_FILE.exists():
+        return
+    enabled = []
+    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
+            if line.strip().startswith(flag + "="):
+                if line.split("=", 1)[1].strip().strip('"\'').lower() == "true":
+                    enabled.append(flag)
+    if enabled:
+        print("REFUSING to send a test signal.")
+        print(f"  {' and '.join(sorted(set(enabled)))} is set to true in .env.")
+        print("  This project is paper-only. Set both to false and try again.")
+        pause_and_exit(1)
+
+
 def read_secret() -> str:
     if not ENV_FILE.exists():
         print("Couldn't find your .env file.")
@@ -74,6 +99,7 @@ def post(payload: dict) -> None:
 
 
 def main() -> None:
+    refuse_if_live_configured()
     secret = read_secret()
 
     print("=" * 68)

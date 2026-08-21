@@ -119,7 +119,14 @@ sudo ufw allow 80,443/tcp
 sudo ufw enable
 ```
 
-## 4. Going live
+## 4. Keep it paper-only
 
-Do not skip the paper-trading period. See the README's "Going live
-checklist" before setting `LIVE_TRADING=true` and funding a real wallet.
+There is no going-live step. `LIVE_TRADING` and
+`LIVE_EXECUTION_ACKNOWLEDGED` stay `false`: no wallet keys, no real funds,
+no live-order execution. The launcher and the operator scripts refuse to
+start against an .env with either flag enabled
+(`app/safety/paper_only.py`), and `python scripts/research.py preflight`
+reports the same check for a running deployment.
+
+See the README's "Paper-run checklist" for what to do with the collection
+run instead.

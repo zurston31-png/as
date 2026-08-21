@@ -24,7 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import settings  # noqa: E402
-from app.database import SessionLocal, init_db  # noqa: E402
+from app.database import SessionLocal, init_db
+from app.safety.paper_only import require_paper_only  # noqa: E402
 from app.scanner.discovery import discover_tokens  # noqa: E402
 from app.scanner.filters import prescreen  # noqa: E402
 from app.scanner.loop import scan_once  # noqa: E402
@@ -73,9 +74,11 @@ async def discover_only() -> None:
 
 
 async def full_cycle() -> None:
+    # A full cycle can reach the execution backend, so it checks BOTH live
+    # flags rather than printing "PAPER" off LIVE_TRADING alone.
+    require_paper_only()
     init_db()
-    mode = "LIVE" if settings.LIVE_TRADING else "PAPER"
-    print(f"Running one FULL scanner cycle in {mode} mode...")
+    print("Running one FULL scanner cycle in PAPER mode...")
     print("  (discover -> pre-screen -> signal score -> rug check -> size -> execute)")
     print()
 

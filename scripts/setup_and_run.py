@@ -165,6 +165,35 @@ def write_env_file() -> str | None:
     return dashboard_password
 
 
+def refuse_if_live_configured() -> None:
+    """Refuse to launch a live-configured bot.
+
+    Also stdlib-only, like the rest of this launcher - it has to run before
+    the venv exists, so it cannot import app.safety.paper_only and reads
+    .env directly instead.
+
+    This matters most on the KEPT-.env path above: write_env_file() returns
+    early when .env already exists, so a file carrying LIVE_TRADING=true
+    from some earlier experiment survives untouched and the launcher would
+    start the server against it without a word.
+    """
+    if not ENV_FILE.exists():
+        return
+    enabled = []
+    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
+            if line.strip().startswith(flag + "="):
+                if line.split("=", 1)[1].strip().strip('"\'').lower() == "true":
+                    enabled.append(flag)
+    if enabled:
+        fail(
+            f"{' and '.join(sorted(set(enabled)))} is set to true in your .env.\n"
+            "    This project is paper-only: no wallet keys, no real funds, no live\n"
+            "    orders. Set both LIVE_TRADING and LIVE_EXECUTION_ACKNOWLEDGED to\n"
+            "    false and run this again."
+        )
+
+
 def init_database() -> None:
     result = subprocess.run([str(venv_python()), "scripts/init_db.py"], cwd=REPO_ROOT)
     if result.returncode != 0:
@@ -219,6 +248,10 @@ def main() -> None:
     generated_password = write_env_file()
 
     step(5, total, "Setting up the database...")
+    # After the .env is settled (created or kept) and before anything is
+    # started against it.
+    refuse_if_live_configured()
+
     init_database()
 
     username, password = read_dashboard_credentials()

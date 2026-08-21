@@ -204,12 +204,18 @@ def price_acceleration(series: CandleSeries) -> list[Feature]:
     CONTROLLED or already violent."""
     out: list[Feature] = []
     closes = series.closes
-    if len(closes) < 60:
+    # 61, not 60. The longest lookback below reads closes[-lookback - 1]
+    # with lookback=60, which is closes[-61] - and that raises IndexError on
+    # a list of exactly 60. `extract` calls this outside any handler, so the
+    # off-by-one took out the whole feature set for a token sitting on the
+    # boundary. breakout_proximity below already gets this right with its
+    # `lookback + 1` guard; the two now agree.
+    if len(closes) < 61:
         return [
-            _missing("return_short", "fewer than 60 bars", "candles"),
-            _missing("return_medium", "fewer than 60 bars", "candles"),
-            _missing("return_long", "fewer than 60 bars", "candles"),
-            _missing("acceleration_smoothness", "fewer than 60 bars", "candles"),
+            _missing("return_short", "fewer than 61 bars", "candles"),
+            _missing("return_medium", "fewer than 61 bars", "candles"),
+            _missing("return_long", "fewer than 61 bars", "candles"),
+            _missing("acceleration_smoothness", "fewer than 61 bars", "candles"),
         ]
 
     now = closes[-1]
