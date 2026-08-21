@@ -924,7 +924,7 @@ async def partial_close_position(
 
 async def _check_halt_conditions(db: Session) -> None:
     """Run the post-trade halt checks shared by full and partial exits."""
-    daily = risk_manager.evaluate_daily_loss(db)
+    daily = await risk_manager.assess_daily_loss(db)
     if not daily.allowed:
         halt_trading(db, daily.reason)
         await notifier.notify_risk_halt(daily.reason)

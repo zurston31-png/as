@@ -117,6 +117,16 @@ class Settings(BaseSettings):
     PORTFOLIO_STARTING_BALANCE_USD: float = 1000.0
     MAX_EXPOSURE_PER_TOKEN_PCT: float = 0.10
     MAX_TOTAL_EXPOSURE_PCT: float = 0.60
+    # Measure the daily loss as a drawdown in EQUITY against the equity the
+    # day started at, instead of as realized P&L against a fixed starting
+    # balance. See app/risk/daily_loss.py for what the current check
+    # misses (open positions, and a limit that never re-bases).
+    #
+    # Off by default and deliberately so: it is a change to live risk
+    # behavior, and enabling it mints a new strategy version - which is
+    # correct, because the two rules would halt on different days and
+    # pooling their results would describe a bot that never ran.
+    RISK_EQUITY_AWARE_DAILY_LOSS: bool = False
     # --- correlation risk (app/risk/book.py) ---
     # Five memecoins are not five independent positions. The per-token and
     # total exposure caps above are both satisfied by a book that is really

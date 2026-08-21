@@ -207,6 +207,15 @@ class RiskManager:
         return RiskDecision(True)
 
     def evaluate_daily_loss(self, db: Session) -> RiskDecision:
+        """Realized-only daily loss against a fixed starting balance.
+
+        This is the frozen champion rule and is left exactly as it was.
+        Its three known weaknesses - open positions are invisible, the
+        reference never re-bases, and it is only consulted after a close -
+        are documented and addressed in app/risk/daily_loss.py, behind
+        RISK_EQUITY_AWARE_DAILY_LOSS. Prefer `assess_daily_loss` below,
+        which dispatches on that flag, over calling this directly.
+        """
         start, end = _day_bounds()
         starting_balance = settings.PORTFOLIO_STARTING_BALANCE_USD
         realized_today = (
@@ -222,6 +231,23 @@ class RiskManager:
                 False, f"daily realized loss ${total:,.2f} breached limit -${loss_limit:,.2f}"
             )
         return RiskDecision(True)
+
+    async def assess_daily_loss(self, db: Session) -> RiskDecision:
+        """The daily-loss verdict, from whichever rule is configured.
+
+        One entry point rather than two call sites choosing for
+        themselves: a flag that some callers honour and others do not is
+        worse than either rule on its own.
+        """
+        if not settings.RISK_EQUITY_AWARE_DAILY_LOSS:
+            return self.evaluate_daily_loss(db)
+
+        from app.risk import daily_loss
+
+        assessment = await daily_loss.assess(
+            db, daily_loss_limit_pct=self.daily_loss_limit_pct
+        )
+        return RiskDecision(not assessment.breached, assessment.reason)
 
     def evaluate_consecutive_losses(self, db: Session) -> RiskDecision:
         """Halt after N losing trades in a row, regardless of daily P&L.

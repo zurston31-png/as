@@ -110,6 +110,19 @@ BEHAVIORAL_SETTINGS = (
     "SHADOW_HORIZONS_MINUTES",
 )
 
+# Flags that decide nothing until they are switched on, and are therefore
+# digested ONLY while they are on.
+#
+# A disabled feature changes no trade, so listing one in BEHAVIORAL_SETTINGS
+# would mint a new version - splitting the collected dataset - the moment
+# the flag was merely *added*, before it had ever done anything. Folding it
+# in only when it is true gives both halves of what is wanted: adding a
+# dormant flag is free, and enabling it splits history exactly as any other
+# strategy change does.
+OPT_IN_BEHAVIORAL_SETTINGS = (
+    "RISK_EQUITY_AWARE_DAILY_LOSS",
+)
+
 
 def _code_constants() -> dict:
     """Behavioral constants that live in code rather than in settings.
@@ -140,6 +153,9 @@ _cached_config: dict | None = None
 def current_config() -> dict:
     """The behavioral settings and constants, as a plain sorted dict."""
     config = {name: getattr(settings, name, None) for name in sorted(BEHAVIORAL_SETTINGS)}
+    for name in sorted(OPT_IN_BEHAVIORAL_SETTINGS):
+        if getattr(settings, name, False):
+            config[name] = True
     config.update(_code_constants())
     return config
 
