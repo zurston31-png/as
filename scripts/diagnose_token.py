@@ -25,7 +25,17 @@ GOPLUS_SOLANA = "https://api.gopluslabs.io/api/v1/solana/token_security?contract
 GOPLUS_EVM = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}?contract_addresses={addr}"
 RUGCHECK = "https://api.rugcheck.xyz/v1/tokens/{addr}/report"
 GECKOTERMINAL_POOLS = "https://api.geckoterminal.com/api/v2/networks/{network}/tokens/{addr}/pools"
-GECKOTERMINAL_OHLCV = "https://api.geckoterminal.com/api/v2/networks/{network}/pools/{pool}/ohlcv/minute?aggregate=15&limit=5&currency=usd"
+# Ask for what the BOT asks for, not a token sample. A five-candle probe
+# proves the response shape and nothing about depth, and the gate rejects on
+# depth - so a sample-sized request let this script print "should work" for a
+# token the bot would refuse every time.
+MIN_CANDLES = 60          # app.config.settings.SIGNAL_SCORE_MIN_CANDLES
+CANDLE_LIMIT = 300        # app.config.settings.SIGNAL_SCORE_CANDLE_LIMIT
+TIMEFRAME_LABEL = "15m"   # app.config.settings.SIGNAL_SCORE_TIMEFRAME
+GECKOTERMINAL_OHLCV = (
+    "https://api.geckoterminal.com/api/v2/networks/{network}/pools/{pool}"
+    f"/ohlcv/minute?aggregate=15&limit={CANDLE_LIMIT}&currency=usd"
+)
 
 EVM_CHAIN_IDS = {
     "ethereum": "1", "bsc": "56", "polygon": "137", "arbitrum": "42161",
@@ -195,8 +205,25 @@ def main() -> None:
                 if isinstance(gt_ohlcv_raw, dict):
                     ohlcv_list = ((gt_ohlcv_raw.get("data") or {}).get("attributes") or {}).get("ohlcv_list")
                 if ohlcv_list:
-                    print(f"        got {len(ohlcv_list)} sample candles, e.g. {ohlcv_list[0]}")
-                    print("        shape matches what app/data/live_provider.py expects - live signal score should work")
+                    print(f"        got {len(ohlcv_list)} candles, e.g. {ohlcv_list[0]}")
+                    print("        shape matches what app/data/live_provider.py expects")
+                    # Shape and depth are different questions. This request
+                    # asks for the same limit the bot asks for, so the count
+                    # below is the one the gate will actually see - saying
+                    # "should work" off a 5-candle sample was a claim the
+                    # sample could not support.
+                    if len(ohlcv_list) >= MIN_CANDLES:
+                        print(
+                            f"        {len(ohlcv_list)} >= {MIN_CANDLES} required - "
+                            f"the signal-score gate has enough history for this token"
+                        )
+                    else:
+                        print(
+                            f"        ONLY {len(ohlcv_list)} of the {MIN_CANDLES} candles the gate "
+                            f"requires ({TIMEFRAME_LABEL}). Every signal for this token will be "
+                            f"rejected as 'no trustworthy candle data' until the pool has more "
+                            f"history - this is the token being too new for the timeframe, not a bug."
+                        )
                 else:
                     err = gt_ohlcv_raw.get("__error__") if isinstance(gt_ohlcv_raw, dict) else None
                     print(f"        UNEXPECTED RESPONSE SHAPE ({err or 'no ohlcv_list found'}) - "
