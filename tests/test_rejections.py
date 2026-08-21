@@ -363,8 +363,12 @@ def test_the_rejections_api_returns_the_same_numbers(clean_db):
         "/api/rejections?hours=24",
         auth=(settings.DASHBOARD_USERNAME, settings.DASHBOARD_PASSWORD),
     ).json()
-    assert body["mints_seen"] == 1
-    assert body["terminal_stage_counts"] == {"PRESCREEN": 1}
+    assert body["rejections"]["mints_seen"] == 1
+    assert body["rejections"]["terminal_stage_counts"] == {"PRESCREEN": 1}
+    # The three views ship together: counts, marginal contribution, and
+    # outcomes. A consumer reading only the first would draw exactly the
+    # conclusion the page warns against.
+    assert set(body) == {"rejections", "ablation", "filter_quality"}
 
 
 def test_the_page_requires_authentication():

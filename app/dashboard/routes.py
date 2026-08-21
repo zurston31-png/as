@@ -17,6 +17,8 @@ from app.analysis.calibration import HORIZONS_MINUTES, build_calibration
 from app.analysis.collection import check_collection
 from app.analysis.dataset import build_dataset_report, milestone_gap
 from app.analysis.forward_returns import coverage as forward_coverage
+from app.analysis.ablation import build_ablation
+from app.analysis.filter_quality import build_filter_quality
 from app.analysis.rejections import NEAR_MISS_POINTS, build_rejection_report
 from app.analysis.resolver_health import check_resolver_health
 from app.analysis.research_report import build_research_report
@@ -446,7 +448,15 @@ async def rejections(request: Request, hours: float = 24.0, user: str = Depends(
     """
     db = SessionLocal()
     try:
-        report = build_rejection_report(db, window_hours=hours if hours > 0 else None)
+        window = hours if hours > 0 else None
+        report = build_rejection_report(db, window_hours=window)
+        # Three views of the same gates, and the order on the page is the
+        # order of increasing authority: where candidates stop (counts),
+        # what each check uniquely contributes (counts), and finally
+        # whether rejecting them was right (outcomes). Only the last can
+        # justify a change, and it is the one that is usually empty.
+        ablation = build_ablation(db, window_hours=window)
+        quality = build_filter_quality(db, window_hours=window)
         return templates.TemplateResponse(
             request,
             "rejections.html",
@@ -455,6 +465,8 @@ async def rejections(request: Request, hours: float = 24.0, user: str = Depends(
                     "has_data": report.has_data,
                     "stages": [s.as_dict() for s in report.stages],
                 },
+                "ablation": ablation.as_dict() | {"has_data": ablation.has_data},
+                "quality": quality.as_dict(),
                 "hours": int(hours),
                 "near_miss_points": int(NEAR_MISS_POINTS),
             },
@@ -467,9 +479,12 @@ async def rejections(request: Request, hours: float = 24.0, user: str = Depends(
 async def api_rejections(hours: float = 24.0, user: str = Depends(check_auth)):
     db = SessionLocal()
     try:
-        return JSONResponse(
-            build_rejection_report(db, window_hours=hours if hours > 0 else None).as_dict()
-        )
+        window = hours if hours > 0 else None
+        return JSONResponse({
+            "rejections": build_rejection_report(db, window_hours=window).as_dict(),
+            "ablation": build_ablation(db, window_hours=window).as_dict(),
+            "filter_quality": build_filter_quality(db, window_hours=window).as_dict(),
+        })
     finally:
         db.close()
 

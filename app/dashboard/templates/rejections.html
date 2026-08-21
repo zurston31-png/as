@@ -195,6 +195,101 @@
   </div>
   {% endif %}
 
+  {% endif %}
+
+  {% if ablation.has_data %}
+  <div class="card">
+    <h2>What each pre-screen check uniquely contributes</h2>
+    <p class="note" style="margin-top:0">
+      Every pre-screen check runs on every candidate and all five verdicts are recorded, so
+      removing one from a recorded result is arithmetic rather than a simulation. The column
+      that matters is <strong>only this check</strong>: mints nothing else would have caught.
+      A check that rejects 480 tokens of which 478 also fail three other checks is doing
+      almost nothing, and the funnel would look near-identical without it.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Check</th>
+          <th class="num">Rejected</th>
+          <th class="num">Only this check</th>
+          <th class="num">Also caught elsewhere</th>
+          <th class="num">Marginal share</th>
+          <th class="num">Would pass without it</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in ablation.checks %}
+        <tr>
+          <td>{{ c.check }}</td>
+          <td class="num">{{ c.rejected }}</td>
+          <td class="num">{{ c.uniquely_rejected }}</td>
+          <td class="num">{{ c.redundant_rejections }}</td>
+          <td class="num">
+            {%- if c.marginal_share_pct is not none %}{{ c.marginal_share_pct }}%
+            {%- else %}<span class="muted">&mdash;</span>{% endif -%}
+          </td>
+          <td class="num">{{ ablation.would_pass_without.get(c.check, ablation.mints_passing_all) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="note">
+      {{ ablation.mints_evaluated }} mint(s) evaluated, {{ ablation.mints_passing_all }} passing
+      every check.
+      {% if ablation.note %}<br>{{ ablation.note }}{% endif %}
+      <br>A large marginal contribution says a check is <em>load-bearing</em>, not that it is
+      <em>correct</em>. It might be the best filter here or the worst; these counts cannot tell.
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Was rejecting them right?</h2>
+    <p class="note" style="margin-top:0">
+      The only question on this page that can justify changing a threshold, and the only one
+      that needs outcomes rather than counts: the forward returns of the tokens each check
+      rejected, against the ones it kept. Both arms need
+      {{ quality.min_arm_sample }} measured outcomes before a check can be judged at all.
+    </p>
+    <div class="warn">{{ quality.summary }}</div>
+    {% set measurable = quality.checks | selectattr('measured') | list %}
+    {% if measurable %}
+    <table>
+      <thead>
+        <tr>
+          <th>Check</th>
+          <th class="num">Kept (n)</th>
+          <th class="num">Median kept</th>
+          <th class="num">Rejected (n)</th>
+          <th class="num">Median rejected</th>
+          <th>Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in measurable %}
+        <tr>
+          <td>{{ c.check }}</td>
+          <td class="num">{{ c.passed_arm.n }}</td>
+          <td class="num">{{ '%+.1f' | format(c.passed_arm.median) if c.passed_arm.median is not none else '—' }}%</td>
+          <td class="num">{{ c.failed_arm.n }}</td>
+          <td class="num">{{ '%+.1f' | format(c.failed_arm.median) if c.failed_arm.median is not none else '—' }}%</td>
+          <td>{{ c.verdict }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      No check has {{ quality.min_arm_sample }} measured outcomes on both sides yet.<br>
+      That is the correct answer at this sample size, not a gap to route around &mdash; keep
+      collecting.
+    </div>
+    {% endif %}
+  </div>
+
+  {% if r.has_data %}
+
   <div class="card">
     <h2>How to read this</h2>
     <div class="note">
