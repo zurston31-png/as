@@ -17,6 +17,8 @@
     python scripts/research.py resolve   [symbols...]  which mint does a symbol mean?
     python scripts/research.py collection              is the paper run collecting cleanly?
     python scripts/research.py counterfactual          what the filters rejected, and its worth
+    python scripts/research.py filters                 each pre-screen threshold, judged separately
+    python scripts/research.py fills                   were the paper fills realistically costed?
     python scripts/research.py degradation             has recent behaviour drifted from baseline?
     python scripts/research.py diagnose                triage the recorded data
     python scripts/research.py changelog               what autopilot changed, and why
@@ -454,6 +456,112 @@ def cmd_preflight(args) -> int:
     if args.json:
         print(json.dumps(report.as_dict(), indent=2))
     return 1 if report.blocking else 0
+
+
+def cmd_fills(args) -> int:
+    from app.analysis.fill_audit import build_fill_audit
+
+    db = SessionLocal()
+    try:
+        audit = build_fill_audit(db)
+    finally:
+        db.close()
+
+    print(RULE)
+    print(" FILLS - were the paper fills actually charged what they claim?")
+    print(RULE)
+    print(
+        "   Every performance number inherits an optimistic fill and none of them\n"
+        "   can detect one, so this runs before any of them is worth quoting.\n"
+    )
+    d = audit.as_dict()
+    print(f"   fills          {d['fills']} ({d['costed']} costed, {d['uncosted']} NOT costed)")
+    if d["mean_cost_pct"] is not None:
+        print(f"   mean cost      {d['mean_cost_pct']:+.3f}%  (spread+fee floor {d['spread_plus_fee_floor_pct']:.3f}%)")
+    if d["mean_delay_seconds"] is not None:
+        print(f"   mean delay     {d['mean_delay_seconds']:.2f}s")
+    if d["favourable_share_pct"] is not None:
+        print(f"   favourable     {d['favourable']} ({d['favourable_share_pct']:.0f}%) filled at or better than reference")
+
+    flagged = [f for f in audit.fills if f.problems()]
+    if flagged:
+        print("\n   Individual problems:")
+        for f in flagged[:25]:
+            print(f"     #{f.trade_id} {f.side} {f.symbol}: {'; '.join(f.problems())}")
+
+    if audit.fills:
+        print("\n   Per fill:")
+        print(f"     {'id':>5} {'side':<5} {'symbol':<12} {'cost %':>9} {'fee $':>9} {'delay s':>8}")
+        for f in audit.fills[-25:]:
+            cost = f"{f.execution_cost_pct * 100:+.3f}" if f.execution_cost_pct is not None else "  none"
+            fee = f"{f.fee_usd:.4f}" if f.fee_usd is not None else " none"
+            delay = f"{f.fill_delay_seconds:.1f}" if f.fill_delay_seconds is not None else "none"
+            print(f"     {f.trade_id:>5} {f.side:<5} {f.symbol[:12]:<12} {cost:>9} {fee:>9} {delay:>8}")
+
+    print(f"\n {audit.verdict()}")
+    if args.json:
+        print(json.dumps(d, indent=2))
+    return 0
+
+
+def cmd_filters(args) -> int:
+    from app.analysis.filter_quality import (
+        GAIN_BANDS, LOSS_BAND, MIN_ARM_SAMPLE, build_filter_quality,
+    )
+
+    db = SessionLocal()
+    try:
+        report = build_filter_quality(
+            db, horizon_minutes=args.horizon, window_hours=args.window,
+        )
+    finally:
+        db.close()
+
+    print(RULE)
+    print(" FILTERS - was each pre-screen threshold right to reject what it rejected?")
+    print(RULE)
+    print(f"   horizon        {report.horizon_minutes}min")
+    print(f"   window         {'all history' if args.window is None else f'{args.window:g}h'}")
+    print(f"   prescreens     {report.events_seen} ({report.events_with_outcome} with a measured outcome)")
+    print(f"   floor          {MIN_ARM_SAMPLE} outcomes in EACH arm before a check is judged")
+    print(
+        "\n   Returns are NET of the round trip the entry would have paid. A gross\n"
+        "   comparison flatters every rejected token, because a rejected token never\n"
+        "   paid the cost that would have eaten the difference.\n"
+    )
+
+    if not report.checks:
+        print(f" {report.summary()}\n")
+        return 0
+
+    for check in report.checks:
+        print(f" {check.check_name}  [{check.verdict()}]")
+        print(
+            f"        checked {check.checked} · passed {check.n_passed} · failed {check.n_failed}"
+            + (f" ({check.fail_rate_pct:.1f}%)" if check.fail_rate_pct is not None else "")
+            + (f" · threshold {check.threshold:,.0f}" if isinstance(check.threshold, (int, float)) else "")
+        )
+        for arm in (check.passed_arm, check.failed_arm):
+            if not arm.n:
+                print(f"          {arm.label:<20} no measured outcomes")
+                continue
+            bands = " ".join(
+                f"+{int(b)}%:{arm.share_gaining(b):.0f}%" for b in GAIN_BANDS
+            )
+            print(
+                f"          {arm.label:<20} n={arm.n:<5} "
+                f"mean {arm.mean:+.1f}% · median {arm.median:+.1f}% · "
+                f"win {arm.win_rate_pct:.0f}% · {bands} · "
+                f"{int(LOSS_BAND)}%:{arm.share_losing():.0f}%"
+                + ("" if arm.usable else "   <- below the floor")
+            )
+        print()
+
+    print(RULE)
+    print(f" {report.summary()}")
+    if args.json:
+        print(json.dumps(report.as_dict(), indent=2))
+    return 0
 
 
 def cmd_resolve(args) -> int:
@@ -895,6 +1003,19 @@ def main() -> int:
     p.add_argument("--no-probe", action="store_true", help="skip the live upstream probes")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_preflight)
+
+    p = sub.add_parser("fills", help="were the paper fills actually charged what they claim?")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_fills)
+
+    p = sub.add_parser("filters", help="was each pre-screen threshold right to reject?")
+    p.add_argument("--horizon", type=int, default=240, help="horizon in minutes (default 240)")
+    p.add_argument(
+        "--window", type=float, default=None,
+        help="only pre-screens from the last N hours (default: all history)",
+    )
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_filters)
 
     p = sub.add_parser("resolve", help="which mint does a chart symbol actually mean?")
     p.add_argument(

@@ -47,10 +47,22 @@ _stop_event = asyncio.Event()
 # ScannedToken.last_stage values, in pipeline order.
 STAGE_PRESCREEN = "prescreen"
 
-# A reduced horizon set for sampled prescreen rejects. The counterfactual
-# reads one horizon at a time and the full eight would multiply the price
-# lookups these rows cost by nearly three for no extra answer.
-PRESCREEN_HORIZONS: tuple[int, ...] = (60, 240, 1440)
+# Horizons followed for sampled prescreen rejects.
+#
+# This was (60, 240, 1440) on the reasoning that the counterfactual reads
+# one horizon at a time. That was true of the counterfactual and wrong for
+# the question underneath it: whether the pre-screen throws away winners is
+# a question about the shape of the move, and three points cannot show
+# whether a rejected token spiked at fifteen minutes and gave it all back
+# by four hours. Matching the main set makes the two comparable.
+#
+# 1-minute is deliberately absent despite being asked for. The resolver
+# polls every FORWARD_RETURN_RESOLVE_INTERVAL_SECONDS and a horizon is only
+# honoured within a quarter of its own length
+# (app/analysis/forward_returns.MAX_LATENESS_FRACTION), so a 1-minute row
+# needs a ~15-second poll to ever resolve. Scheduling one at the default
+# 300s would manufacture rows that are sealed unmeasurable by construction.
+PRESCREEN_HORIZONS: tuple[int, ...] = forward_returns.HORIZONS_MINUTES
 STAGE_EVALUATED = "evaluated"
 STAGE_TRADED = "traded"
 
