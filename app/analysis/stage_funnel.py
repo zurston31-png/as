@@ -38,8 +38,37 @@ from app.pipeline import STAGE_ORDER, TERMINAL_STAGES
 @dataclass
 class StageStats:
     stage: str
+    # ATTEMPTS: one per evaluation. The scanner re-examines a mint every
+    # SCANNER_RECHECK_MINUTES, so a token that keeps being listed is counted
+    # again each time it is judged again - which is the honest denominator
+    # for "how much work did this stage do".
     entered: int
     passed: int
+    # TOKENS: distinct mints, by the identity rule in app/identity.py. This
+    # is the denominator for "what share of the things we saw were worth
+    # trading". The two answer different questions and were previously
+    # conflated under one label, which made a busy re-check schedule look
+    # like a wider funnel.
+    unique_entered: int = 0
+    unique_passed: int = 0
+
+    @property
+    def unique_rejected(self) -> int:
+        return self.unique_entered - self.unique_passed
+
+    @property
+    def unique_pass_rate(self) -> float | None:
+        return (self.unique_passed / self.unique_entered) if self.unique_entered else None
+
+    @property
+    def attempts_per_token(self) -> float | None:
+        """How many times the average mint was judged at this stage.
+
+        Meaningfully above 1.0 means the re-check schedule is doing most of
+        the work, and any rate quoted per attempt is describing the schedule
+        rather than the market.
+        """
+        return (self.entered / self.unique_entered) if self.unique_entered else None
 
     @property
     def terminal(self) -> bool:
@@ -78,10 +107,25 @@ class StageStats:
     def as_dict(self) -> dict:
         return {
             "stage": self.stage,
+            # Attempts.
             "entered": self.entered,
             "passed": self.passed,
             "rejected": self.rejected,
             "pass_rate_pct": round(self.pass_rate * 100, 1) if self.pass_rate is not None else None,
+            # Distinct mints. Named separately rather than replacing the
+            # above: both are true, and a consumer that silently switched
+            # denominators would break every stored comparison.
+            "unique_entered": self.unique_entered,
+            "unique_passed": self.unique_passed,
+            "unique_rejected": self.unique_rejected,
+            "unique_pass_rate_pct": (
+                round(self.unique_pass_rate * 100, 1)
+                if self.unique_pass_rate is not None else None
+            ),
+            "attempts_per_token": (
+                round(self.attempts_per_token, 2)
+                if self.attempts_per_token is not None else None
+            ),
             "reached": self.reached,
             "terminal": self.terminal,
             "meaning": self.meaning,
@@ -264,11 +308,19 @@ def build_stage_funnel(
     versions: Counter[str] = Counter()
     reasons: Counter[tuple[str, str]] = Counter()
     prescreen = PrescreenBreakdown()
+    # Mint, not symbol - see app/identity.py. Two unrelated tokens sharing a
+    # ticker are two tokens, and counting them as one would understate the
+    # funnel's width in exactly the case copycats create.
+    unique_entered: dict[str, set[str]] = {}
+    unique_passed: dict[str, set[str]] = {}
 
     for event in events:
         entered[event.stage] += 1
+        key = event.token_address or f"<no-mint>:{event.symbol}"
+        unique_entered.setdefault(event.stage, set()).add(key)
         if event.passed:
             passed[event.stage] += 1
+            unique_passed.setdefault(event.stage, set()).add(key)
         else:
             reasons[(event.stage, _shorten(event.reason or "no reason recorded"))] += 1
         versions[event.strategy_version or "unversioned"] += 1
@@ -280,7 +332,16 @@ def build_stage_funnel(
                 bucket = prescreen.passed_by_check if check.get("passed") else prescreen.failed_by_check
                 bucket[name] = bucket.get(name, 0) + 1
 
-    stages = [StageStats(name, entered.get(name, 0), passed.get(name, 0)) for name in STAGE_ORDER]
+    stages = [
+        StageStats(
+            name,
+            entered.get(name, 0),
+            passed.get(name, 0),
+            unique_entered=len(unique_entered.get(name, ())),
+            unique_passed=len(unique_passed.get(name, ())),
+        )
+        for name in STAGE_ORDER
+    ]
 
     return StageFunnel(
         window_hours=window_hours,

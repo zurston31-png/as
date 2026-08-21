@@ -284,3 +284,54 @@ def test_a_filter_stage_is_labelled_as_advancing_not_profiting(clean_events):
     _emit(clean_events, pipeline.PRESCREEN, True)
     clean_events.commit()
     assert build_stage_funnel(clean_events, window_hours=None).stage("PRESCREEN").meaning == "advanced"
+
+
+# ---------------------------------------------------------------------------
+# attempts vs tokens - the two denominators must not be conflated
+# ---------------------------------------------------------------------------
+
+def test_a_rechecked_mint_counts_once_as_a_token_and_twice_as_an_attempt(clean_events):
+    """The scanner re-examines a mint every SCANNER_RECHECK_MINUTES, so a
+    token that stays listed is judged repeatedly. Both readings are true and
+    they answer different questions: "how much work did this stage do" and
+    "what share of what we saw was worth trading". Reporting only the first
+    under a token-shaped label made a busy re-check schedule look like a
+    wider funnel.
+    """
+    for _ in range(3):
+        _emit(clean_events, pipeline.PRESCREEN, False, mint="RepeatMint", reason="thin")
+    _emit(clean_events, pipeline.PRESCREEN, True, mint="GoodMint", reason="ok")
+    clean_events.commit()
+
+    stage = build_stage_funnel(clean_events, window_hours=None).stage("PRESCREEN")
+    assert stage.entered == 4 and stage.passed == 1          # attempts
+    assert stage.unique_entered == 2 and stage.unique_passed == 1   # mints
+    assert stage.pass_rate == pytest.approx(0.25)
+    assert stage.unique_pass_rate == pytest.approx(0.5)
+    assert stage.attempts_per_token == pytest.approx(2.0)
+
+
+def test_two_mints_sharing_a_symbol_are_two_tokens(clean_events):
+    """app/identity.py's rule, applied to the funnel. Counting by symbol
+    would merge a copycat into the token it is impersonating, understating
+    the funnel exactly where copycats are most common."""
+    _emit(clean_events, pipeline.PRESCREEN, False, symbol="PEPE", mint="MintA")
+    _emit(clean_events, pipeline.PRESCREEN, False, symbol="PEPE", mint="MintB")
+    clean_events.commit()
+
+    stage = build_stage_funnel(clean_events, window_hours=None).stage("PRESCREEN")
+    assert stage.unique_entered == 2
+
+
+def test_stage_counts_are_exposed_under_both_denominators(clean_events):
+    """Neither reading may quietly replace the other in the serialised form
+    - a consumer that switched denominators would break every stored
+    comparison without erroring."""
+    _emit(clean_events, pipeline.PRESCREEN, True, mint="M1")
+    clean_events.commit()
+
+    payload = build_stage_funnel(clean_events, window_hours=None).stage("PRESCREEN").as_dict()
+    for key in ("entered", "passed", "rejected", "pass_rate_pct",
+                "unique_entered", "unique_passed", "unique_rejected",
+                "unique_pass_rate_pct", "attempts_per_token"):
+        assert key in payload, f"{key} missing from the funnel payload"

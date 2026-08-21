@@ -69,7 +69,8 @@ def scanner_blocked_reason() -> str | None:
 
 
 def _track_prescreen_reject(
-    db: Session, token: DiscoveredToken, *, rng: random.Random
+    db: Session, token: DiscoveredToken, *, rng: random.Random,
+    event: models.PipelineEvent | None,
 ) -> bool:
     """Follow a SAMPLE of prescreen rejects forward, so the gate has a cost.
 
@@ -100,12 +101,15 @@ def _track_prescreen_reject(
     if rng.random() >= settings.SCANNER_PRESCREEN_TRACKING_RATE:
         return False
 
-    event = pipeline.record(
-        db, stage=pipeline.PRESCREEN, symbol=token.symbol,
-        token_address=token.token_address, chain=token.chain, passed=False,
-        reason="tracked for counterfactual analysis",
-        detail={"sampled_at_rate": settings.SCANNER_PRESCREEN_TRACKING_RATE},
-    )
+    # Anchor the forward returns to the prescreen event the caller ALREADY
+    # recorded for this token, rather than writing a second one.
+    #
+    # This used to create its own PRESCREEN row, which meant a sampled
+    # reject produced two prescreen events for one evaluation. The funnel
+    # counts events, so PRESCREEN read higher than DISCOVERED - 208 against
+    # 197 in the field - and the pass rate was computed against an inflated
+    # denominator. The sampling is meant to observe the population, not to
+    # change the count of it.
     if event is None:
         return False
     db.flush()
@@ -216,8 +220,10 @@ async def scan_once(db: Session | None = None, rng: random.Random | None = None)
 
             verdict = prescreen(token)
             # The full per-check breakdown, not just the first failure, so
-            # the funnel can say WHICH threshold rejected the token.
-            pipeline.record(
+            # the funnel can say WHICH threshold rejected the token. Held
+            # onto because the reject sampler anchors its forward returns to
+            # THIS event rather than writing a second one.
+            prescreen_event = pipeline.record(
                 db, stage=pipeline.PRESCREEN, symbol=token.symbol,
                 token_address=token.token_address, chain=token.chain,
                 passed=verdict.passed, reason=verdict.reason,
@@ -226,7 +232,7 @@ async def scan_once(db: Session | None = None, rng: random.Random | None = None)
             if not verdict.passed:
                 _record(db, token, stage=STAGE_PRESCREEN, reason=verdict.reason)
                 summary["prescreen_rejected"] += 1
-                if _track_prescreen_reject(db, token, rng=rng):
+                if _track_prescreen_reject(db, token, rng=rng, event=prescreen_event):
                     summary["prescreen_tracked"] += 1
                 considered += 1
                 continue

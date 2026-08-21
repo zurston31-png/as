@@ -484,3 +484,63 @@ def test_the_sample_is_random_rather_than_the_first_n():
 
     body = inspect.getsource(scanner_loop._track_prescreen_reject)
     assert "rng.random()" in body
+
+
+async def test_sampling_a_reject_does_not_add_a_second_prescreen_event(monkeypatch):
+    """Regression. The reject sampler used to write its own PRESCREEN row to
+    anchor the forward returns, so a sampled reject produced TWO prescreen
+    events for one evaluation.
+
+    The funnel counts events, so PRESCREEN read higher than DISCOVERED -
+    197 discovered against 208 prescreened in the field - and every
+    prescreen pass rate was computed against an inflated denominator. The
+    sampling exists to observe the population, not to change the count of
+    it, so it now anchors to the event the loop already recorded.
+    """
+    from app.analysis.stage_funnel import build_stage_funnel
+
+    monkeypatch.setattr(settings, "SCANNER_TRACK_PRESCREEN_REJECTS", True)
+    monkeypatch.setattr(settings, "SCANNER_PRESCREEN_TRACKING_RATE", 1.0)
+
+    async def one_token():
+        return [_rejected_token()]
+
+    monkeypatch.setattr(scanner_loop, "discover_tokens", one_token)
+
+    db = SessionLocal()
+    try:
+        for row in db.query(models.PipelineEvent).all():
+            db.delete(row)
+        db.commit()
+        # Earlier tests in this module follow the SAME mint forward and
+        # leave their rows behind, so only rows created below can be
+        # attributed to this scan.
+        before = db.query(models.ForwardReturn).count()
+
+        summary = await scanner_loop.scan_once(db=db, rng=_AlwaysSample())
+        db.commit()
+        assert summary["prescreen_tracked"] == 1, "the sampler must still have run"
+
+        funnel = build_stage_funnel(db, window_hours=None)
+        discovered = funnel.stage("DISCOVERED")
+        prescreen = funnel.stage("PRESCREEN")
+
+        assert prescreen.entered == 1, "one evaluation must record exactly one prescreen event"
+        assert prescreen.entered == discovered.entered, (
+            "prescreen cannot exceed discovered - every discovered token is "
+            "prescreened exactly once per evaluation"
+        )
+
+        # And the forward returns are still anchored to a real prescreen row.
+        anchored = db.query(models.ForwardReturn).all()[before:]
+        assert anchored, "the sampled reject must still be followed forward"
+        event_ids = {r.pipeline_event_id for r in anchored}
+        prescreen_ids = {
+            e.id for e in db.query(models.PipelineEvent).filter_by(stage="PRESCREEN").all()
+        }
+        assert event_ids <= prescreen_ids, "forward returns must point at the real prescreen event"
+    finally:
+        for row in db.query(models.PipelineEvent).all():
+            db.delete(row)
+        db.commit()
+        db.close()

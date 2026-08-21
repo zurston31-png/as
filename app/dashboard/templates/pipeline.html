@@ -89,19 +89,37 @@
   {% if stages.discovered %}
   <table style="margin-top:12px">
     <tr>
-      <th>stage</th><th class="num">entered</th><th class="num">passed</th>
-      <th class="num">rejected</th><th class="num">pass rate</th>
+      <th rowspan="2">stage</th>
+      <th class="num" colspan="3">unique tokens (by mint)</th>
+      <th class="num" colspan="3">evaluation attempts</th>
+      <th class="num" rowspan="2">attempts<br>per token</th>
+    </tr>
+    <tr>
+      <th class="num">entered</th><th class="num">passed</th><th class="num">pass rate</th>
+      <th class="num">entered</th><th class="num">passed</th><th class="num">pass rate</th>
     </tr>
     {% for st in stages.stages %}
     <tr>
       <td>{{ st.stage }}{% if st.stage == stages.bottleneck %} <span class="pill down">bottleneck</span>{% endif %}</td>
-      <td class="num">{{ st.entered }}</td>
-      <td class="num">{{ st.passed }}</td>
-      <td class="num">{{ st.rejected }}</td>
-      <td class="num">{% if st.pass_rate is not none %}{{ '%.1f%%' % (st.pass_rate * 100) }}{% else %}<span class="muted">no data</span>{% endif %}</td>
+      <td class="num">{{ st.unique_entered }}</td>
+      <td class="num">{{ st.unique_passed }}</td>
+      <td class="num">{% if st.unique_pass_rate is not none %}{{ '%.1f%%' % (st.unique_pass_rate * 100) }}{% else %}<span class="muted">no data</span>{% endif %}</td>
+      <td class="num muted">{{ st.entered }}</td>
+      <td class="num muted">{{ st.passed }}</td>
+      <td class="num muted">{% if st.pass_rate is not none %}{{ '%.1f%%' % (st.pass_rate * 100) }}{% else %}<span class="muted">no data</span>{% endif %}</td>
+      <td class="num">{% if st.attempts_per_token is not none %}{{ '%.2f' % st.attempts_per_token }}{% else %}<span class="muted">—</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </table>
+  <p class="note">
+    <strong>Two denominators, deliberately.</strong> <em>Unique tokens</em> counts distinct mint
+    addresses — the answer to “what share of what we saw was worth trading”. <em>Evaluation
+    attempts</em> counts every judgement made, and the scanner re-examines a mint every
+    <code>SCANNER_RECHECK_MINUTES</code>, so a token that stays listed is counted again each time.
+    When <em>attempts per token</em> runs well above 1.00, the attempt-based rate is describing the
+    re-check schedule rather than the market. Identity is the mint, never the symbol
+    (<code>app/identity.py</code>): two tokens sharing a ticker are two tokens.
+  </p>
   <p class="note">
     Pass rate is measured against what <em>reached</em> each stage, not against the top of the
     funnel — “2% of discovered tokens got scored” and “80% of scored tokens passed” describe
