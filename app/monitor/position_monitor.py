@@ -15,6 +15,7 @@ from app.database import SessionLocal
 from app.exits.manager import ExitManager, evaluate_liquidity, record_liquidity_tick
 from app.monitor.devwallet import check_dev_wallet_exit
 from app.early import watchlist
+from app.notifications.notifier import notifier
 from app.services import price_feed
 from app.services.trading_service import close_position, partial_close_position
 
@@ -77,9 +78,10 @@ async def _check_positions_once() -> None:
             except Exception:
                 logger.exception("error evaluating position id=%s (%s)", pos.id, pos.symbol)
         db.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("position monitor tick failed")
         db.rollback()
+        await notifier.notify_worker_failure("position monitor", exc)
     finally:
         db.close()
 

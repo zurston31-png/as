@@ -16,6 +16,7 @@ import logging
 
 from app.config import settings
 from app.database import SessionLocal
+from app.notifications.notifier import notifier
 from app.shadow import resolver
 
 logger = logging.getLogger(__name__)
@@ -34,9 +35,10 @@ async def resolve_once() -> dict:
         summary = await resolver.resolve_once(db)
         db.commit()
         return summary
-    except Exception:
+    except Exception as exc:
         logger.exception("shadow resolution pass failed")
         db.rollback()
+        await notifier.notify_worker_failure("shadow resolver", exc)
         return {"considered": 0, "closed": 0, "error": True}
     finally:
         db.close()

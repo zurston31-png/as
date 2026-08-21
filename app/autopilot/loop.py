@@ -35,6 +35,7 @@ from app.autopilot import changelog, diagnose as triage
 from app.autopilot.promote import Arm, evaluate
 from app.config import settings
 from app.database import SessionLocal
+from app.notifications.notifier import notifier
 
 logger = logging.getLogger(__name__)
 
@@ -148,10 +149,11 @@ async def run_once(db: Session | None = None) -> dict:
         summary["remedies"] = apply_remedies(db, diagnosis)
         summary["headline"] = diagnosis.headline()
         db.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("autopilot cycle failed")
         db.rollback()
         summary["error"] = True
+        await notifier.notify_worker_failure("autopilot", exc)
     finally:
         if owns:
             db.close()

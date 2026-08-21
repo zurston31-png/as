@@ -37,6 +37,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.scanner.discovery import DiscoveredToken, discover_tokens
 from app.analysis import forward_returns
+from app.notifications.notifier import notifier
 from app.scanner.filters import prescreen
 from app.services.trading_service import handle_discovered_token
 
@@ -288,9 +289,10 @@ async def scan_once(db: Session | None = None, rng: random.Random | None = None)
                 _record(db, token, stage=STAGE_EVALUATED, reason="evaluation raised an error - see server logs")
 
         db.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("scanner cycle failed")
         db.rollback()
+        await notifier.notify_worker_failure("scanner", exc)
     finally:
         if owns_session:
             db.close()

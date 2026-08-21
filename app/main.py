@@ -25,6 +25,7 @@ from app.autopilot import loop as autopilot_loop
 from app.database import SessionLocal, init_db
 from app.early import loop as early_loop
 from app.monitor import forward_return_worker, position_monitor, shadow_resolver_worker
+from app.notifications.notifier import notifier
 from app.scanner import loop as scanner_loop
 from app.schemas import TradingViewAlert
 from app.security import secret_is_configured, verify_webhook_secret
@@ -65,9 +66,10 @@ async def _snapshot_forever() -> None:
             await asyncio.to_thread(backup.take_snapshot, reason="scheduled")
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             # Never let a failed backup stop the next one from being tried.
             logger.exception("scheduled snapshot failed - will retry next interval")
+            await notifier.notify_worker_failure("backup", exc)
 
 
 @asynccontextmanager

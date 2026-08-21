@@ -17,6 +17,7 @@ import logging
 from app.analysis import forward_returns
 from app.config import settings
 from app.database import SessionLocal
+from app.notifications.notifier import notifier
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,10 @@ async def resolve_once() -> dict:
         )
         db.commit()
         return summary
-    except Exception:
+    except Exception as exc:
         logger.exception("forward-return resolution pass failed")
         db.rollback()
+        await notifier.notify_worker_failure("forward-return resolver", exc)
         return {"due": 0, "resolved": 0, "abandoned": 0, "unavailable": 0, "error": True}
     finally:
         db.close()

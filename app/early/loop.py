@@ -36,6 +36,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.early import watchlist as wl
 from app.early.engine import Decision, evaluate
+from app.notifications.notifier import notifier
 from app.services import price_feed
 
 logger = logging.getLogger(__name__)
@@ -185,9 +186,10 @@ async def evaluate_once(db: Session | None = None) -> dict:
 
         summary["pruned"] = wl.prune_observations(db)
         db.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("watchlist pass failed")
         db.rollback()
+        await notifier.notify_worker_failure("early watchlist", exc)
     finally:
         if owns_session:
             db.close()
