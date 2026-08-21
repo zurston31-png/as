@@ -18,6 +18,7 @@ from app.analysis.collection import check_collection
 from app.analysis.dataset import build_dataset_report, milestone_gap
 from app.analysis.forward_returns import coverage as forward_coverage
 from app.analysis.rejections import NEAR_MISS_POINTS, build_rejection_report
+from app.analysis.resolver_health import check_resolver_health
 from app.analysis.research_report import build_research_report
 from app.analysis.score_distribution import build_score_distribution
 from app.analysis.stage_funnel import build_stage_funnel
@@ -565,6 +566,11 @@ async def research(request: Request, user: str = Depends(check_auth)):
                 "distributions": distributions,
                 "calibrations": calibrations,
                 "coverage": forward_coverage(db),
+                # Coverage says how much of the dataset is filled in;
+                # this says whether the thing filling it is keeping up.
+                # A falling coverage number and a dead worker look
+                # identical without it.
+                "resolver": check_resolver_health(db),
             },
         )
     finally:
@@ -577,6 +583,7 @@ async def api_research(user: str = Depends(check_auth)):
     try:
         return JSONResponse({
             "report": build_research_report(db).as_dict(),
+            "resolver": check_resolver_health(db).as_dict(),
             "distribution": build_score_distribution(db).as_dict(),
             "calibration": [
                 build_calibration(db, horizon_minutes=h).as_dict() for h in HORIZONS_MINUTES

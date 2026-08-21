@@ -27,6 +27,9 @@ from sqlalchemy.orm import Session
 from app import models
 from app.analysis import integrity
 from app.analysis.calibration import round_trip_cost_pct
+from app.analysis.evidence_grade import (
+    EvidenceLevel, Graded, half_width_pp, shortfall_to_next, weakest,
+)
 from app.config import settings
 
 # Floors below which a statistic is withheld rather than shown.
@@ -48,30 +51,64 @@ def _median(values: list[float]) -> float | None:
 
 @dataclass
 class Measure:
-    """A number that knows how many observations it came from."""
+    """A number that knows how many observations it came from.
+
+    `trustworthy` is the original binary floor and still gates whether a
+    value is shown. `level` grades it further, because either side of a
+    floor is misleading on its own: 21 observations and 500 both clear it
+    and are not the same number. See app/analysis/evidence_grade.py for
+    where the boundaries come from.
+
+    `is_mean` marks a statistic whose convergence is slower than the grade
+    assumes - a mean of heavy-tailed memecoin returns keeps moving after a
+    proportion would have settled - so the caveat can say so.
+    """
     label: str
     value: float | None
     samples: int
     unit: str = ""
     floor: int = MIN_FOR_A_NUMBER
+    is_mean: bool = False
 
     @property
     def trustworthy(self) -> bool:
         return self.value is not None and self.samples >= self.floor
 
+    @property
+    def graded(self) -> Graded:
+        return Graded(
+            name=self.label, value=self.value, samples=self.samples,
+            unit=self.unit, is_mean=self.is_mean,
+        )
+
+    @property
+    def level(self) -> EvidenceLevel:
+        return self.graded.level
+
     def render(self) -> str:
         if self.value is None:
             return f"{self.label:<26} not measurable          (n={self.samples})"
         marker = "" if self.trustworthy else "  *below floor"
-        return f"{self.label:<26} {self.value:>10.3f}{self.unit:<6} (n={self.samples}){marker}"
+        return (
+            f"{self.label:<26} {self.value:>10.3f}{self.unit:<6} "
+            f"(n={self.samples}, {self.level.value}){marker}"
+        )
 
     def as_dict(self) -> dict:
+        graded = self.graded
+        gap = shortfall_to_next(self.samples)
+        width = half_width_pp(self.samples)
         return {
             "label": self.label,
             "value": round(self.value, 4) if self.value is not None else None,
             "samples": self.samples,
             "unit": self.unit,
             "trustworthy": self.trustworthy,
+            "level": self.level.value,
+            "half_width_pp": round(width, 1) if width is not None else None,
+            "next_level": gap[0].value if gap else None,
+            "samples_to_next_level": gap[1] if gap else None,
+            "caveat": graded.caveat(),
         }
 
 
@@ -111,6 +148,21 @@ class EvidenceReport:
             if measure.samples >= MIN_PER_REGIME:
                 per_axis[self.regime_axis.get(label, "?")] += 1
         return [axis for axis, count in per_axis.items() if count >= 2]
+
+    @property
+    def overall_level(self) -> EvidenceLevel:
+        """The grade this whole report deserves.
+
+        The weakest of the statistics that actually describe performance -
+        not of every row, since "evaluated signals" is a count of things
+        that happened and needs no confidence interval, and including it
+        would let a big pile of rejections grade the findings.
+        """
+        performance = [
+            m.graded for m in self.measures
+            if m.label in ("expectancy (net)", "median return", "win rate")
+        ]
+        return weakest(performance)
 
     @property
     def promotion_ready(self) -> bool:
@@ -157,6 +209,7 @@ class EvidenceReport:
             "champion": self.champion,
             "challengers": self.challengers,
             "completed_samples": self.completed_samples,
+            "evidence_level": self.overall_level.value,
             "promotion_ready": self.promotion_ready,
             "contrasting_axes": self.contrasting_axes,
             "readiness": self.readiness(),
@@ -247,7 +300,8 @@ def build_evidence_report(db: Session, *, horizon_minutes: int = 60) -> Evidence
     report.measures = [
         Measure("evaluated signals", float(total_scored), total_scored, floor=1),
         Measure("completed paper trades", float(accepted), accepted, floor=1),
-        Measure("expectancy (net)", _mean(net), len(net), "%"),
+        Measure("expectancy (net)", _mean(net), len(net), "%", is_mean=True),
+        # A median, not a mean: robust to the tails, so no heavy-tail caveat.
         Measure("median return", _median(returns), len(returns), "%"),
         Measure(
             "win rate",
@@ -257,12 +311,12 @@ def build_evidence_report(db: Session, *, horizon_minutes: int = 60) -> Evidence
         Measure(
             "MFE (avg)",
             _mean([r.max_favorable_pct for r in rows if r.max_favorable_pct is not None]),
-            sum(1 for r in rows if r.max_favorable_pct is not None), "%",
+            sum(1 for r in rows if r.max_favorable_pct is not None), "%", is_mean=True,
         ),
         Measure(
             "MAE (avg)",
             _mean([r.max_adverse_pct for r in rows if r.max_adverse_pct is not None]),
-            sum(1 for r in rows if r.max_adverse_pct is not None), "%",
+            sum(1 for r in rows if r.max_adverse_pct is not None), "%", is_mean=True,
         ),
     ]
 
@@ -279,7 +333,7 @@ def build_evidence_report(db: Session, *, horizon_minutes: int = 60) -> Evidence
             if position < len(axis_names):
                 report.regime_axis[label] = axis_names[position]
     report.by_regime = {
-        name: Measure(name, _mean(values), len(values), "%", floor=MIN_PER_REGIME)
+        name: Measure(name, _mean(values), len(values), "%", floor=MIN_PER_REGIME, is_mean=True)
         for name, values in grouped.items()
     }
 

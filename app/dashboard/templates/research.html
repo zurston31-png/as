@@ -151,6 +151,30 @@
     {{ coverage.pending }} pending, {{ coverage.unmeasurable }} unmeasurable
     ({{ coverage.coverage_pct }}% coverage).
   </p>
+
+  <p class="note" style="margin-top:0">
+    Resolver: <strong>{{ resolver.status.value }}</strong> &mdash; {{ resolver.detail }}
+    {%- if resolver.oldest_overdue_minutes is not none %}
+      <br>Oldest overdue row: {{ '%.0f' | format(resolver.oldest_overdue_minutes) }} minutes.
+    {%- endif %}
+    {%- if resolver.median_lateness_minutes is not none %}
+      <br>Resolutions are landing a median of
+      {{ '%.1f' | format(resolver.median_lateness_minutes) }} minutes past their horizon
+      (worst {{ '%.1f' | format(resolver.worst_lateness_minutes) }}), over
+      {{ resolver.lateness_samples }} measurements.
+    {%- elif resolver.lateness_samples %}
+      <br>{{ resolver.lateness_samples }} resolution(s) so far &mdash; too few to report a
+      lateness figure.
+    {%- endif %}
+    {%- if resolver.sealed_by_reason %}
+      <br>Sealed without a measurement:
+      {% for reason, count in resolver.sealed_by_reason.items() -%}
+        {{ count }} &times; {{ reason }}{% if not loop.last %}; {% endif %}
+      {%- endfor %}.
+      A row sealed for lateness is this worker falling behind; one sealed for a missing
+      price is the market. Only the first is fixable here.
+    {%- endif %}
+  </p>
   {% if coverage.resolved %}
     {% for c in calibrations %}
       {% set usable = c.buckets | selectattr('sample_size') | list %}
