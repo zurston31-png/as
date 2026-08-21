@@ -20,6 +20,14 @@ class SwapResult:
     fee_usd: float | None = None
     execution_cost_pct: float | None = None
     fill_delay_seconds: float | None = None
+    # True when filled_qty/avg_price come from the pre-trade QUOTE rather
+    # than from the executed transaction. A quote is what the router
+    # expected before slippage, not what landed, so P&L built on one is an
+    # estimate. Live backends set this until they read the receipt; the
+    # paper engine leaves it False because its fill IS the simulated
+    # execution. Recorded rather than smoothed over, so an estimated fill
+    # is never mistaken for a measured one.
+    fill_estimated_from_quote: bool = False
 
 
 class ExecutionClient(ABC):

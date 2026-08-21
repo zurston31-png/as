@@ -106,6 +106,30 @@ def from_base_units(raw_amount: int, decimals: int) -> float:
     return raw_amount / (10 ** decimals)
 
 
+def _execution_error(confirmation) -> object | None:
+    """The on-chain error from a confirmation response, or None.
+
+    solana-py returns a GetSignatureStatusesResp whose `value` is a list of
+    per-signature statuses, each with an `err` that is None on success.
+    Written defensively because the shape differs across client versions
+    and this runs on the live path: a response that cannot be read is
+    treated as an error rather than as success, so an unrecognised shape
+    fails closed.
+    """
+    if confirmation is None:
+        return "no confirmation response"
+    value = getattr(confirmation, "value", None)
+    if value is None:
+        return "confirmation response carried no status"
+    statuses = value if isinstance(value, (list, tuple)) else [value]
+    if not statuses:
+        return "confirmation response carried no status"
+    status = statuses[0]
+    if status is None:
+        return "confirmation reported no status for this signature"
+    return getattr(status, "err", None)
+
+
 class JupiterExecutionClient(ExecutionClient):
     def __init__(self):
         self.base = settings.JUPITER_API_BASE
@@ -177,19 +201,90 @@ class JupiterExecutionClient(ExecutionClient):
         if swap_data is None:
             return SwapResult(success=False, error="Jupiter did not return a swap transaction")
 
-        tx_bytes = base64.b64decode(swap_data["swapTransaction"])
-        unsigned_tx = VersionedTransaction.from_bytes(tx_bytes)
-        signed_tx = VersionedTransaction(unsigned_tx.message, [keypair])
+        encoded = (swap_data or {}).get("swapTransaction")
+        if not encoded:
+            return SwapResult(
+                success=False,
+                error="Jupiter's swap response carried no swapTransaction field",
+            )
 
+        # Build and sign. Nothing has reached the chain yet, so a failure
+        # here is clean - there is no signature to preserve and no
+        # possibility that the swap landed anyway.
+        try:
+            tx_bytes = base64.b64decode(encoded)
+            unsigned_tx = VersionedTransaction.from_bytes(tx_bytes)
+            signed_tx = VersionedTransaction(unsigned_tx.message, [keypair])
+        except Exception as exc:
+            return SwapResult(
+                success=False,
+                error=f"could not decode or sign the Jupiter swap transaction: "
+                      f"{type(exc).__name__}: {exc}",
+            )
+
+        # Past this point a failure is NOT clean. Submission can raise after
+        # the transaction has already been broadcast, so any signature we
+        # obtained is reported even on the failure path - without it there
+        # is no way to find out afterwards whether the swap landed, and the
+        # position would be reconciled as never opened.
         async with AsyncClient(settings.SOLANA_RPC_URL) as rpc:
-            send_result = await rpc.send_raw_transaction(bytes(signed_tx), opts=TxOpts(skip_preflight=False))
-            signature = send_result.value
-            await rpc.confirm_transaction(signature, commitment="confirmed")
+            try:
+                send_result = await rpc.send_raw_transaction(
+                    bytes(signed_tx), opts=TxOpts(skip_preflight=False)
+                )
+                signature = send_result.value
+            except Exception as exc:
+                return SwapResult(
+                    success=False,
+                    error=f"submitting the swap failed: {type(exc).__name__}: {exc}. "
+                          "The transaction may still have been broadcast - check the wallet "
+                          "before retrying",
+                )
 
-        out_whole = from_base_units(int(quote["outAmount"]), output_decimals)
+            try:
+                confirmation = await rpc.confirm_transaction(signature, commitment="confirmed")
+            except Exception as exc:
+                return SwapResult(
+                    success=False, tx_hash=str(signature),
+                    error=f"submitted {signature} but could not confirm it: "
+                          f"{type(exc).__name__}: {exc}. It may still land",
+                )
+
+        # CONFIRMED IS NOT SUCCEEDED. A transaction can reach the requested
+        # commitment and still carry an execution error - a slippage revert
+        # is exactly that - and the old code read "confirmed" as "filled",
+        # recording a position the wallet never held.
+        execution_error = _execution_error(confirmation)
+        if execution_error is not None:
+            return SwapResult(
+                success=False, tx_hash=str(signature),
+                error=f"swap {signature} confirmed but reverted on-chain: {execution_error}",
+            )
+
+        # UNITS. `filled_qty` is the TOKEN quantity and `avg_price` is USD
+        # per token, on both sides - the contract the paper engine sets and
+        # the one trading_service does its arithmetic in (proceeds =
+        # filled_qty * avg_price, and a partial exit subtracts filled_qty
+        # from position.qty). Reporting a sell's USDC leg as filled_qty,
+        # with tokens-per-USDC as the price, corrupted both.
         in_whole = from_base_units(int(quote["inAmount"]), input_decimals)
-        avg_price = (in_whole / out_whole) if out_whole else 0.0
-        return SwapResult(success=True, filled_qty=out_whole, avg_price=avg_price, tx_hash=str(signature))
+        out_whole = from_base_units(int(quote["outAmount"]), output_decimals)
+        if output_decimals == USDC_DECIMALS:          # a sell: tokens in, USDC out
+            token_qty, usd_value = in_whole, out_whole
+        else:                                          # a buy: USDC in, tokens out
+            token_qty, usd_value = out_whole, in_whole
+        avg_price = (usd_value / token_qty) if token_qty else 0.0
+
+        return SwapResult(
+            success=True, filled_qty=token_qty, avg_price=avg_price,
+            tx_hash=str(signature),
+            # From the quote, not the receipt: these are what the router
+            # expected before slippage. Reading the executed amounts needs
+            # the transaction's token balance deltas, which this backend
+            # does not parse yet - so the estimate is labelled rather than
+            # passed off as a measurement.
+            fill_estimated_from_quote=True,
+        )
 
     async def buy(self, instrument: str, usd_amount: float, slippage_bps: int) -> SwapResult:
         try:
