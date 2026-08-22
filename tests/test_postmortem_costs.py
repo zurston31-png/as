@@ -304,3 +304,67 @@ def test_the_buffer_depth_and_the_tick_count_are_both_reported(db):
     assert pm.samples == MAX_RECENT_PRICE_SAMPLES
     assert pm.price_ticks == MAX_RECENT_PRICE_SAMPLES + 5
     assert pm.price_ticks > pm.samples
+
+
+# ---------------------------------------------------------------------------
+# the same defect in the sibling aggregators
+# ---------------------------------------------------------------------------
+#
+# The weighting bug was found in build_postmortem, but three modules
+# aggregate the same `Trade.execution_cost_pct` column and two of them had
+# it too. Pinned here, next to the original, so the three cannot drift
+# apart again - a reader comparing a post-mortem against the performance
+# page must not get two different answers for one book.
+
+def test_fill_audit_weights_its_mean_cost_by_notional():
+    """app/analysis/fill_audit.py. A $10 fill at 5% and a $990 fill at
+    0.5% is $5.45 on $1,000, i.e. 0.545% - not the 2.75% a flat mean over
+    two fills reports."""
+    from app.analysis.fill_audit import FillAudit, FillRecord
+
+    audit = FillAudit(fills=[
+        FillRecord(trade_id=1, symbol="A", side="buy", execution_cost_pct=0.05,
+                   fee_usd=0.0, fill_delay_seconds=1.0, notional_usd=10.0),
+        FillRecord(trade_id=2, symbol="A", side="sell", execution_cost_pct=0.005,
+                   fee_usd=0.0, fill_delay_seconds=1.0, notional_usd=990.0),
+    ])
+    paid = 0.05 * 10.0 + 0.005 * 990.0
+    assert audit.mean_cost_pct == pytest.approx(paid / 1000.0 * 100)
+    assert audit.mean_cost_pct != pytest.approx((0.05 + 0.005) / 2 * 100)
+
+
+def test_fill_audit_excludes_a_fill_with_no_notional_to_weight_by():
+    """A rate with no size behind it cannot be weighted. Counting it in
+    the denominator at zero weight would drag the answer toward nothing,
+    which understates cost - the direction an error here must never
+    point."""
+    from app.analysis.fill_audit import FillAudit, FillRecord
+
+    audit = FillAudit(fills=[
+        FillRecord(trade_id=1, symbol="A", side="buy", execution_cost_pct=0.01,
+                   fee_usd=0.0, fill_delay_seconds=1.0, notional_usd=1000.0),
+        FillRecord(trade_id=2, symbol="A", side="sell", execution_cost_pct=0.90,
+                   fee_usd=0.0, fill_delay_seconds=1.0, notional_usd=None),
+    ])
+    assert audit.mean_cost_pct == pytest.approx(1.0)
+
+
+def test_trade_analytics_rate_agrees_with_its_own_dollar_total():
+    """app/analysis/trade_analytics.py. The invariant that makes the two
+    figures one measurement: the reported rate times the costed notional
+    must reproduce the reported dollar cost. A flat mean breaks it."""
+    from app.analysis import trade_analytics as ta
+
+    def leg(size, cost_pct):
+        return models.Trade(
+            symbol="TAW", side="buy", chain="solana",
+            status=models.TradeStatus.FILLED.value,
+            size_usd=size, qty=size, entry_price=1.0,
+            fee_usd=0.0, execution_cost_pct=cost_pct,
+        )
+
+    costs = ta.summarize_costs([leg(10.0, 0.05), leg(990.0, 0.005)])
+    assert costs.avg_execution_cost_pct == pytest.approx(
+        costs.total_execution_cost_usd / 1000.0
+    )
+    assert costs.avg_execution_cost_pct != pytest.approx((0.05 + 0.005) / 2)

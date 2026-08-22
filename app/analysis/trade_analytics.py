@@ -113,6 +113,7 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
     counted = 0
     missing = 0
 
+    costed_notional = 0.0
     for t in trades:
         if t.status != models.TradeStatus.FILLED.value:
             continue
@@ -137,6 +138,7 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
         if t.execution_cost_pct is not None:
             cost_pcts.append(t.execution_cost_pct)
             execution_cost += t.execution_cost_pct * notional
+            costed_notional += notional
         if t.fill_delay_seconds is not None:
             delays.append(t.fill_delay_seconds)
 
@@ -148,7 +150,15 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
         # favourable drift can make one leg's cost negative, and reporting
         # "negative slippage" as a portfolio total invites misreading.
         total_slippage_usd=max(execution_cost - fees, 0.0),
-        avg_execution_cost_pct=(sum(cost_pcts) / len(cost_pcts)) if cost_pcts else None,
+        # Weighted by notional, not a flat mean over legs. The dollar
+        # totals above are already correct; this is the rate that goes
+        # with them, and dividing the same numerator by the same
+        # denominator is what makes the two agree. A per-leg mean lets a
+        # $10 leg outvote a $10,000 one, so the headline rate could
+        # contradict the dollar figure printed beside it.
+        avg_execution_cost_pct=(
+            execution_cost / costed_notional if costed_notional else None
+        ),
         avg_fill_delay_seconds=(sum(delays) / len(delays)) if delays else None,
         legs_counted=counted,
         legs_missing_cost_data=missing,

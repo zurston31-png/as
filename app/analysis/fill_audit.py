@@ -97,10 +97,28 @@ class FillAudit:
 
     @property
     def mean_cost_pct(self) -> float | None:
-        costed = self.costed
-        if not costed:
+        """Execution cost as a share of the notional it was charged on.
+
+        Weighted by notional, not a flat mean over fills. A cost RATE
+        averaged per-fill lets a $10 leg and a $10,000 leg vote equally,
+        so a handful of tiny expensive fills can dominate the number that
+        is supposed to say what the book paid. Same defect this file's
+        sibling in app/analysis/postmortem.py carried.
+
+        Fills without a positive notional are excluded rather than
+        weighted at zero: a rate with no size behind it cannot be
+        weighted at all, and including it as zero-weight while counting
+        it in the denominator would drag the answer toward nothing.
+        """
+        weighted = [
+            f for f in self.costed if f.notional_usd and f.notional_usd > 0
+        ]
+        if not weighted:
             return None
-        return sum(f.execution_cost_pct for f in costed) / len(costed) * 100
+        notional = sum(f.notional_usd for f in weighted)
+        return sum(
+            f.execution_cost_pct * f.notional_usd for f in weighted
+        ) / notional * 100
 
     @property
     def mean_delay_seconds(self) -> float | None:

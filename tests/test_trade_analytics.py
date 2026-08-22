@@ -35,6 +35,18 @@ def _trade(
 # ---------------------------------------------------------------------------
 
 def test_costs_are_summed_across_every_filled_leg():
+    """The average cost rate is weighted by notional.
+
+    This asserted 0.007 - the flat mean of 0.006 and 0.008 - which
+    contradicted the line above it: $2.20 of cost on $300 of notional is
+    0.7333%, not 0.7%. The two legs are different sizes, so a flat mean
+    lets the $100 leg count as much as the $200 one and the headline rate
+    disagrees with the dollar total printed beside it.
+
+    The test was wrong, not the code. Same defect as the one fixed in
+    app/analysis/postmortem.py; corrected here and in
+    app/analysis/fill_audit.py at the same time.
+    """
     trades = [
         _trade(pnl=10.0, fee=0.25, cost_pct=0.006, delay=1.2, size=100.0),
         _trade(pnl=-5.0, fee=0.50, cost_pct=0.008, delay=0.8, size=200.0),
@@ -43,7 +55,11 @@ def test_costs_are_summed_across_every_filled_leg():
     assert costs.total_fees_usd == pytest.approx(0.75)
     assert costs.total_execution_cost_usd == pytest.approx(0.006 * 100 + 0.008 * 200)
     assert costs.total_slippage_usd == pytest.approx(0.006 * 100 + 0.008 * 200 - 0.75)
-    assert costs.avg_execution_cost_pct == pytest.approx(0.007)
+    # The rate and the dollar total must be the same measurement.
+    assert costs.avg_execution_cost_pct == pytest.approx(
+        costs.total_execution_cost_usd / 300.0
+    )
+    assert costs.avg_execution_cost_pct == pytest.approx(0.0073333, abs=1e-6)
     assert costs.avg_fill_delay_seconds == pytest.approx(1.0)
     assert costs.legs_counted == 2
     assert costs.cost_data_complete

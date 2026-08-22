@@ -1,14 +1,14 @@
 # Autopilot session — 21 August 2026
 
-Thirteen commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab`
-to the round-3 review fixes. 53 files changed, ~7,300 lines added.
+Fourteen commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab`
+to the cost-aggregation fixes. 55 files changed, ~7,500 lines added.
 
 **Strategy version is unchanged at `v-83c77cda` throughout.** Nothing in
 this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,663 passing**, of which **255 are new this session**
+**Test suite: 1,667 passing**, of which **259 are new this session**
 across 15 new test files. Every commit was pushed and CI was green on
 every one checked.
 
@@ -16,11 +16,13 @@ every one checked.
 
 ## What this session found
 
-Fourteen genuine defects. Two came from a second review round and two
-more from a third; **three of those four were fail-opens or late-firing
-safety checks in code written earlier in this same session**. Three more
-came from auditing the post-mortem record. One reported finding was
-checked and rejected.
+Sixteen genuine defects. Two came from a second review round, two from a
+third and one from a fourth; **four of those five were fail-opens, a
+late-firing safety check, or a wrong figure in code written earlier in
+this same session**. Three more came from auditing the post-mortem
+record, and two more from asking whether that record's weighting bug
+existed anywhere else - it existed in both siblings. One reported
+finding was checked and rejected; two more were declined with reasons.
 The suite that existed before this session passed
 against every one of them, so each got a test reproducing the exact
 condition rather than a nearby one. They are listed before the features
@@ -305,6 +307,32 @@ module, per CLAUDE.md.
 Checked the rest of the suite for the same shape: other files hardcode
 dates but pass them explicitly as `now=`, so they are deterministic. This
 was the only one.
+
+### 15. The same weighting defect in two sibling aggregators
+
+Having found it in `build_postmortem`, the obvious question was whether
+anything else aggregates the same column. Three modules do, and two of
+them had the identical flat-mean bug:
+
+  * `app/analysis/fill_audit.py` — `mean_cost_pct` averaged the rate over
+    fills. `FillRecord` already carried `notional_usd`, so nothing needed
+    plumbing; it was simply not used.
+  * `app/analysis/trade_analytics.py` — `avg_execution_cost_pct` averaged
+    the rate over legs while `total_execution_cost_usd` right beside it
+    was a correct dollar sum. The two figures could contradict each
+    other on the same page.
+
+The second one is the sharper illustration. Its existing test asserted
+`avg_execution_cost_pct == 0.007` on the very same two legs it asserted
+`total_execution_cost_usd == $2.20` for, over $300 of notional — which is
+0.7333%. The test contained the numbers that disproved its own average
+and nobody noticed, because 0.7 looks like the mean of 0.6 and 0.8 and
+that is the shape the eye checks. The test was wrong, not the code.
+
+Both now weight by notional, and the invariant is pinned directly: the
+reported rate times the costed notional must reproduce the reported
+dollar cost. A flat mean cannot satisfy that, so the property cannot
+silently regress in any of the three.
 
 ### Not fixed: foreign keys and CHECK constraints on the audit tables
 
