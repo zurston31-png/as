@@ -8,8 +8,8 @@ this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,677 passing**, of which **269 are new this session**
-across 16 new test files. Every commit was pushed and CI was green on
+**Test suite: 1,681 passing**, of which **273 are new this session**
+across 17 new test files. Every commit was pushed and CI was green on
 every one checked.
 
 ---
@@ -378,6 +378,41 @@ the original, and the same bug. An autouse fixture now pins the
 champion's window to the module's `NOW`, so one instant governs both.
 
 Also corrected: the round-4 arithmetic in this file (see above).
+
+### 17. Nothing tested that a failed execution gets recorded
+
+The other half of round 5's test request, and a real gap rather than a
+documentation one.
+
+Three paths set `TradeStatus.FAILED` and call `notify_error` - the buy,
+the full exit and the partial exit. None had a test. The only appearances
+of `TradeStatus.FAILED` anywhere in the suite were fixtures setting it up
+so something else could be measured; nothing asserted the write path
+produces it.
+
+That gap is worse than a missing filled-path test. A fill that goes
+unrecorded is caught within minutes because the position is missing from
+the dashboard. A FAILURE that goes unrecorded is invisible by
+construction: there is no position to be absent, so the row this code
+writes is the only evidence the attempt happened, and without it the
+funnel's gap between signals and positions becomes unexplainable - the
+precise thing `app/pipeline.py` exists to prevent.
+
+On the exit side it is not just a lost record. A sell that fails silently
+leaves a position the operator believes is closed: still open, still
+carrying risk, absent from no exposure total, and with no alert.
+
+Four tests in `tests/test_execution_failure_recording.py`, all in paper
+mode with a stubbed client returning a failed `SwapResult` - no live
+flags, no network. They cover the persisted row and its error string, the
+alert, the position staying open at full size, and the cash ledger not
+moving.
+
+Verified by neutering the branch: with the record and the alert removed,
+the recording test fails. The other three still pass, because an early
+return also happens to leave state unmutated - they guard a different
+invariant, and that is recorded here rather than claimed as four tests
+catching one bug.
 
 ### Recorded as inspected, not tested
 
