@@ -1,24 +1,26 @@
 # Autopilot session — 21 August 2026
 
-Twelve commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab`
-to the post-mortem accounting fix. 51 files changed, ~7,000 lines added.
+Thirteen commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab`
+to the round-3 review fixes. 53 files changed, ~7,300 lines added.
 
 **Strategy version is unchanged at `v-83c77cda` throughout.** Nothing in
 this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,638 passing**, of which **230 are new this session**
-across 14 new test files. Every commit was pushed and CI was green on
+**Test suite: 1,663 passing**, of which **255 are new this session**
+across 15 new test files. Every commit was pushed and CI was green on
 every one checked.
 
 ---
 
 ## What this session found
 
-Twelve genuine defects, two of them found in a second review round — one
-of which was a fail-open in safety code written earlier in this same
-session — and three more found by auditing the post-mortem record.
+Fourteen genuine defects. Two came from a second review round and two
+more from a third; **three of those four were fail-opens or late-firing
+safety checks in code written earlier in this same session**. Three more
+came from auditing the post-mortem record. One reported finding was
+checked and rejected.
 The suite that existed before this session passed
 against every one of them, so each got a test reproducing the exact
 condition rather than a nearby one. They are listed before the features
@@ -227,6 +229,119 @@ Three defects, 17 new tests in `tests/test_postmortem_costs.py`. 13 of
 the 17 fail against the previous code; the other 4 cover the new counter.
 No existing test asserted either cost figure, which is how both survived
 every prior review.
+
+### 11. `LIVE_TRADING = true` walked straight past the guard — round 3
+
+The second fail-open found in the guard I wrote two rounds ago, and the
+same mistake in a different place.
+
+python-dotenv — which is what pydantic-settings parses `.env` with —
+trims whitespace around the separator, so it reads `LIVE_TRADING = true`
+as enabled. Both operator scripts matched the literal prefix
+`LIVE_TRADING=`, so they saw nothing, printed their paper-mode banner and
+carried on. Verified against the installed parser, not the docs: the
+loader returns `{'LIVE_TRADING': 'true'}` and the guard returned `[]`.
+
+A guard that reassures is worse than no guard. Round 2's fail-open was
+the same shape — the guard reimplemented value parsing and got a
+different answer from pydantic. This one reimplemented key parsing and
+got a different answer from dotenv. Now `partition("=")` with the key
+trimmed and compared for **equality**, so `LIVE_TRADING_NOTES=true` still
+does not match.
+
+### 12. The halt fired one trade late — round 3
+
+`SessionLocal` is `autoflush=False`, and both exit paths reach
+`_check_halt_conditions` having only `db.add()`ed the filled sell leg.
+`evaluate_consecutive_losses` queries `models.Trade` directly, so the
+streak was computed from the previous N trades — without the loss that
+should have triggered the halt. The daily-loss check has the same
+exposure. A run hitting its loss limit would take one more position
+before stopping.
+
+Fixed with `db.flush()` at the top of `_check_halt_conditions` rather
+than at the two call sites, so a third exit path cannot reintroduce it by
+forgetting. A test asserts it flushes and does **not** commit — the
+caller still owns the transaction.
+
+### 13. My own slippage fix still averaged unequal legs — round 4
+
+Review round 4 landed on the commit that fixed defects 8-10, and it was
+right.
+
+Removing the return-dependence was necessary but not sufficient: the
+replacement took an **unweighted mean over legs**, so a small expensive
+leg counted the same as a large cheap one. A $10 scalp-out at 5% and a
+$990 exit at 0.5% averaged to 2.0% (with a 0% entry leg), when the
+position actually paid $5.45 on $2,000 traded - 0.2725%. Off by more
+than 7x, in the direction that makes execution look worse the more
+finely an exit is scaled out.
+
+Now aggregated in dollars over notional: cost and slippage are summed as
+amounts and divided by the notional that produced them.
+
+Worth recording why the round-3 tests missed it: **every leg in them was
+the same size and the same cost**, so a weighted and an unweighted mean
+agree exactly. The tests confirmed the property they were written for
+and were blind to the one next to it. The new test uses legs that differ
+in both, and fails against the unweighted version.
+
+### 14. A test I wrote this session was a time bomb
+
+`tests/test_daily_loss.py` pinned `NOW` to a hardcoded `2026-08-21`. The
+champion `evaluate_daily_loss` takes no `now` argument — it derives the
+day window from the real clock — so once the date rolled over, the
+fixture's trade fell outside "today", the day's realized loss summed to
+zero, and the boundary tests asserted against an empty window.
+
+It failed the first time the suite ran after midnight UTC, with no code
+change involved. The test was wrong, not the code: it pinned a wall-clock
+date against a function that reads the wall clock. `NOW` is now anchored
+to the current date, and `_closed_trade` stamps the real current instant
+by default, which is the only timestamp guaranteed to be inside the
+window the champion computes for itself. Reasoning recorded in the
+module, per CLAUDE.md.
+
+Checked the rest of the suite for the same shape: other files hardcode
+dates but pass them explicitly as `now=`, so they are deterministic. This
+was the only one.
+
+### Not fixed: foreign keys and CHECK constraints on the audit tables
+
+Round 4 also asked for real foreign keys on `Trade.signal_id`,
+`Trade.position_id`, `Position.entry_trade_id` and
+`RugCheckResult.signal_id`, plus CHECK constraints or enums on
+`Trade.side`, `status` and `mode`. Both are reasonable schema advice and
+both are declined for the same two verified reasons.
+
+**SQLite has no `ALTER TABLE ADD CONSTRAINT`** — confirmed, it is a
+syntax error. Adding either kind of constraint to an existing table
+requires the twelve-step rebuild: create a shadow table, copy every row,
+drop the original, rename. That is the opposite of the additive-only rule
+in CLAUDE.md, and it would run against the database holding the
+collection run's audit trail.
+
+**SQLite does not enforce foreign keys by default** — `PRAGMA
+foreign_keys` reads `0`, and this app never sets it. So the declarations
+alone would be decorative; making them bite means enabling the pragma,
+which starts *rejecting writes at runtime*. That is a live behaviour
+change to the persistence layer of a frozen collection run, which is
+exactly what the freeze is for.
+
+The underlying concern — an orphaned id silently dropping context from a
+post-mortem — is real but currently hypothetical: these ids are only ever
+written from within the transaction that created the row they point at,
+and nothing deletes from these tables. Recorded here rather than fixed,
+as a schema change for whenever the collection run ends.
+
+### Not fixed: the Jupiter build-failure claim
+
+Round 3 also reported that a raising `http.post_json` would escape
+`_execute_swap` and skip the failed-trade record. It does not.
+`request_json` catches `Exception` on every path and returns `None`, and
+`_execute_swap` already maps `None` onto a failed `SwapResult`. Left
+alone, with a test pinning the contract so the claim does not need
+re-litigating.
 
 ## Risk work, all behind one disabled flag
 

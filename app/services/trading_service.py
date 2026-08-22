@@ -1110,7 +1110,22 @@ async def _partial_close_position(
 
 
 async def _check_halt_conditions(db: Session) -> None:
-    """Run the post-trade halt checks shared by full and partial exits."""
+    """Run the post-trade halt checks shared by full and partial exits.
+
+    Flushes first. `SessionLocal` is `autoflush=False`, and both callers
+    reach here having only `db.add()`ed the filled sell leg - so the row
+    carrying the loss that should trigger the halt is still pending, and
+    `evaluate_consecutive_losses` queries `models.Trade` directly. Without
+    the flush the streak is computed from the PREVIOUS N trades and the
+    halt fires one trade late: the run that hits its loss limit takes one
+    more position before stopping.
+
+    Flushed here rather than at each call site so a third exit path cannot
+    reintroduce it by forgetting. A flush is not a commit - the caller
+    still owns the transaction.
+    """
+    db.flush()
+
     daily = await risk_manager.assess_daily_loss(db)
     if not daily.allowed:
         halt_trading(db, daily.reason)

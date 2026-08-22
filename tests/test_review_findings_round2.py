@@ -10,6 +10,7 @@ import datetime as dt
 import pathlib
 
 import pytest
+from pydantic import ValidationError
 
 from app import models
 
@@ -88,7 +89,7 @@ def test_the_guard_matches_what_pydantic_actually_accepts():
     for value in ENABLED_SPELLINGS + DISABLED_SPELLINGS:
         try:
             pydantic_says = _M(flag=value.strip().strip('"')).flag
-        except Exception:
+        except ValidationError:
             continue          # pydantic rejects it; the guard's own default applies
         assert guard._env_flag_is_enabled(value) is pydantic_says, (
             f"{value!r}: guard says {guard._env_flag_is_enabled(value)}, "

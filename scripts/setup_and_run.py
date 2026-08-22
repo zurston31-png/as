@@ -195,10 +195,20 @@ def _live_flags_enabled_in_env(env_file) -> list[str]:
         # `export FOO=bar` is valid in a .env a human has edited by hand.
         if stripped.startswith("export "):
             stripped = stripped[len("export "):].lstrip()
-        for flag in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
-            if stripped.startswith(flag + "="):
-                if _env_flag_is_enabled(stripped.split("=", 1)[1]):
-                    enabled.append(flag)
+        # Split on the FIRST "=" and trim the key rather than matching
+        # `FLAG=` as a prefix. python-dotenv - which is what
+        # pydantic-settings parses .env with - ignores whitespace around
+        # the separator, so it reads `LIVE_TRADING = true` as enabled. A
+        # prefix match does not, and the mismatch is a fail-open: the
+        # application would come up live while this guard reported the
+        # deployment paper-only.
+        key, sep, value = stripped.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if key in ("LIVE_TRADING", "LIVE_EXECUTION_ACKNOWLEDGED"):
+            if _env_flag_is_enabled(value):
+                enabled.append(key)
     return sorted(set(enabled))
 
 

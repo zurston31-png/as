@@ -51,7 +51,22 @@ def anyio_backend():
     return "asyncio"
 
 
-NOW = dt.datetime(2026, 8, 21, 12, 0, tzinfo=dt.timezone.utc)
+# Midday TODAY, not a fixed calendar date.
+#
+# This was pinned to 2026-08-21 and passed for exactly one day. The
+# champion `evaluate_daily_loss` takes no `now` argument - it reads the
+# real clock through `_day_bounds()` - so a fixture trade stamped with a
+# hardcoded date silently falls outside "today" once the date rolls over,
+# the day's realized loss sums to zero, and the halt tests assert against
+# an empty window. It failed the first time the suite ran after midnight
+# UTC, with no code change involved.
+#
+# Anchoring to the current date keeps the equity-aware tests (which DO
+# pass `now=NOW` explicitly) deterministic relative to each other, while
+# staying inside the window the champion computes for itself.
+NOW = dt.datetime.now(dt.timezone.utc).replace(
+    hour=12, minute=0, second=0, microsecond=0
+)
 
 
 @pytest.fixture()
@@ -93,10 +108,18 @@ def _price_at(monkeypatch, price: float):
 
 
 def _closed_trade(db, pnl_usd: float, *, when: dt.datetime | None = None, fee_usd: float = 0.0):
+    """A closed trade, by default stamped NOW rather than at a fixed date.
+
+    The default is the real current instant, not the module's NOW: the
+    champion path derives its own day bounds from the clock, so the only
+    timestamp guaranteed to be inside them is the one taken at the moment
+    the row is written. A test that needs a specific offset (yesterday,
+    say) passes `when` explicitly.
+    """
     db.add(models.Trade(
         symbol="COIN", token_address="MintCOIN", side="sell",
         status=models.TradeStatus.FILLED.value, pnl_usd=pnl_usd, fee_usd=fee_usd,
-        closed_at=when or NOW,
+        closed_at=when or dt.datetime.now(dt.timezone.utc),
     ))
 
 

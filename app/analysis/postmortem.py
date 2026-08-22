@@ -206,10 +206,14 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
     # round trip taken in three pieces pays three times, and reporting only
     # the entry fee would understate the cost of the exit logic that split it.
     fees = sum(t.fee_usd or 0.0 for t in legs)
-    costs = [t.execution_cost_pct for t in legs if t.execution_cost_pct is not None]
 
-    # Slippage is measured PER LEG and then averaged, never by subtracting
-    # a total from an average.
+    # Cost rates are aggregated in DOLLARS over notional, not as a mean of
+    # per-leg percentages.
+    #
+    # An unweighted mean treats a $10 scalp-out and a $1,000 exit as equal
+    # votes: 5% on the scalp and 0.5% on the exit average to 2.75%, when
+    # the position actually paid $5.50 on $1,010 traded, i.e. 0.54%. The
+    # small leg dominates a figure it barely contributed to.
     #
     # The previous formula took the mean execution cost across legs and
     # subtracted every leg's fees divided by the ENTRY notional. Those are
@@ -225,7 +229,9 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
     # fractions of that leg's own notional (app/execution/fill_model.py),
     # so the slippage component is total_cost - fee/notional. This mirrors
     # app/shadow/recorder.py, which already does the subtraction per fill.
-    leg_slippage: list[float] = []
+    costed_notional = 0.0
+    cost_usd = 0.0
+    slippage_usd = 0.0
     for leg in legs:
         if leg.execution_cost_pct is None:
             continue
@@ -236,7 +242,13 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
             # a leg whose fee share is unknown is dropped rather than
             # counted as fee-free - that would overstate slippage.
             continue
-        leg_slippage.append(leg.execution_cost_pct - (leg.fee_usd or 0.0) / notional)
+        costed_notional += notional
+        cost_usd += leg.execution_cost_pct * notional
+        # Slippage is what the fill gave up BEYOND the fee, per leg. The
+        # fee is subtracted from that leg's own cost rather than from a
+        # total: mixing a summed fee into an averaged rate is what made
+        # the old figure a function of the trade's return.
+        slippage_usd += leg.execution_cost_pct * notional - (leg.fee_usd or 0.0)
 
     exit_price = None
     if exit_legs:
@@ -277,13 +289,13 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
         max_loss_pct=_pct(position.lowest_price_since_entry, position.entry_price),
         fees_usd=fees,
         # x100: the column is a fraction, this record is in percent.
-        execution_cost_pct=(sum(costs) / len(costs) * 100) if costs else None,
+        execution_cost_pct=(cost_usd / costed_notional * 100) if costed_notional else None,
         # Execution cost minus the fee component is what actually moved the
         # fill away from mid. Reported separately because a fee is a known
         # constant and slippage is not - conflating them hides which one is
         # eating the edge.
         slippage_pct=(
-            sum(leg_slippage) / len(leg_slippage) * 100 if leg_slippage else None
+            slippage_usd / costed_notional * 100 if costed_notional else None
         ),
         signal_score=signal.signal_score if signal else None,
         market_quality_score=signal.market_quality_score if signal else None,

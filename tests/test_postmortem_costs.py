@@ -130,6 +130,67 @@ def test_splitting_the_exit_does_not_change_the_slippage_rate(db, exit_legs):
     )
 
 
+def test_cost_rates_are_weighted_by_notional_not_averaged_per_leg(db):
+    """Second round on the same function.
+
+    The first fix removed the return-dependence but still took an
+    unweighted mean over legs, so a tiny expensive leg counted as much as
+    a large cheap one. Here a $10 scalp-out pays 5% and a $990 exit pays
+    0.5%; the position paid $0.50 + $4.95 = $5.45 on $2,000 traded
+    ($1,000 in, $1,000 out), so the honest rate is 0.2725%. An unweighted
+    mean over the three legs reports 2.0%, off by more than 7x.
+
+    Every leg in the tests above was the same size and the same cost, so
+    they passed either way - which is exactly why this one uses legs that
+    differ.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    position = models.Position(
+        symbol="PMCW", token_address="mint-PMCW", chain="solana",
+        qty=0.0, initial_qty=1000.0, entry_price=1.0,
+        stop_loss=0.8, take_profit=1.5,
+        status=models.PositionStatus.CLOSED.value,
+        opened_at=now - dt.timedelta(minutes=10), closed_at=now,
+        close_reason="take profit",
+        highest_price_since_entry=1.0, lowest_price_since_entry=1.0,
+        realized_pnl_usd=0.0,
+    )
+    db.add(position)
+    db.flush()
+
+    # entry: $1,000 at 0% cost, so all the cost sits in the two exits
+    db.add(models.Trade(
+        position_id=position.id, symbol="PMCW", side="buy",
+        status=models.TradeStatus.FILLED.value, size_usd=1000.0,
+        qty=1000.0, entry_price=1.0, fee_usd=0.0, execution_cost_pct=0.0,
+        created_at=now - dt.timedelta(minutes=10),
+    ))
+    # a $10 scalp at 5%, and a $990 exit at 0.5%
+    db.add(models.Trade(
+        position_id=position.id, symbol="PMCW", side="sell",
+        status=models.TradeStatus.FILLED.value, size_usd=10.0,
+        qty=10.0, exit_price=1.0, fee_usd=0.0, execution_cost_pct=0.05,
+        created_at=now - dt.timedelta(minutes=5),
+    ))
+    db.add(models.Trade(
+        position_id=position.id, symbol="PMCW", side="sell",
+        status=models.TradeStatus.FILLED.value, size_usd=990.0,
+        qty=990.0, exit_price=1.0, fee_usd=0.0, execution_cost_pct=0.005,
+        created_at=now,
+    ))
+    db.commit()
+
+    pm = build_postmortem(db, position)
+    paid = 0.05 * 10.0 + 0.005 * 990.0        # $5.45
+    traded = 1000.0 + 10.0 + 990.0            # $2,000
+    assert pm.execution_cost_pct == pytest.approx(paid / traded * 100)
+
+    unweighted = (0.0 + 0.05 + 0.005) / 3 * 100
+    assert pm.execution_cost_pct != pytest.approx(unweighted), (
+        "cost is still an unweighted mean over legs"
+    )
+
+
 def test_a_leg_with_no_notional_is_dropped_rather_than_called_fee_free(db):
     """A leg with no recorded price cannot have its fee turned into a
     rate. Counting it with a zero fee share would report its entire
