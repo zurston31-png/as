@@ -8,8 +8,8 @@ this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,667 passing**, of which **259 are new this session**
-across 15 new test files. Every commit was pushed and CI was green on
+**Test suite: 1,672 passing**, of which **264 are new this session**
+across 16 new test files. Every commit was pushed and CI was green on
 every one checked.
 
 ---
@@ -333,6 +333,35 @@ Both now weight by notional, and the invariant is pinned directly: the
 reported rate times the costed notional must reproduce the reported
 dollar cost. A flat mean cannot satisfy that, so the property cannot
 silently regress in any of the three.
+
+### Not unified, but now locked: the cost columns disagree on units
+
+While fixing the three aggregators it became clear they do not agree on
+what `_pct` means:
+
+| field | unit | 1% is |
+|---|---|---|
+| `Trade.execution_cost_pct` | fraction | `0.01` |
+| `trade_analytics.avg_execution_cost_pct` | fraction | `0.01` |
+| `fill_audit.mean_cost_pct` | percent | `1.0` |
+| `postmortem.execution_cost_pct` | percent | `1.0` |
+
+Two fields with the same suffix, describing the same cost on the same
+trade, differing by 100x.
+
+Nothing is displayed wrong today — all five render sites were checked
+individually and each matches its own module's convention. So this is a
+trap rather than a defect, and it is the trap that already sprang once:
+defect 9 above was exactly this, the post-mortem serving a raw fraction
+beside real percents.
+
+Deliberately **not** unified. Converting `trade_analytics` to percent
+means editing two currently-correct render sites, and rewriting working
+display code for naming tidiness is how a correct number becomes a wrong
+one. Instead `tests/test_cost_units.py` pins each convention, asserts the
+100x gap explicitly, and lists every render site that would have to move
+together — so the mismatch cannot drift silently, and whoever unifies it
+later starts from a test that names the whole blast radius.
 
 ### Not fixed: foreign keys and CHECK constraints on the audit tables
 
