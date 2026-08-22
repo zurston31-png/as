@@ -62,11 +62,43 @@ def anyio_backend():
 # UTC, with no code change involved.
 #
 # Anchoring to the current date keeps the equity-aware tests (which DO
-# pass `now=NOW` explicitly) deterministic relative to each other, while
-# staying inside the window the champion computes for itself.
+# pass `now=NOW` explicitly) deterministic relative to each other.
+#
+# That alone was still not deterministic. It replaced one hardcoded date
+# with TWO clock reads - the module import that sets NOW, and the
+# champion calling _day_bounds() during the test - and a run that crosses
+# midnight UTC between them lands them on different days. A narrower
+# window than the original bug, and the same bug.
+#
+# The `frozen_day` fixture below closes it: one instant governs both.
 NOW = dt.datetime.now(dt.timezone.utc).replace(
     hour=12, minute=0, second=0, microsecond=0
 )
+
+
+@pytest.fixture(autouse=True)
+def frozen_day(monkeypatch):
+    """Pin the champion's day window to NOW's day.
+
+    `evaluate_daily_loss` takes no `now` argument - it reads the clock
+    itself, which is the behaviour under test and not something to change
+    for a test's convenience. So the clock it reads is frozen instead, at
+    the module's NOW, giving the fixture's trades and the window that
+    counts them a single shared instant.
+
+    Autouse because the hazard is the DEFAULT: any test that stamps a
+    trade and lets the champion pick its own window is exposed, and
+    opting in per-test is precisely the kind of thing that gets forgotten
+    on the next test added at 23:59.
+    """
+    from app.risk import manager as risk_manager
+
+    def fixed_bounds(now: dt.datetime | None = None):
+        anchor = now or NOW
+        start = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, start + dt.timedelta(days=1)
+
+    monkeypatch.setattr(risk_manager, "_day_bounds", fixed_bounds)
 
 
 @pytest.fixture()
@@ -108,18 +140,19 @@ def _price_at(monkeypatch, price: float):
 
 
 def _closed_trade(db, pnl_usd: float, *, when: dt.datetime | None = None, fee_usd: float = 0.0):
-    """A closed trade, by default stamped NOW rather than at a fixed date.
+    """A closed trade, stamped NOW by default.
 
-    The default is the real current instant, not the module's NOW: the
-    champion path derives its own day bounds from the clock, so the only
-    timestamp guaranteed to be inside them is the one taken at the moment
-    the row is written. A test that needs a specific offset (yesterday,
-    say) passes `when` explicitly.
+    NOW rather than a fresh `datetime.now()`: with `frozen_day` active the
+    champion's window is derived from NOW too, so this is the one
+    timestamp guaranteed to sit inside it no matter when the suite runs.
+    Taking a second clock reading here would reintroduce the straddle the
+    fixture exists to remove. A test that wants a specific offset
+    (yesterday, say) passes `when` explicitly.
     """
     db.add(models.Trade(
         symbol="COIN", token_address="MintCOIN", side="sell",
         status=models.TradeStatus.FILLED.value, pnl_usd=pnl_usd, fee_usd=fee_usd,
-        closed_at=when or dt.datetime.now(dt.timezone.utc),
+        closed_at=when or NOW,
     ))
 
 

@@ -368,3 +368,99 @@ def test_trade_analytics_rate_agrees_with_its_own_dollar_total():
         costs.total_execution_cost_usd / 1000.0
     )
     assert costs.avg_execution_cost_pct != pytest.approx((0.05 + 0.005) / 2)
+
+
+# ---------------------------------------------------------------------------
+# review round 5: unmeasurable is never zero, and a fill is a FILLED leg
+# ---------------------------------------------------------------------------
+
+def test_a_leg_with_no_recorded_fee_is_excluded_from_slippage(db):
+    """The round-4 fix wrote `- (leg.fee_usd or 0.0)`, so a leg with no
+    recorded fee had its whole execution cost booked as slippage: the
+    largest possible answer, derived from a measurement not being taken.
+
+    Here the priced leg pays 1% total of which 0.25% is fee, and a second
+    leg has a cost but no fee at all. Slippage must be the 0.75% the
+    measured leg actually gave up, not an average dragged upward by
+    treating the unmeasured leg as fee-free.
+    """
+    position = _round_trip(db, symbol="PMCFEE")
+    db.add(models.Trade(
+        position_id=position.id, symbol="PMCFEE", side="sell",
+        status=models.TradeStatus.FILLED.value, size_usd=1000.0,
+        qty=1000.0, exit_price=1.0,
+        fee_usd=None, execution_cost_pct=TOTAL_COST,
+        created_at=dt.datetime.now(dt.timezone.utc),
+    ))
+    db.commit()
+
+    pm = build_postmortem(db, position)
+    assert pm.slippage_pct == pytest.approx(SLIPPAGE_RATE * 100)
+
+    # The unmeasured leg still has a KNOWN total cost, so it belongs in
+    # the cost figure even though it cannot contribute to the split.
+    assert pm.execution_cost_pct == pytest.approx(TOTAL_COST * 100)
+
+
+def test_slippage_is_none_when_no_leg_recorded_a_fee(db):
+    """If nothing has a fee, the split is unknowable. None, not zero, and
+    not "all of it was slippage"."""
+    position = _round_trip(db, symbol="PMCNOFEE")
+    for leg in db.query(models.Trade).filter(
+        models.Trade.position_id == position.id
+    ).all():
+        leg.fee_usd = None
+    db.commit()
+
+    pm = build_postmortem(db, position)
+    assert pm.slippage_pct is None
+    assert pm.execution_cost_pct == pytest.approx(TOTAL_COST * 100)
+
+
+def test_an_unfilled_leg_does_not_move_any_fill_derived_figure(db):
+    """A failed sell can carry a qty and an exit_price without ever having
+    closed inventory. Including it moved the size-weighted exit price, the
+    return, the fees and the cost rates for a fill that did not happen."""
+    position = _round_trip(db, entry=1.0, exit_price=1.0, symbol="PMCFAIL")
+    clean = build_postmortem(db, position)
+
+    db.add(models.Trade(
+        position_id=position.id, symbol="PMCFAIL", side="sell",
+        status=models.TradeStatus.FAILED.value, size_usd=5000.0,
+        qty=5000.0, exit_price=99.0,
+        fee_usd=250.0, execution_cost_pct=0.5,
+        created_at=dt.datetime.now(dt.timezone.utc),
+    ))
+    db.commit()
+
+    after = build_postmortem(db, position)
+    assert after.exit_price == pytest.approx(clean.exit_price)
+    assert after.return_pct == pytest.approx(clean.return_pct)
+    assert after.fees_usd == pytest.approx(clean.fees_usd)
+    assert after.execution_cost_pct == pytest.approx(clean.execution_cost_pct)
+    assert after.slippage_pct == pytest.approx(clean.slippage_pct)
+
+
+def test_a_fee_only_leg_is_not_counted_as_cost_coverage():
+    """app/analysis/trade_analytics.py. The fee is the component already
+    known from configuration; spread, impact and drift are the ones worth
+    measuring, and they live in execution_cost_pct. A leg with only a fee
+    was counted as covered, so coverage_pct and cost_data_complete
+    reported a measurement that had not been taken."""
+    from app.analysis import trade_analytics as ta
+
+    def leg(cost_pct):
+        return models.Trade(
+            symbol="TAFEE", side="buy", chain="solana",
+            status=models.TradeStatus.FILLED.value,
+            size_usd=1000.0, qty=1000.0, entry_price=1.0,
+            fee_usd=2.50, execution_cost_pct=cost_pct,
+        )
+
+    costs = ta.summarize_costs([leg(0.01), leg(None)])
+    assert costs.legs_counted == 1
+    assert costs.legs_missing_cost_data == 1
+    assert not costs.cost_data_complete
+    assert costs.coverage_pct == pytest.approx(50.0)
+    # The fee WAS measured on both legs, so both fees are still summed.
+    assert costs.total_fees_usd == pytest.approx(5.0)

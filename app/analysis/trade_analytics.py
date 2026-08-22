@@ -117,7 +117,21 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
     for t in trades:
         if t.status != models.TradeStatus.FILLED.value:
             continue
-        if t.fee_usd is None and t.execution_cost_pct is None:
+        # A leg is "costed" only if it has an execution cost rate. A fee
+        # alone is not cost coverage: the fee is the one component already
+        # known from configuration, while spread, price impact and
+        # confirmation drift - the parts worth measuring - are exactly
+        # what execution_cost_pct carries. Counting a fee-only leg as
+        # covered inflated coverage_pct and let cost_data_complete report
+        # True while total_execution_cost_usd silently omitted that leg's
+        # unknown slippage. Same failure the comment below describes for a
+        # missing notional. CLAUDE.md: unmeasurable is never zero.
+        #
+        # Its fee is still summed - that part WAS measured - but it counts
+        # as a leg missing cost data.
+        if t.execution_cost_pct is None:
+            if t.fee_usd is not None:
+                fees += t.fee_usd
             missing += 1
             continue
 
@@ -128,17 +142,16 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
         # coverage while doing it, which is the precise failure this module
         # exists to avoid. Such a leg is counted as unmeasured instead.
         notional = t.size_usd or ((t.qty or 0.0) * (t.exit_price or t.entry_price or 0.0))
-        if t.execution_cost_pct is not None and not notional:
+        if not notional:
             missing += 1
             continue
 
         counted += 1
         if t.fee_usd is not None:
             fees += t.fee_usd
-        if t.execution_cost_pct is not None:
-            cost_pcts.append(t.execution_cost_pct)
-            execution_cost += t.execution_cost_pct * notional
-            costed_notional += notional
+        cost_pcts.append(t.execution_cost_pct)
+        execution_cost += t.execution_cost_pct * notional
+        costed_notional += notional
         if t.fill_delay_seconds is not None:
             delays.append(t.fill_delay_seconds)
 

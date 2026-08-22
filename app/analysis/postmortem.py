@@ -193,9 +193,18 @@ def _pct(price: float | None, entry: float | None) -> float | None:
 
 def build_postmortem(db: Session, position: models.Position) -> PostMortem:
     """Assemble everything known about one closed position."""
+    # FILLED only. Every figure below this line describes what a fill
+    # actually did, and a failed or still-pending sell can carry a qty and
+    # an exit_price without ever having closed inventory - it would then
+    # move the size-weighted exit price, the return, the fees and the cost
+    # rates for a trade that never happened. Status is the only thing
+    # separating the two, so it is filtered here rather than at each use.
     legs = (
         db.query(models.Trade)
-        .filter(models.Trade.position_id == position.id)
+        .filter(
+            models.Trade.position_id == position.id,
+            models.Trade.status == models.TradeStatus.FILLED.value,
+        )
         .order_by(models.Trade.created_at.asc())
         .all()
     )
@@ -231,6 +240,11 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
     # app/shadow/recorder.py, which already does the subtraction per fill.
     costed_notional = 0.0
     cost_usd = 0.0
+    # Slippage needs its OWN denominator. Total cost is known for any leg
+    # with a cost rate, but splitting that into fee and slippage needs the
+    # fee, so a leg with no recorded fee contributes to one and not the
+    # other.
+    slippage_notional = 0.0
     slippage_usd = 0.0
     for leg in legs:
         if leg.execution_cost_pct is None:
@@ -244,11 +258,22 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
             continue
         costed_notional += notional
         cost_usd += leg.execution_cost_pct * notional
+
         # Slippage is what the fill gave up BEYOND the fee, per leg. The
         # fee is subtracted from that leg's own cost rather than from a
         # total: mixing a summed fee into an averaged rate is what made
         # the old figure a function of the trade's return.
-        slippage_usd += leg.execution_cost_pct * notional - (leg.fee_usd or 0.0)
+        #
+        # A leg with NO recorded fee is excluded rather than treated as
+        # fee-free. `fee_usd or 0.0` would have reported that leg's entire
+        # execution cost as slippage - the largest possible answer - from
+        # the absence of a measurement. The comment eight lines up says
+        # exactly this about a missing notional; the fee deserved the same
+        # treatment and did not get it. CLAUDE.md: a measurement that
+        # cannot be taken is recorded as unmeasurable, never as zero.
+        if leg.fee_usd is not None:
+            slippage_notional += notional
+            slippage_usd += leg.execution_cost_pct * notional - leg.fee_usd
 
     exit_price = None
     if exit_legs:
@@ -295,7 +320,7 @@ def build_postmortem(db: Session, position: models.Position) -> PostMortem:
         # constant and slippage is not - conflating them hides which one is
         # eating the edge.
         slippage_pct=(
-            slippage_usd / costed_notional * 100 if costed_notional else None
+            slippage_usd / slippage_notional * 100 if slippage_notional else None
         ),
         signal_score=signal.signal_score if signal else None,
         market_quality_score=signal.market_quality_score if signal else None,

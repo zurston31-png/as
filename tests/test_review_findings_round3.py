@@ -291,17 +291,8 @@ async def test_the_halt_check_flushes_rather_than_commits(db, monkeypatch):
 # 3. the finding that did not hold up
 # ---------------------------------------------------------------------------
 
-async def test_a_failed_swap_build_still_produces_a_result(monkeypatch):
-    """Pins why the third finding was not acted on.
-
-    The claim was that a raising `http.post_json` would escape
-    `_execute_swap`, so the caller would skip its failed-trade record and
-    its notification. It cannot: `request_json` catches Exception on
-    every path and returns None, and `_execute_swap` maps None onto a
-    failed SwapResult. This test asserts the contract the claim depends
-    on, so a future change that DID let the exception through would fail
-    here rather than silently losing an audit record.
-    """
+async def test_post_json_returns_none_instead_of_raising(monkeypatch):
+    """Half one of the contract: the transport never propagates."""
     from app.services import http
 
     class ExplodingClient:
@@ -319,3 +310,46 @@ async def test_a_failed_swap_build_still_produces_a_result(monkeypatch):
     result = await http.post_json("https://example.invalid/swap", json={},
                                   label="test", idempotent=True)
     assert result is None, "post_json propagated instead of returning None"
+
+
+async def test_execute_swap_always_returns_a_result_never_raises(monkeypatch):
+    """Half two: the caller always gets a SwapResult to record.
+
+    The claim was that the CALLER loses its failed-trade record, which
+    needs `_execute_swap` to return rather than raise. It does - but note
+    WHICH path proves it here. Under the shipped paper-only configuration
+    the function refuses at the live-execution guard before it ever builds
+    a swap, so this exercises the guard's return, not the
+    `swap_data is None` branch further down.
+
+    That branch cannot be reached without setting LIVE_TRADING=true, which
+    this suite will not do. It is verified by reading
+    app/execution/jupiter.py - `if swap_data is None: return
+    SwapResult(success=False, ...)` immediately after the post_json call -
+    and recorded here as inspected rather than executed, instead of being
+    dressed up as a passing assertion. Combined with the transport test
+    above, the two halves cover the described path as far as a paper-only
+    suite honestly can.
+
+    The error string is asserted so that if the guard is ever moved below
+    the swap build, this test fails and forces the question rather than
+    quietly changing meaning.
+    """
+    from app.execution import jupiter as jup
+
+    async def no_swap(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(jup.http, "post_json", no_swap)
+
+    result = await jup.JupiterExecutionClient()._execute_swap(
+        {"outAmount": "1000"}, input_decimals=6, output_decimals=9
+    )
+
+    assert result is not None, "_execute_swap returned None instead of a SwapResult"
+    assert result.success is False
+    assert "LIVE_TRADING is false" in (result.error or ""), (
+        "expected the paper-only refusal; if the guard moved, the "
+        "swap_data-is-None branch is now reachable here and this test "
+        "should be rewritten to cover it"
+    )

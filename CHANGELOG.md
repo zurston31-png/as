@@ -8,7 +8,7 @@ this session altered a scoring formula, threshold, weight, exit policy,
 fee, the slippage model, or either classifier. The paper-collection
 dataset is not split.
 
-**Test suite: 1,672 passing**, of which **264 are new this session**
+**Test suite: 1,677 passing**, of which **269 are new this session**
 across 16 new test files. Every commit was pushed and CI was green on
 every one checked.
 
@@ -16,7 +16,7 @@ every one checked.
 
 ## What this session found
 
-Sixteen genuine defects. Two came from a second review round, two from a
+Twenty genuine defects. Two came from a second review round, two from a
 third and one from a fourth; **four of those five were fail-opens, a
 late-firing safety check, or a wrong figure in code written earlier in
 this same session**. Three more came from auditing the post-mortem
@@ -274,10 +274,15 @@ right.
 Removing the return-dependence was necessary but not sufficient: the
 replacement took an **unweighted mean over legs**, so a small expensive
 leg counted the same as a large cheap one. A $10 scalp-out at 5% and a
-$990 exit at 0.5% averaged to 2.0% (with a 0% entry leg), when the
-position actually paid $5.45 on $2,000 traded - 0.2725%. Off by more
-than 7x, in the direction that makes execution look worse the more
-finely an exit is scaled out.
+$990 exit at 0.5%, alongside a 0% entry leg, average to **1.8333%** over
+the three legs (2.75% if the entry is excluded), when the position
+actually paid $5.45 on $2,000 traded - **0.2725%**. Off by 6.7x, in the
+direction that makes execution look worse the more finely an exit is
+scaled out.
+
+(That paragraph first said 2.0% and "more than 7x". Both were wrong -
+2.0% is neither the three-leg mean nor the two-leg one. Caught in review
+round 5; the test alongside it had the right figure all along.)
 
 Now aggregated in dollars over notional: cost and slippage are summed as
 amounts and divided by the notional that produced them.
@@ -333,6 +338,61 @@ Both now weight by notional, and the invariant is pinned directly: the
 reported rate times the costed notional must reproduce the reported
 dollar cost. A flat mean cannot satisfy that, so the property cannot
 silently regress in any of the three.
+
+### 16. Review round 5 — four more, three of them mine from tonight
+
+The first review to complete since `0248f59` (the previous four aborted
+because I kept pushing mid-review). It found four real problems.
+
+**A missing fee was read as a zero fee.** The slippage fix from round 4
+used `leg.execution_cost_pct * notional - (leg.fee_usd or 0.0)`, so a leg
+with no recorded fee had its ENTIRE execution cost booked as slippage -
+the largest possible answer, produced from the absence of a measurement.
+Straight violation of CLAUDE.md's "a measurement that cannot be taken is
+recorded as unmeasurable, never as zero", in code written earlier the
+same night. The comment eight lines above it says a leg with no notional
+is "dropped rather than counted as fee-free - that would overstate
+slippage"; I identified the exact hazard and then walked into it for the
+fee. Slippage now carries its own denominator and only legs with a
+recorded fee contribute.
+
+**The post-mortem read every trade, not just filled ones.** A failed or
+pending sell carrying a `qty` and an `exit_price` moved the size-weighted
+exit price, the return, the fees and the cost rates for a fill that never
+happened. Now filtered to `TradeStatus.FILLED` at the query.
+
+**A fee-only leg counted as full cost coverage.** In
+`trade_analytics.summarize_costs`, a leg with `fee_usd` but no
+`execution_cost_pct` incremented `legs_counted`, so `coverage_pct` and
+`cost_data_complete` claimed the leg was measured while its spread,
+impact and drift were unknown and absent from the dollar total. The fee
+is the one component already known from configuration; the parts worth
+measuring are exactly the ones missing. Its fee is still summed, but it
+now counts as missing cost data.
+
+**The time-bomb fix was still not deterministic.** Defect 14 replaced a
+hardcoded date with a date anchored to import time - which is two clock
+reads, the import and the champion's own `_day_bounds()` call, and a run
+crossing midnight between them still straddles. A narrower window than
+the original, and the same bug. An autouse fixture now pins the
+champion's window to the module's `NOW`, so one instant governs both.
+
+Also corrected: the round-4 arithmetic in this file (see above).
+
+### Recorded as inspected, not tested
+
+Round 5 asked for a test proving `_execute_swap` maps a `None` swap-build
+response onto a failed `SwapResult`. I wrote one, then found it passed
+for the wrong reason: under paper-only the function refuses at the
+live-execution guard before it ever builds a swap, so the assertion never
+reached the branch it named.
+
+Reaching that branch needs `LIVE_TRADING=true`, which this suite will not
+set. So the test now asserts what it actually proves - `_execute_swap`
+returns a failed `SwapResult` rather than raising - and its docstring
+records that the `swap_data is None` branch is verified by reading the
+source, not by execution. A vacuous green assertion would have been worse
+than an honest gap.
 
 ### Not unified, but now locked: the cost columns disagree on units
 
