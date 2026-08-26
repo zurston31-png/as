@@ -119,7 +119,106 @@ sudo ufw allow 80,443/tcp
 sudo ufw enable
 ```
 
-## 4. Keep it paper-only
+## 4. Updating a deployment that is already running
+
+The guide above installs. This section upgrades — a different and more
+dangerous operation, because the thing you must not lose is the database.
+
+**Every accounting fix since the first deployment is on the READ side.**
+`app/execution/paper.py` and `app/execution/fill_model.py` — the code that
+computes `fee_usd` and `execution_cost_pct` and writes them to the trade
+row — are unchanged. The defects were in `app/analysis/*`, which reads
+those raw columns and derives slippage, cost rates and post-mortems from
+them. So updating the code **re-derives the corrected figures from the
+trades you already have**. You do not lose your sample and you do not
+need to reset the run.
+
+New columns (`price_ticks_observed`, `fill_estimated_from_quote`,
+`idempotency_key`) are added automatically on the next start by
+`apply_additive_migrations()`, called from `init_db()` in the app's
+startup. Existing rows get `NULL`, which reads as "not recorded at the
+time" rather than a fabricated zero. There is no manual migration step.
+
+### Back up first — always
+
+```bash
+# adjust the path to wherever DATABASE_URL points on your host
+sudo cp /data/memecoin_bot.db /data/memecoin_bot.db.pre-upgrade-$(date +%F)
+```
+
+Take this copy even though the upgrade is additive. It costs a second and
+it is the only thing standing between a bad `rm -rf` and the whole
+collection run.
+
+### Docker path
+
+```bash
+cd /opt/memecoin-bot          # wherever the clone lives
+git fetch origin
+git checkout claude/memecoin-trading-bot-im07pf
+git pull --ff-only
+
+docker compose down
+docker compose build
+docker compose up -d
+docker compose logs -f --tail=50
+```
+
+`.env` and the database live outside the clone (section 1), so neither is
+touched by `git pull`. If `git pull` reports local changes you did not
+make, stop and look — do not force past it.
+
+### systemd + venv path
+
+```bash
+cd /opt/memecoin-bot
+sudo -u botuser git fetch origin
+sudo -u botuser git checkout claude/memecoin-trading-bot-im07pf
+sudo -u botuser git pull --ff-only
+sudo -u botuser ./venv/bin/pip install -r requirements.txt
+
+sudo systemctl restart memecoin-bot
+sudo systemctl status memecoin-bot --no-pager
+sudo journalctl -u memecoin-bot -f -n 50
+```
+
+### Verify the upgrade landed
+
+```bash
+git rev-parse --short HEAD            # should match the version you deployed
+./venv/bin/python scripts/research.py preflight
+./venv/bin/python scripts/performance_report.py
+```
+
+Two things to look for in the report afterwards:
+
+- the per-attribute breakdowns (signal score, market quality, entry
+  liquidity, holding time) should now show buckets instead of
+  "N trade(s) with this value not recorded" — those attributes were
+  always being recorded, they were previously read off the wrong trade
+  leg
+- execution cost and slippage should be internally consistent: cost is
+  never smaller than the fee component, and the reported rate times the
+  costed notional reproduces the reported dollar cost
+
+If the breakdowns still say "not recorded" after the restart, the new
+code is not actually running — check `git rev-parse HEAD` and that the
+service restarted, rather than assuming the data is missing.
+
+### Rolling back
+
+```bash
+git checkout <previous-sha>
+# docker: docker compose down && docker compose build && docker compose up -d
+# systemd: sudo systemctl restart memecoin-bot
+```
+
+The database is forward-compatible with older code: the added columns are
+nullable and nothing older reads them. Restore the pre-upgrade copy only
+if you have a specific reason to — rolling the data back discards any
+trades recorded since the upgrade.
+
+## 5. Keep it paper-only
 
 There is no going-live step. `LIVE_TRADING` and
 `LIVE_EXECUTION_ACKNOWLEDGED` stay `false`: no wallet keys, no real funds,
