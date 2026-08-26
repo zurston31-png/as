@@ -369,11 +369,20 @@ async def performance(
     db = SessionLocal()
     try:
         report = build_performance_report(db, strategy_version=version)
+        # Whether the cost figures on this page can be believed at all.
+        # A mean cost far below the spread+fee floor reads as cheap
+        # execution when it more often means the fill model never got a
+        # market snapshot, and the audit that distinguishes those was
+        # reachable only from the research CLI.
+        from app.analysis.fill_audit import build_fill_audit
+
+        fills = build_fill_audit(db)
         return templates.TemplateResponse(
             request,
             "performance.html",
             {
                 "r": report,
+                "fills": fills,
                 "inf": float("inf"),
                 "min_bucket": MIN_TRADES_FOR_A_MEANINGFUL_BUCKET,
             },

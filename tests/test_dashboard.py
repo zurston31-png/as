@@ -166,6 +166,28 @@ def test_performance_page_renders_on_an_empty_record():
     assert "Performance" in resp.text
 
 
+def test_performance_page_shows_whether_the_cost_figures_are_believable():
+    """The cost panel reports fees, slippage and an average cost per leg.
+    None of those say whether the fills were costed correctly in the first
+    place - and a mean well under the spread+fee floor reads as cheap
+    execution when it far more often means the fill model never received a
+    market snapshot.
+
+    app/analysis/fill_audit.py has always been able to answer that and was
+    reachable only from `research.py fills`, so the page a person actually
+    reads showed the numbers without the verdict on them. Rendered here so
+    a template error surfaces as a failing test rather than a blank panel.
+    """
+    resp = client.get("/performance", auth=AUTH)
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Spread + fee floor" in body
+    assert "Notional-weighted cost" in body
+    # The audit's own verdict for an empty book, rendered rather than
+    # swallowed by a template that references a missing variable.
+    assert "NO FILLS" in body
+
+
 def test_performance_page_leads_with_the_validation_verdict(sample_rows):
     resp = client.get("/performance", auth=AUTH)
     assert resp.status_code == 200

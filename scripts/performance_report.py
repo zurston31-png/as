@@ -34,7 +34,13 @@ def _fmt(value, spec="{:,.2f}", none="n/a"):
     return none if value is None else spec.format(value)
 
 
-def print_report(report) -> None:
+def print_report(report, db=None) -> None:
+    """Render the report.
+
+    `db` is optional so the renderer stays callable without a session;
+    the fill audit below is the only part that needs one, and it is
+    skipped rather than faked when there is none.
+    """
     stats = report.stats
 
     print(RULE)
@@ -82,6 +88,22 @@ def print_report(report) -> None:
     print(f"  avg fill delay       {_fmt(c.avg_fill_delay_seconds, '{:.2f}')}s")
     print(f"  cost data coverage   {c.coverage_pct:.0f}% "
           f"({c.legs_missing_cost_data} leg(s) unrecorded)")
+
+    # The verdict on whether those cost figures can be believed at all.
+    # app/analysis/fill_audit.py has always been able to answer this and
+    # was reachable only from `research.py fills`, so the numbers above
+    # were read without it - which is precisely when a mean cost far
+    # below the spread+fee floor looks like cheap execution rather than
+    # like a fill model that never received a market snapshot.
+    if db is not None:
+        from app.analysis.fill_audit import build_fill_audit
+
+        audit = build_fill_audit(db)
+        print(f"  spread+fee floor     {audit.floor_pct:.3f}%  "
+              f"(a fill cannot cost less than this before drift)")
+        if audit.mean_cost_pct is not None:
+            print(f"  notional-weighted    {audit.mean_cost_pct:+.3f}%")
+        print(f"  fill audit           {audit.verdict()}")
 
     h = report.holding
     print()
@@ -171,7 +193,7 @@ def main() -> int:
         if args.json:
             print(json.dumps(report.as_dict(), indent=2))
         else:
-            print_report(report)
+            print_report(report, db)
     finally:
         db.close()
     return 0

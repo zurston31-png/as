@@ -132,7 +132,15 @@
     <div class="stat"><div class="k">Avg fill delay</div><div class="v">
       {{ '%.2f' % r.costs.avg_fill_delay_seconds if r.costs.avg_fill_delay_seconds is not none else '—' }}s</div></div>
     <div class="stat"><div class="k">Cost data coverage</div><div class="v">{{ '%.0f' % r.costs.coverage_pct }}%</div></div>
+    <div class="stat"><div class="k">Spread + fee floor</div><div class="v">{{ '%.3f' % fills.floor_pct }}%</div></div>
+    <div class="stat"><div class="k">Notional-weighted cost</div><div class="v">
+      {{ '%+.3f' % fills.mean_cost_pct if fills.mean_cost_pct is not none else '—' }}%</div></div>
   </div>
+  <p class="note">{{ fills.verdict() }}</p>
+  <p class="note">A fill cannot cost less than the spread + fee floor before
+  confirmation drift is applied. A weighted cost well under that floor is far
+  more often a fill model that never received a market snapshot than it is
+  cheap execution &mdash; the verdict above is what tells the two apart.</p>
 </div>
 
 <div class="card">
