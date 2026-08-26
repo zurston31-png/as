@@ -56,8 +56,62 @@ def _aware(moment: dt.datetime | None) -> dt.datetime | None:
     return moment if moment.tzinfo else moment.replace(tzinfo=dt.timezone.utc)
 
 
-def holding_time_hours(trade: models.Trade) -> float | None:
+def entry_leg_by_position(trades: list[models.Trade]) -> dict[int, models.Trade]:
+    """position_id -> the buy leg that opened it.
+
+    Every per-attribute breakdown below asks a question about the ENTRY
+    ("did a higher score trade better?") but is computed over the EXIT
+    legs, because only an exit carries realized P&L. The entry context -
+    signal_id, opened_at - lives on the buy leg and is absent from the
+    sell, so the two have to be joined, and position_id is the only thing
+    that joins them.
+    """
+    out: dict[int, models.Trade] = {}
+    for t in trades:
+        if t.side != "buy" or t.position_id is None:
+            continue
+        existing = out.get(t.position_id)
+        if existing is None:
+            out[t.position_id] = t
+        elif t.created_at and existing.created_at and t.created_at < existing.created_at:
+            out[t.position_id] = t
+    return out
+
+
+def entry_signal_id(
+    trade: models.Trade, entries: dict[int, models.Trade]
+) -> int | None:
+    """The signal that opened this trade's position.
+
+    A sell leg carries a signal_id ONLY when a TradingView alert asked for
+    it; every stop-loss, take-profit and smart exit is raised by the
+    position monitor and has none (see the note on Trade.position_id in
+    app/models.py). Reading `trade.signal_id` on an exit therefore returns
+    None for the majority of real trades, and every breakdown keyed on it
+    silently reported "not recorded" for the whole book.
+    """
+    if trade.signal_id is not None:
+        return trade.signal_id
+    entry = entries.get(trade.position_id)
+    return entry.signal_id if entry is not None else None
+
+
+def holding_time_hours(
+    trade: models.Trade, entries: dict[int, models.Trade] | None = None
+) -> float | None:
+    """How long the position was held.
+
+    `opened_at` is stamped on the BUY leg at fill; an exit leg only ever
+    gets `closed_at`. Measuring both off the exit therefore yielded None
+    for every trade, which is why the holding-time panel read "-h"
+    regardless of how many trades had closed. `entries` supplies the buy
+    leg so the span can actually be measured.
+    """
     opened, closed = _aware(trade.opened_at), _aware(trade.closed_at)
+    if opened is None and entries is not None:
+        entry = entries.get(trade.position_id)
+        if entry is not None:
+            opened = _aware(entry.opened_at)
     if opened is None or closed is None:
         return None
     return (closed - opened).total_seconds() / 3600
@@ -392,8 +446,9 @@ def breakdown_by_signal_score(
     The single most useful question for tuning MIN_SIGNAL_SCORE_TO_ENTER,
     and the one that must be answered from the record rather than assumed.
     """
+    entries = entry_leg_by_position(trades)
     pairs = [
-        (getattr(signals.get(t.signal_id), "signal_score", None), t)
+        (getattr(signals.get(entry_signal_id(t, entries)), "signal_score", None), t)
         for t in closed_trades(trades)
     ]
     return _build_breakdown("signal score", pairs, [50, 60, 70, 80, 90])
@@ -402,8 +457,9 @@ def breakdown_by_signal_score(
 def breakdown_by_market_quality(
     trades: list[models.Trade], signals: dict[int, models.Signal]
 ) -> Breakdown:
+    entries = entry_leg_by_position(trades)
     pairs = [
-        (getattr(signals.get(t.signal_id), "market_quality_score", None), t)
+        (getattr(signals.get(entry_signal_id(t, entries)), "market_quality_score", None), t)
         for t in closed_trades(trades)
     ]
     return _build_breakdown("market quality", pairs, [40, 55, 70, 85])
@@ -412,7 +468,11 @@ def breakdown_by_market_quality(
 def breakdown_by_liquidity(
     trades: list[models.Trade], liquidity_by_signal: dict[int, float | None]
 ) -> Breakdown:
-    pairs = [(liquidity_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    entries = entry_leg_by_position(trades)
+    pairs = [
+        (liquidity_by_signal.get(entry_signal_id(t, entries)), t)
+        for t in closed_trades(trades)
+    ]
     return _build_breakdown("entry liquidity USD", pairs, [25_000, 50_000, 100_000, 250_000])
 
 
@@ -425,14 +485,22 @@ def breakdown_by_token_age(
     first hour is launch chaos, the first day is where most rugs happen,
     and past a week a memecoin has either found holders or died.
     """
-    pairs = [(age_hours_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    entries = entry_leg_by_position(trades)
+    pairs = [
+        (age_hours_by_signal.get(entry_signal_id(t, entries)), t)
+        for t in closed_trades(trades)
+    ]
     return _build_breakdown("token age", pairs, [1, 6, 24, 168], unit="h")
 
 
 def breakdown_by_market_cap(
     trades: list[models.Trade], mcap_by_signal: dict[int, float | None]
 ) -> Breakdown:
-    pairs = [(mcap_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    entries = entry_leg_by_position(trades)
+    pairs = [
+        (mcap_by_signal.get(entry_signal_id(t, entries)), t)
+        for t in closed_trades(trades)
+    ]
     return _build_breakdown("market cap USD", pairs, [100_000, 500_000, 2_000_000, 10_000_000])
 
 
@@ -445,12 +513,17 @@ def breakdown_by_rug_score(
     well as the 0-19 one, the rug score is not carrying information about
     outcomes and its threshold is doing all the work.
     """
-    pairs = [(rug_by_signal.get(t.signal_id), t) for t in closed_trades(trades)]
+    entries = entry_leg_by_position(trades)
+    pairs = [
+        (rug_by_signal.get(entry_signal_id(t, entries)), t)
+        for t in closed_trades(trades)
+    ]
     return _build_breakdown("rug risk score", pairs, [20, 40, 60, 80])
 
 
 def breakdown_by_holding_time(trades: list[models.Trade]) -> Breakdown:
-    pairs = [(holding_time_hours(t), t) for t in closed_trades(trades)]
+    entries = entry_leg_by_position(trades)
+    pairs = [(holding_time_hours(t, entries), t) for t in closed_trades(trades)]
     return _build_breakdown("holding time", pairs, [1, 4, 12, 24, 72], unit="h")
 
 

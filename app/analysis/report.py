@@ -138,7 +138,16 @@ def build_performance_report(
         )
 
     closed = ta.closed_trades(trades)
-    signal_ids = {t.signal_id for t in closed if t.signal_id is not None}
+    # Resolved through the ENTRY leg. An exit raised by the position
+    # monitor carries no signal_id, so collecting ids straight off the
+    # closed (sell) legs returned an empty set for a book of stop-loss and
+    # take-profit exits - and every breakdown below then had no signal to
+    # look up, reporting "not recorded" for every trade.
+    _entries = ta.entry_leg_by_position(trades)
+    signal_ids = {
+        sid for sid in (ta.entry_signal_id(t, _entries) for t in closed)
+        if sid is not None
+    }
     signals = {
         s.id: s for s in db.query(models.Signal).filter(models.Signal.id.in_(signal_ids)).all()
     } if signal_ids else {}
