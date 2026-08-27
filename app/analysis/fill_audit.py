@@ -41,6 +41,34 @@ MAX_FAVOURABLE_SHARE_PCT = 20.0
 # two is not a finding.
 MIN_FILLS_FOR_VERDICT = 20
 
+# Fills needed before a mean BELOW the spread+fee floor is worth calling
+# out. Deliberately far smaller than MIN_FILLS_FOR_VERDICT, because that
+# gate exists for statistical claims and this is not one.
+#
+# A fill's cost is impact + spread + fee + drift. The first three are
+# non-negative, so only drift can push a fill under the floor - and drift
+# is signed noise that averages toward zero. One or two fills below the
+# floor is ordinary luck; a sustained MEAN below it is arithmetic that the
+# model cannot produce, and it means the recorded costs did not come from
+# the fill model operating normally.
+#
+# Reporting that only after 20 fills would withhold the most actionable
+# thing the audit knows for as long as the book is small - which is
+# exactly when a broken cost pipeline is cheapest to notice.
+MIN_FILLS_FOR_FLOOR_CHECK = 3
+
+# How far under the floor the mean has to sit before it is worth calling
+# out: at least this many times below.
+#
+# "Below the floor" alone is far too eager. A healthy book of 20 fills
+# where 17 pay the floor exactly and 3 caught favourable drift averages
+# about 0.33% against a 0.40% floor - genuinely fine, and the first
+# version of this check flagged it. Drift routinely drags the mean a
+# little under; it cannot drag it to a fraction of the floor and keep it
+# there. 2x is the gap between "a few lucky fills" and "these numbers did
+# not come from the fill model".
+FLOOR_BREACH_RATIO = 2.0
+
 
 @dataclass
 class FillRecord:
@@ -144,6 +172,37 @@ class FillAudit:
                 f"is overstated by whatever the fill should have cost."
             )
         share = self.favourable_share_pct or 0.0
+
+        # Checked BEFORE the sample-size gate on purpose: this is an
+        # arithmetic impossibility, not a statistical inference, so it
+        # does not need a sample to be worth saying.
+        # Skipped when the favourable share is already elevated: a book
+        # that mostly beats the reference price is better described by
+        # SUSPICIOUS below, which names the mechanism instead of the
+        # symptom.
+        mean = self.mean_cost_pct
+        breached = (
+            mean is not None
+            and (mean <= 0 or self.floor_pct / mean >= FLOOR_BREACH_RATIO)
+        )
+        if (
+            breached
+            and share <= MAX_FAVOURABLE_SHARE_PCT
+            and len(self.costed) >= MIN_FILLS_FOR_FLOOR_CHECK
+        ):
+            ratio = (self.floor_pct / mean) if mean > 0 else None
+            comparison = f"{ratio:.0f}x below" if ratio else "below"
+            return (
+                f"BELOW FLOOR - mean fill cost {mean:+.3f}% is {comparison} the "
+                f"{self.floor_pct:.3f}% spread+fee floor across {len(self.costed)} costed "
+                f"fill(s). Impact, spread and fee are all non-negative, so only "
+                f"confirmation drift can go under the floor, and drift averages toward "
+                f"zero. A sustained mean below it means these costs did not come from "
+                f"the fill model running normally - check that market snapshots are "
+                f"reaching it, and that the recorded costs are not stale rows from "
+                f"before cost accounting existed."
+            )
+
         if self.n < MIN_FILLS_FOR_VERDICT:
             return (
                 f"INSUFFICIENT DATA - {self.n} fills, need {MIN_FILLS_FOR_VERDICT} before the "

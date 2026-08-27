@@ -464,3 +464,123 @@ def test_a_fee_only_leg_is_not_counted_as_cost_coverage():
     assert costs.coverage_pct == pytest.approx(50.0)
     # The fee WAS measured on both legs, so both fees are still summed.
     assert costs.total_fees_usd == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# the fill audit must report an impossible mean regardless of sample size
+# ---------------------------------------------------------------------------
+#
+# A fill costs impact + spread + fee + drift. The first three are
+# non-negative, so only drift can take a fill under the spread+fee floor,
+# and drift is signed noise that averages toward zero. A sustained MEAN
+# below the floor is therefore not an unlucky sample - it is arithmetic
+# the model cannot produce, and it means the recorded costs did not come
+# from the fill model running normally.
+#
+# The audit previously gated every verdict behind MIN_FILLS_FOR_VERDICT
+# (20) and reported this case as INSUFFICIENT DATA, mentioning the mean
+# only in a parenthetical. That withheld the most actionable thing it
+# knew for exactly as long as the book was small - which is when a broken
+# cost pipeline is cheapest to catch.
+
+def _book(cost_pct, n=11, notional=90.0):
+    from app.analysis.fill_audit import FillAudit, FillRecord
+
+    return FillAudit(fills=[
+        FillRecord(trade_id=i, symbol="FLOOR", side="buy",
+                   execution_cost_pct=cost_pct, fee_usd=notional * 0.0025,
+                   fill_delay_seconds=1.4, notional_usd=notional)
+        for i in range(n)
+    ])
+
+
+def test_a_mean_below_the_floor_is_reported_before_the_sample_gate():
+    """The real case: 11 fills averaging 0.036% against a 0.400% floor.
+    Under MIN_FILLS_FOR_VERDICT this returned INSUFFICIENT DATA and said
+    nothing about the impossibility."""
+    from app.analysis.fill_audit import MIN_FILLS_FOR_VERDICT
+
+    audit = _book(0.00036, n=11)
+    assert audit.n < MIN_FILLS_FOR_VERDICT, "fixture must sit under the statistical gate"
+
+    verdict = audit.verdict()
+    assert verdict.startswith("BELOW FLOOR"), verdict
+    assert "11x below" in verdict, "the magnitude is the point, not just the direction"
+    assert "0.400%" in verdict
+
+
+def test_a_normal_book_is_not_accused_of_being_below_the_floor():
+    """The complementary half. A mean at the model's usual ~0.49% is
+    above the floor and must fall through to the ordinary verdict, or the
+    check would cry wolf on every healthy deployment."""
+    verdict = _book(0.0049, n=11).verdict()
+    assert "BELOW FLOOR" not in verdict
+    assert verdict.startswith("INSUFFICIENT DATA")
+
+
+def test_one_lucky_fill_below_the_floor_is_not_called_broken():
+    """Drift genuinely can take a single fill under the floor - roughly
+    6% of them do. Flagging that would make the check noise. It fires
+    only once there are enough fills for drift to have averaged."""
+    from app.analysis.fill_audit import MIN_FILLS_FOR_FLOOR_CHECK
+
+    assert MIN_FILLS_FOR_FLOOR_CHECK > 1
+    verdict = _book(0.00036, n=MIN_FILLS_FOR_FLOOR_CHECK - 1).verdict()
+    assert "BELOW FLOOR" not in verdict
+
+
+def test_a_healthy_book_with_a_few_lucky_fills_is_not_flagged():
+    """The false positive the first version of this check produced.
+
+    Twenty fills where seventeen pay the floor exactly and three caught
+    favourable drift average ~0.33% against a 0.40% floor. That is an
+    ordinary healthy book, and "mean < floor" flagged it. Drift routinely
+    drags the mean a little under the floor; it cannot drag it to a
+    fraction of the floor and hold it there, which is why the check needs
+    a ratio and not a direction.
+    """
+    from app.analysis.fill_audit import FillAudit, FillRecord
+
+    fills = [
+        FillRecord(trade_id=i, symbol="FLOOR", side="buy",
+                   execution_cost_pct=(-0.001 if i < 3 else 0.004),
+                   fee_usd=0.225, fill_delay_seconds=1.4, notional_usd=90.0)
+        for i in range(20)
+    ]
+    audit = FillAudit(fills=fills)
+    assert audit.mean_cost_pct < audit.floor_pct, (
+        "fixture must actually sit below the floor, or it proves nothing"
+    )
+    assert "BELOW FLOOR" not in audit.verdict()
+
+
+def test_a_mostly_favourable_book_is_called_suspicious_not_below_floor():
+    """Ordering. A book that mostly beats the reference price is also
+    below the floor, but SUSPICIOUS names the mechanism - most fills
+    beating reference - where BELOW FLOOR only names the symptom. The
+    sharper verdict has to win."""
+    from app.analysis.fill_audit import FillAudit, FillRecord, MIN_FILLS_FOR_VERDICT
+
+    fills = [
+        FillRecord(trade_id=i, symbol="FLOOR", side="buy", execution_cost_pct=-0.002,
+                   fee_usd=0.225, fill_delay_seconds=1.4, notional_usd=90.0)
+        for i in range(MIN_FILLS_FOR_VERDICT)
+    ]
+    verdict = FillAudit(fills=fills).verdict()
+    assert "SUSPICIOUS" in verdict
+    assert "BELOW FLOOR" not in verdict
+
+
+def test_uncosted_fills_still_win_over_the_floor_check():
+    """A fill with NO cost recorded is a bigger problem than a low one,
+    and BROKEN names it precisely. Order matters: the floor check must
+    not mask it."""
+    from app.analysis.fill_audit import FillAudit, FillRecord
+
+    audit = FillAudit(fills=[
+        FillRecord(trade_id=1, symbol="FLOOR", side="buy", execution_cost_pct=0.00036,
+                   fee_usd=0.2, fill_delay_seconds=1.0, notional_usd=90.0),
+        FillRecord(trade_id=2, symbol="FLOOR", side="buy", execution_cost_pct=None,
+                   fee_usd=0.2, fill_delay_seconds=1.0, notional_usd=90.0),
+    ])
+    assert audit.verdict().startswith("BROKEN")
