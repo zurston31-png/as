@@ -1,3 +1,33 @@
+# Exit-reason buckets group by rule — 1 September 2026
+
+Found by reading a live deployment's own report rather than by review:
+24 closed trades produced 24 exit-reason buckets of one trade each,
+every one flagged "too few trades to mean anything", when 21 of them
+were the same rule firing 21 times.
+
+`breakdown_by_exit_reason` grouped on the raw `close_reason` string, and
+every exit reason renders the numbers that fired it —
+`trend reversal: lower highs after peak $0.00024290`. No two exits fire
+at the same price, so the grouping never grouped anything, and the most
+useful row the report could print was the one row it could not.
+
+Buckets now key on the exit RULE, with prices and percentages replaced
+by a placeholder (`app/analysis/trade_analytics.py::exit_reason_rule`).
+The raw reason on the trade row is untouched; this changes only how the
+breakdown aggregates. On the deployment that surfaced it, 24 buckets
+become 4: 21 trend reversals, 1 momentum loss, 1 partial profit-take,
+1 dev-wallet exit.
+
+Read-side only — no scoring, threshold, weight, exit policy, fee,
+slippage, or classifier change. **Strategy version unchanged at
+`v-83c77cda`.**
+
+8 regression tests in `tests/test_exit_reason_grouping.py`, written
+against the verbatim strings that deployment emitted. 7 of the 8 fail
+against the previous code. **Suite: 1,703 passing.**
+
+---
+
 # Autopilot session — 21 August 2026
 
 Fourteen commits on `claude/memecoin-trading-bot-im07pf`, from `b21a6ab`

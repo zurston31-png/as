@@ -32,6 +32,7 @@ Two rules run through all of it:
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
@@ -527,19 +528,50 @@ def breakdown_by_holding_time(trades: list[models.Trade]) -> Breakdown:
     return _build_breakdown("holding time", pairs, [1, 4, 12, 24, 72], unit="h")
 
 
+# Prices and percentages embedded in an exit reason, e.g. the "$0.00024290"
+# in "trend reversal: lower highs after peak $0.00024290". Money is matched
+# first so a price is consumed whole rather than having its decimal part
+# picked off by the percentage pattern.
+_REASON_MONEY = re.compile(r"\$-?[\d,]+(?:\.\d+)?")
+_REASON_PERCENT = re.compile(r"-?\d+(?:\.\d+)?%")
+
+
+def exit_reason_rule(reason: str) -> str:
+    """The exit RULE behind a reason string, with its measurements removed.
+
+    Every exit reason renders the numbers that triggered it - the peak
+    price, the percentage fallen, the liquidity remaining. Grouping on the
+    raw string therefore puts every single trade in its own bucket, because
+    no two exits fire at the same price. A real deployment showed this
+    perfectly: 24 closed trades produced 24 buckets of one trade each, all
+    flagged as too small to interpret, when 21 of them were in fact the
+    same rule firing 21 times - the single most useful row the report could
+    have shown.
+
+    Substituting the measurements for a placeholder collapses them back
+    onto the rule that produced them. The raw reason is untouched on the
+    trade row; this only affects how the breakdown groups.
+    """
+    collapsed = _REASON_MONEY.sub("$N", reason.strip())
+    collapsed = _REASON_PERCENT.sub("N%", collapsed)
+    return " ".join(collapsed.split())
+
+
 def breakdown_by_exit_reason(trades: list[models.Trade]) -> Breakdown:
     """Which exit mechanism is actually earning its place.
 
     Not a numeric range, so it builds its buckets directly - a trailing
     stop that only ever fires below the entry is worth knowing about.
+    Buckets are keyed by the exit RULE (see exit_reason_rule), not the
+    rendered message, which embeds the numbers that fired it.
     """
     grouped: dict[str, list[models.Trade]] = defaultdict(list)
     unknown = 0
     for t in closed_trades(trades):
-        if not t.close_reason:
+        if not t.close_reason or not t.close_reason.strip():
             unknown += 1
             continue
-        grouped[t.close_reason.strip()].append(t)
+        grouped[exit_reason_rule(t.close_reason)].append(t)
 
     buckets = []
     for label, rows in grouped.items():
