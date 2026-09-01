@@ -118,6 +118,30 @@ def holding_time_hours(
     return (closed - opened).total_seconds() / 3600
 
 
+def format_duration_hours(hours: float | None) -> str | None:
+    """A duration in the unit a reader can actually use.
+
+    Holding time is carried in hours because that is the natural unit for
+    a swing strategy, but this one closes in minutes: a live book of 24
+    trades reported "average / median 0.1h / 0.1h, shortest / longest
+    0.0h / 0.4h". At one decimal place in hours, every trade the strategy
+    makes rounds into two or three indistinguishable values, and "0.0h"
+    covers everything from ten seconds to three minutes.
+
+    Returns None for None so callers keep rendering their own "n/a"
+    rather than being handed a fabricated zero.
+    """
+    if hours is None:
+        return None
+    if hours < 1 / 60:
+        return f"{hours * 3600:.0f}s"
+    if hours < 1:
+        return f"{hours * 60:.0f}m"
+    if hours < 24:
+        return f"{hours:.1f}h"
+    return f"{hours / 24:.1f}d"
+
+
 def _median(values: list[float]) -> float | None:
     if not values:
         return None
@@ -246,6 +270,22 @@ class HoldingTimeSummary:
     avg_winner_hours: float | None
     avg_loser_hours: float | None
     trades_counted: int
+
+    @property
+    def avg_display(self) -> str | None:
+        return format_duration_hours(self.avg_hours)
+
+    @property
+    def median_display(self) -> str | None:
+        return format_duration_hours(self.median_hours)
+
+    @property
+    def avg_winner_display(self) -> str | None:
+        return format_duration_hours(self.avg_winner_hours)
+
+    @property
+    def avg_loser_display(self) -> str | None:
+        return format_duration_hours(self.avg_loser_hours)
 
     @property
     def winners_held_longer(self) -> bool | None:
@@ -398,13 +438,25 @@ class Breakdown:
         }
 
 
-def _bucket_label(value: float, edges: list[float], unit: str = "") -> str:
-    """Label for the half-open interval `value` falls in."""
+def _bucket_index(value: float, edges: list[float]) -> int:
+    """Which half-open interval `value` falls in, as an index."""
     for i, edge in enumerate(edges):
         if value < edge:
-            low = edges[i - 1] if i else None
-            return f"<{edge:g}{unit}" if low is None else f"{low:g}-{edge:g}{unit}"
-    return f"{edges[-1]:g}{unit}+"
+            return i
+    return len(edges)
+
+
+def _bucket_label(value: float, edges: list[float], unit: str = "") -> str:
+    """Label for the half-open interval `value` falls in."""
+    return _label_for_index(_bucket_index(value, edges), edges, lambda v: f"{v:g}{unit}")
+
+
+def _label_for_index(i: int, edges: list[float], fmt) -> str:
+    if i == 0:
+        return f"<{fmt(edges[0])}"
+    if i >= len(edges):
+        return f"{fmt(edges[-1])}+"
+    return f"{fmt(edges[i - 1])}-{fmt(edges[i])}"
 
 
 def _build_breakdown(
@@ -412,32 +464,33 @@ def _build_breakdown(
     pairs: list[tuple[float | None, models.Trade]],
     edges: list[float],
     unit: str = "",
+    edge_label=None,
 ) -> Breakdown:
-    grouped: dict[str, list[models.Trade]] = defaultdict(list)
+    """Bucket `pairs` by the intervals `edges` defines.
+
+    Grouping is keyed by bucket INDEX, not by the rendered label. Sorting
+    rendered labels meant parsing digits back out of strings like "<1h"
+    and "1-4h", which needed a tiebreak to keep the open-ended bucket
+    first and breaks outright once a dimension renders its edges in mixed
+    units - "30m-1h" has no single number to parse. The index is the
+    order, so nothing has to be recovered from the text.
+
+    `edge_label` overrides how an edge is rendered, for dimensions whose
+    natural unit changes across the range (see breakdown_by_holding_time).
+    """
+    fmt = edge_label or (lambda v: f"{v:g}{unit}")
+    grouped: dict[int, list[models.Trade]] = defaultdict(list)
     unknown = 0
     for value, trade in pairs:
         if value is None:
             unknown += 1
             continue
-        grouped[_bucket_label(value, edges, unit)].append(trade)
-
-    def sort_key(label: str) -> tuple[float, int]:
-        """Order buckets by their lower bound, with "<X" ahead of "X-Y".
-
-        Both parse to the same number - "<1h" and "1-4h" each yield 1 - so
-        without the tiebreak the open-ended first bucket lands in the
-        middle of the table and the column reads as unsorted.
-        """
-        digits = label.lstrip("<").rstrip("+").split("-")[0].rstrip(unit or " ")
-        try:
-            value = float(digits)
-        except ValueError:
-            return (float("inf"), 0)
-        return (value, 0 if label.startswith("<") else 1)
+        grouped[_bucket_index(value, edges)].append(trade)
 
     buckets = []
-    for label in sorted(grouped, key=sort_key):
-        rows = grouped[label]
+    for index in sorted(grouped):
+        label = _label_for_index(index, edges, fmt)
+        rows = grouped[index]
         total = sum(t.pnl_usd or 0.0 for t in rows)
         buckets.append(
             Bucket(
@@ -534,10 +587,30 @@ def breakdown_by_rug_score(
     return _build_breakdown("rug risk score", pairs, [20, 40, 60, 80])
 
 
+# Holding-time buckets, in hours. The old edges started at 1h, which put
+# every trade of a strategy that closes in minutes into a single "<1h"
+# bucket - a breakdown that cannot separate anything is not a breakdown.
+# The short end is where this strategy lives, so that is where the
+# resolution goes; the long end is kept so a slower challenger still fits.
+HOLDING_TIME_EDGES_HOURS = [5 / 60, 15 / 60, 0.5, 1, 4, 12, 24, 72]
+
+
+def _holding_edge_label(hours: float) -> str:
+    """Render a bucket edge in its natural unit: 5m, 30m, 4h, 3d."""
+    if hours < 1:
+        return f"{round(hours * 60):g}m"
+    if hours < 24:
+        return f"{hours:g}h"
+    return f"{hours / 24:g}d"
+
+
 def breakdown_by_holding_time(trades: list[models.Trade]) -> Breakdown:
     entries = entry_leg_by_position(trades)
     pairs = [(holding_time_hours(t, entries), t) for t in closed_trades(trades)]
-    return _build_breakdown("holding time", pairs, [1, 4, 12, 24, 72], unit="h")
+    return _build_breakdown(
+        "holding time", pairs, HOLDING_TIME_EDGES_HOURS,
+        unit="h", edge_label=_holding_edge_label,
+    )
 
 
 # Prices and percentages embedded in an exit reason, e.g. the "$0.00024290"

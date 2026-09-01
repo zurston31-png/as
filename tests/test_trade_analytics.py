@@ -264,10 +264,20 @@ def test_liquidity_breakdown_reads_the_rug_check_liquidity():
 
 
 def test_holding_time_breakdown_labels_carry_their_unit():
+    """Labels still carry a unit; the units are now per-edge.
+
+    UPDATED, not loosened. This asserted ["<1h", "24-72h"] against the
+    old edges [1, 4, 12, 24, 72]. Those edges were replaced because the
+    champion closes in minutes and every trade it makes landed in the
+    single "<1h" bucket - see tests/test_duration_resolution.py. The
+    assertion is exactly as strict as before: a full, exact label list.
+    What it now pins is that each edge renders in its own natural unit
+    (30m, 1h, 1d) rather than all of them in hours.
+    """
     breakdown = ta.breakdown_by_holding_time([
         _trade(pnl=5.0, opened_hours_ago=0.5), _trade(pnl=5.0, opened_hours_ago=30),
     ])
-    assert [b.label for b in breakdown.buckets] == ["<1h", "24-72h"]
+    assert [b.label for b in breakdown.buckets] == ["30m-1h", "1d-3d"]
 
 
 def test_exit_reason_breakdown_shows_which_mechanism_earns_its_place():
@@ -348,14 +358,24 @@ def test_unversioned_trades_are_not_folded_into_the_current_version():
 
 
 def test_the_open_ended_first_bucket_sorts_first():
-    """"<1h" and "1-4h" both parse to 1, so without a tiebreak the
-    open-ended bucket lands in the middle of the table."""
+    """The open-ended first bucket leads the table.
+
+    UPDATED, not loosened. The original docstring described the reason as
+    a parsing tiebreak: "<1h" and "1-4h" both parsed to 1, so ordering
+    rendered labels needed a rule to keep the open-ended one first. That
+    mechanism is gone - buckets are now grouped and sorted by interval
+    INDEX, so nothing is recovered from the text and mixed-unit labels
+    like "30m-1h" cannot confuse it.
+
+    The PROPERTY is unchanged and still worth pinning, so the test stays
+    with the same exact-list assertion against the current edges.
+    """
     breakdown = ta.breakdown_by_holding_time([
         _trade(pnl=1.0, opened_hours_ago=0.5),
         _trade(pnl=1.0, opened_hours_ago=2),
         _trade(pnl=1.0, opened_hours_ago=30),
     ])
-    assert [b.label for b in breakdown.buckets] == ["<1h", "1-4h", "24-72h"]
+    assert [b.label for b in breakdown.buckets] == ["30m-1h", "1h-4h", "1d-3d"]
 
 
 def test_the_open_ended_last_bucket_sorts_last():

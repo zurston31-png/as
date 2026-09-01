@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import models  # noqa: E402
+from app.analysis import trade_analytics as ta  # noqa: E402
 from app.analysis.report import build_performance_report  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.database import SessionLocal, init_db  # noqa: E402
@@ -110,10 +111,11 @@ def print_report(report, db=None) -> None:
     print(RULE)
     print(" HOLDING TIME")
     print(RULE)
-    print(f"  average / median     {_fmt(h.avg_hours, '{:.1f}')}h / {_fmt(h.median_hours, '{:.1f}')}h")
-    print(f"  shortest / longest   {_fmt(h.shortest_hours, '{:.1f}')}h / {_fmt(h.longest_hours, '{:.1f}')}h")
-    print(f"  winners / losers     {_fmt(h.avg_winner_hours, '{:.1f}')}h / "
-          f"{_fmt(h.avg_loser_hours, '{:.1f}')}h")
+    _dur = ta.format_duration_hours
+    print(f"  average / median     {_dur(h.avg_hours) or 'n/a'} / {_dur(h.median_hours) or 'n/a'}")
+    print(f"  shortest / longest   {_dur(h.shortest_hours) or 'n/a'} / {_dur(h.longest_hours) or 'n/a'}")
+    print(f"  winners / losers     {_dur(h.avg_winner_hours) or 'n/a'} / "
+          f"{_dur(h.avg_loser_hours) or 'n/a'}")
     if h.winners_held_longer is False:
         print("   ! losers are held longer than winners - cutting winners short and riding losers")
 

@@ -1,3 +1,45 @@
+# Holding time reported at the scale the strategy trades at — 1 September 2026
+
+The repaired holding-time panel immediately showed why it needed to be
+repaired, and then showed a second problem:
+
+    average / median     0.1h / 0.1h
+    shortest / longest   0.0h / 0.4h
+    by holding time
+      <1h    24 trades    62%    -1.38
+
+The champion closes positions in MINUTES. At one decimal in hours every
+trade rounds to two or three indistinguishable values, "0.0h" spans ten
+seconds to three minutes, and a breakdown whose first edge is 1h cannot
+separate a book whose LONGEST hold is 24 minutes. A breakdown that puts
+every trade in one bucket is not a breakdown.
+
+- `format_duration_hours()` renders a duration in its natural unit
+  (7s / 6m / 3.7h / 1.1d), used by the CLI report and the dashboard.
+  Returns None for None so callers keep their own "n/a" and no
+  unmeasured span becomes "0s".
+- Holding-time buckets are now `[5m, 15m, 30m, 1h, 4h, 12h, 1d, 3d]`,
+  with each edge rendered in its own unit. Resolution goes where this
+  strategy lives; the long end is kept so a slower challenger still fits.
+- `_build_breakdown` groups and sorts by interval INDEX rather than by
+  parsing digits back out of rendered labels. The old string-parsing sort
+  needed a tiebreak to keep the open-ended bucket first and would have
+  broken outright on a mixed-unit label like "30m-1h".
+
+Read-side only. `app/analysis/` is not covered by the strategy version
+hash (which spans BEHAVIORAL_SETTINGS, scoring weights, and the regime
+and liquidity constants), so no bucket edge here can split the dataset.
+**Strategy version unchanged at `v-83c77cda`.**
+
+8 new tests in `tests/test_duration_resolution.py`, one of which pins
+that the numeric breakdowns keep their existing labels so the refactor
+cannot silently relabel history. Two existing tests in
+`test_trade_analytics.py` were UPDATED, not loosened: both asserted the
+old edges, both keep an exact full-label assertion, and each records in
+its docstring what changed and why. **Suite: 1,716 passing.**
+
+---
+
 # Holding-time summary resolves its entry legs — 1 September 2026
 
 Caught by the upgraded deployment contradicting itself in one report:

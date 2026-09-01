@@ -147,13 +147,13 @@
   <h2>Holding time</h2>
   <div class="grid">
     <div class="stat"><div class="k">Average</div><div class="v">
-      {{ '%.1f' % r.holding.avg_hours if r.holding.avg_hours is not none else '—' }}h</div></div>
+      {{ r.holding.avg_display or '—' }}</div></div>
     <div class="stat"><div class="k">Median</div><div class="v">
-      {{ '%.1f' % r.holding.median_hours if r.holding.median_hours is not none else '—' }}h</div></div>
+      {{ r.holding.median_display or '—' }}</div></div>
     <div class="stat"><div class="k">Avg winner</div><div class="v">
-      {{ '%.1f' % r.holding.avg_winner_hours if r.holding.avg_winner_hours is not none else '—' }}h</div></div>
+      {{ r.holding.avg_winner_display or '—' }}</div></div>
     <div class="stat"><div class="k">Avg loser</div><div class="v">
-      {{ '%.1f' % r.holding.avg_loser_hours if r.holding.avg_loser_hours is not none else '—' }}h</div></div>
+      {{ r.holding.avg_loser_display or '—' }}</div></div>
   </div>
   {% if r.holding.winners_held_longer is false %}
   <div class="warn" style="margin-top:14px">
