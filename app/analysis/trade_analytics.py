@@ -257,12 +257,24 @@ class HoldingTimeSummary:
 
 
 def summarize_holding_time(trades: list[models.Trade]) -> HoldingTimeSummary:
+    """Holding-time summary, resolved through the entry leg.
+
+    Builds the entry index itself rather than taking it as an argument.
+    An earlier version called holding_time_hours() without one, so the
+    summary measured off the exit leg alone and reported "n/a" for every
+    trade while breakdown_by_holding_time - which did pass the index -
+    happily bucketed the same trades as "<1h". Two panels of one report
+    disagreeing about the same 24 trades is how the live deployment
+    surfaced it. Owning the lookup here makes the two impossible to
+    diverge.
+    """
+    entries = entry_leg_by_position(trades)
     durations: list[float] = []
     winners: list[float] = []
     losers: list[float] = []
 
     for t in closed_trades(trades):
-        hours = holding_time_hours(t)
+        hours = holding_time_hours(t, entries)
         if hours is None:
             continue
         durations.append(hours)

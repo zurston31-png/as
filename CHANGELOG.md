@@ -1,3 +1,31 @@
+# Holding-time summary resolves its entry legs — 1 September 2026
+
+Caught by the upgraded deployment contradicting itself in one report:
+
+    HOLDING TIME
+      average / median     n/ah / n/ah        <- summary
+    by holding time
+      <1h    24 trades                        <- breakdown
+
+Same 24 trades, two answers. `opened_at` is on the buy leg and
+`closed_at` on the sell, so measuring the span needs the entry index.
+`breakdown_by_holding_time` passed one; `summarize_holding_time` did
+not, and its `entries=None` default let that compile silently. This was
+a miss in the entry-attribution fix (`ae940c6`) - it threaded the index
+through every breakdown and not through the summary beside them.
+
+`summarize_holding_time` now builds the index itself rather than taking
+it as an argument, so no caller can forget it again.
+
+Read-side only. **Strategy version unchanged at `v-83c77cda`.**
+
+5 regression tests in `tests/test_holding_time_consistency.py`; 4 of the
+5 fail against the previous code. The invariant they hold is that the
+summary and the breakdown count the same trades, not any particular
+duration. **Suite: 1,708 passing.**
+
+---
+
 # Exit-reason buckets group by rule — 1 September 2026
 
 Found by reading a live deployment's own report rather than by review:
