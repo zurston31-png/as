@@ -1,3 +1,40 @@
+# The VPS updates itself, and refuses to — 4 September 2026
+
+`deploy/auto_update.sh` plus a systemd timer poll the branch every 15
+minutes and redeploy when it moves. The owner asked for this after
+noticing that pushing to GitHub did not change what the bot was running.
+
+Most of the file is the part that does NOT deploy. Automatic deployment
+puts code on a running trading bot with nobody in between, and the value
+of this project is one clean dataset under ONE frozen configuration, so
+the script aborts rather than proceeding when:
+
+- the **strategy version hash would change**. The freeze, enforced
+  mechanically rather than by convention: a new hash splits the dataset,
+  and that is not a decision a timer gets to make at 4am.
+- `LIVE_TRADING` or `LIVE_EXECUTION_ACKNOWLEDGED` is not false in the
+  built image.
+- the pull is not a fast-forward — divergence means someone worked by
+  hand, and an automatic merge would bury it.
+- the build fails (old container never stopped), or the new container is
+  unhealthy within 90s (previous commit restored, rebuilt, brought back).
+
+The version and paper-only checks run against the **new image, in a
+throwaway container, before it replaces the running one**, so a bad deploy
+is caught before it serves anything. The database is copied to
+`/data/deploy-backups/` before any restart and lives outside the clone.
+
+Also corrected: the "send a zip after every push" rule in `CLAUDE.md`. It
+was written when a zip was the only way onto the box, and survived the
+switch to a git clone two days ago — so every push since produced a file
+card the owner had no use for. Replaced with the git-pull workflow and a
+note that the auto-updater will refuse a frozen-config change outright.
+
+Deploy tooling and documentation only. No application code touched.
+**Strategy version unchanged at `v-83c77cda`. Suite: 1,730 passing.**
+
+---
+
 # Two unreachable analyses, made reachable — 4 September 2026
 
 ## Monte Carlo: the second mode was implemented but unusable

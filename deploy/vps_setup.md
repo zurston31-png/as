@@ -205,6 +205,57 @@ If the breakdowns still say "not recorded" after the restart, the new
 code is not actually running — check `git rev-parse HEAD` and that the
 service restarted, rather than assuming the data is missing.
 
+### Automatic updates (systemd timer)
+
+`deploy/auto_update.sh` plus the two units in `deploy/systemd/` poll the
+branch every 15 minutes and redeploy when it moves. Install on the VPS:
+
+```bash
+cd /root/memecoin-bot-live
+chmod +x deploy/auto_update.sh
+
+# dry run FIRST - it exits harmlessly when there is nothing to pull
+./deploy/auto_update.sh
+
+sudo cp deploy/systemd/memecoin-bot-update.service /etc/systemd/system/
+sudo cp deploy/systemd/memecoin-bot-update.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now memecoin-bot-update.timer
+
+systemctl list-timers memecoin-bot-update.timer
+tail -f /var/log/memecoin-bot-update.log
+```
+
+The units assume the clone is at `/root/memecoin-bot-live`. Edit
+`WorkingDirectory` and `ExecStart` if yours is elsewhere; the script also
+reads `REPO_DIR`, `BRANCH`, `DATA_DIR`, `CONTAINER`, `HEALTH_URL`,
+`HEALTH_TIMEOUT` and `BACKUPS_KEPT` from the environment.
+
+**What it refuses to deploy.** Automatic deployment puts code on a running
+bot with nobody in between, so the script is built to abort rather than
+proceed:
+
+| Condition | What happens |
+|---|---|
+| Strategy version hash would change | Aborts, checkout reset. A new hash splits the collection dataset — that decision is never made by a timer. |
+| `LIVE_TRADING` / `LIVE_EXECUTION_ACKNOWLEDGED` not both false | Aborts, checkout reset. |
+| Not a fast-forward | Aborts. Divergence means someone worked by hand; an automatic merge would bury it. |
+| Build fails | Checkout reset, old container never stopped. |
+| New container unhealthy within 90s | Previous commit restored, rebuilt, and brought back up automatically. |
+
+The version and paper-only checks run against the **new image before it
+replaces the running container**, in a throwaway container, so a bad
+deploy is caught before it serves anything.
+
+The database is copied to `/data/deploy-backups/` before any restart (last
+10 kept) and lives outside the clone, so the update cannot touch it.
+
+**Turning it off:**
+
+```bash
+sudo systemctl disable --now memecoin-bot-update.timer
+```
+
 ### Rolling back
 
 ```bash

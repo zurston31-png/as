@@ -1,19 +1,32 @@
 # Working on this repo
 
-## Always hand over the build — do not wait to be asked
+## Handing over the build
 
-After **every** push to this repo, without being prompted:
+The VPS deploys from a **git clone** at `/root/memecoin-bot-live` and
+updates itself: a systemd timer runs `deploy/auto_update.sh` every 15
+minutes, which pulls, rebuilds, and rolls back on its own if the new
+container is unhealthy. Pushing to `claude/memecoin-trading-bot-im07pf` is
+therefore the whole handover — **do not send a zip after every push.**
 
-1. Run `./scripts/package.sh` — it builds `dist/memecoin-bot-<stamp>-<sha>.zip`
-   from `git archive HEAD`, so the bundle is exactly what is committed.
-2. Send that zip to the user with `SendUserFile`.
+Build one with `./scripts/package.sh` only when asked, or when the git
+path is unavailable. It uses `git archive HEAD` rather than zipping the
+working directory, deliberately: the working tree carries `.env`, the
+runtime database, backups and `__pycache__`, and a bundle built from it
+would ship live secrets.
 
-The user has asked not to have to request the new files each time. Treat a
-push without a delivered bundle as an unfinished handover.
+What the auto-updater will NOT deploy, and why it matters when writing a
+commit that is about to go live unattended:
 
-`git archive` is used deliberately rather than zipping the working
-directory: the working tree carries `.env`, the runtime database, backups
-and `__pycache__`, and a bundle built from it would ship live secrets.
+- anything that changes the **strategy version hash** — that splits the
+  collection dataset, so it aborts and resets rather than deploying
+- anything where `LIVE_TRADING` or `LIVE_EXECUTION_ACKNOWLEDGED` is not
+  false in the built image
+- a non-fast-forward, a failed build, or a container that fails its health
+  check within 90s (that last one restores the previous commit)
+
+So a strategy change is not merely discouraged by this file — it will be
+refused by the machine, and the bot will stay on the old commit until
+someone deploys it deliberately.
 
 ## The project is frozen for a paper-collection run
 
