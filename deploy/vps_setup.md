@@ -276,6 +276,17 @@ caught before it serves anything.
 The database is copied to `/data/deploy-backups/` before any restart (last
 10 kept) and lives outside the clone, so the update cannot touch it.
 
+**It tracks what was deployed, not just what was pulled.** Comparing
+`HEAD` to `origin` alone is not enough: `git pull` moves the checkout
+without rebuilding, so a host where someone pulled by hand has new code on
+disk and the old build still serving — and a `HEAD`-only check would
+report "up to date" forever while the box stayed stale. The commit last
+successfully deployed is recorded in `/data/.deployed_commit` after the
+health check passes, and an update runs when the branch moved **or** that
+marker disagrees with `HEAD`. On first install the marker is absent, so
+the first timer run redeploys once to make it true — that is expected, not
+a fault.
+
 **Turning it off:**
 
 ```bash

@@ -35,6 +35,20 @@
 #   * the service is not healthy within HEALTH_TIMEOUT. The previous commit
 #     is restored, rebuilt and restarted automatically.
 #
+# WHY IT TRACKS A DEPLOYED MARKER AND NOT JUST git HEAD
+#
+# Comparing HEAD to origin is not enough. `git pull` moves the checkout
+# without rebuilding, so a host where someone pulled by hand has new code
+# on disk and the OLD build still serving. HEAD == origin, so a
+# HEAD-only check reports "up to date" forever and the box stays stale
+# behind a timer that says otherwise. That happened on the first install.
+#
+# So the commit that was last successfully DEPLOYED is recorded in
+# $DEPLOYED_MARKER after the health check passes, and an update runs when
+# either the branch moved or the marker does not match HEAD. A missing
+# marker means "unknown", which deploys - correct on first install, where
+# the running artifact genuinely cannot be verified.
+#
 # The database is backed up before any restart. On a correctly configured
 # host it also lives outside the clone, so it is not at risk either way.
 set -uo pipefail
@@ -51,6 +65,9 @@ VENV="${VENV:-venv}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8000/health}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
 BACKUPS_KEPT="${BACKUPS_KEPT:-10}"
+# Outside the clone on purpose: a marker inside it would be destroyed by
+# the same reset that rolls a bad deploy back.
+DEPLOYED_MARKER="${DEPLOYED_MARKER:-$DATA_DIR/.deployed_commit}"
 
 log() { printf '%s  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 die() { log "ABORT: $*"; exit 1; }
@@ -75,8 +92,11 @@ git fetch --quiet origin "$BRANCH" || die "git fetch failed"
 LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse "origin/$BRANCH")"
 
-if [ "$LOCAL" = "$REMOTE" ]; then
-    log "up to date at ${LOCAL:0:7}, nothing to do"
+DEPLOYED=""
+[ -f "$DEPLOYED_MARKER" ] && DEPLOYED="$(tr -d '[:space:]' < "$DEPLOYED_MARKER")"
+
+if [ "$LOCAL" = "$REMOTE" ] && [ "$DEPLOYED" = "$LOCAL" ]; then
+    log "up to date at ${LOCAL:0:7} and deployed, nothing to do"
     exit 0
 fi
 
@@ -84,7 +104,16 @@ if ! git merge-base --is-ancestor "$LOCAL" "$REMOTE"; then
     die "origin/$BRANCH is not a fast-forward from ${LOCAL:0:7} - resolve by hand"
 fi
 
-log "update available: ${LOCAL:0:7} -> ${REMOTE:0:7}"
+if [ "$LOCAL" != "$REMOTE" ]; then
+    log "branch moved: ${LOCAL:0:7} -> ${REMOTE:0:7}"
+elif [ -z "$DEPLOYED" ]; then
+    log "no deployed marker at $DEPLOYED_MARKER - cannot verify what is running,"
+    log "so redeploying ${LOCAL:0:7} to make the marker true"
+else
+    log "checkout is ${LOCAL:0:7} but ${DEPLOYED:0:7} was last deployed"
+    log "(someone pulled without rebuilding) - redeploying"
+fi
+
 PREVIOUS="$LOCAL"
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -211,8 +240,11 @@ done
 if [ "$healthy" -ne 1 ]; then
     log "NOT healthy within ${HEALTH_TIMEOUT}s - rolling back to ${PREVIOUS:0:7}"
     rollback_checkout
-    prepare && restart
+    if prepare && restart; then
+        printf '%s\n' "$PREVIOUS" > "$DEPLOYED_MARKER"
+    fi
     die "rolled back to ${PREVIOUS:0:7}; investigate ${REMOTE:0:7}"
 fi
 
+printf '%s\n' "$(git rev-parse HEAD)" > "$DEPLOYED_MARKER"
 log "healthy at $(git rev-parse --short HEAD) - update complete"

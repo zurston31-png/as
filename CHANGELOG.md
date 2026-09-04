@@ -1,3 +1,29 @@
+# The updater tracked the wrong thing — 4 September 2026
+
+Caught within minutes of the first real install, by the install itself.
+
+`auto_update.sh` decided whether to act by comparing `git HEAD` to
+`origin`. The owner ran `git pull` before the dry run, as the install
+instructions told them to. That moved the checkout to `76ae6f9` **without
+rebuilding**, so the container kept serving the `5eff3a7` image — and from
+then on `HEAD == origin`, so the script reported *"up to date, nothing to
+do"* on every run. The box would have sat on stale code indefinitely
+behind a timer confirming it was current. My instructions created the
+condition and my check could not see it.
+
+The script now records the commit it last successfully DEPLOYED in
+`/data/.deployed_commit`, written only after the health check passes, and
+updates when the branch moved **or** the marker disagrees with `HEAD`. A
+missing marker counts as unknown and triggers a deploy, which is right on
+first install: the running artifact genuinely cannot be verified there.
+The marker lives outside the clone so a rollback's `git reset` cannot
+destroy it, and a rollback rewrites it to the commit actually restored.
+
+Deploy tooling and documentation only. **Strategy version unchanged at
+`v-83c77cda`. Suite: 1,730 passing.**
+
+---
+
 # Auto-update covers both deployment paths — 4 September 2026
 
 The updater shipped earlier today only handled the Docker path, while
