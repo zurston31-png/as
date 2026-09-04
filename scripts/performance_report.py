@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Print the full performance report for the paper-trading record.
+
+    python scripts/performance_report.py
+    python scripts/performance_report.py --version v-f412f88b
+    python scripts/performance_report.py --list-versions
+    python scripts/performance_report.py --json
+
+Answers the question the dashboard's headline numbers cannot: is this
+record strong enough to believe? It leads with the strategy's validation
+status (EXPERIMENTAL / FAILING / VALIDATED) rather than with the return,
+because "+34%" and "on 12 trades" mean very different things and the
+second one is the part people skip.
+
+Everything here is read-only. Running it never places, cancels or modifies
+anything.
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app import models  # noqa: E402
+from app.analysis import trade_analytics as ta  # noqa: E402
+from app.analysis.backtest_evidence import load as load_backtest_evidence  # noqa: E402
+from app.analysis.report import build_performance_report  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.database import SessionLocal, init_db  # noqa: E402
+
+RULE = "=" * 78
+
+
+def _fmt(value, spec="{:,.2f}", none="n/a"):
+    return none if value is None else spec.format(value)
+
+
+def print_report(report, db=None) -> None:
+    """Render the report.
+
+    `db` is optional so the renderer stays callable without a session;
+    the fill audit below is the only part that needs one, and it is
+    skipped rather than faked when there is none.
+    """
+    stats = report.stats
+
+    print(RULE)
+    print(f" STRATEGY STATUS: {report.validation.status.value.upper()}")
+    print(RULE)
+    print(f" {report.validation.headline}")
+    print()
+    print(report.validation.summary().split("\n", 2)[2])
+
+    if report.warnings:
+        print()
+        print(" READ THIS FIRST")
+        for w in report.warnings:
+            print(f"   ! {w}")
+
+    print()
+    print(RULE)
+    print(" RESULTS")
+    print(RULE)
+    print(f"  closed trades        {stats.trade_count}")
+    print(f"  win rate             {stats.win_rate:.1f}%  ({stats.win_count}W / {stats.loss_count}L)")
+    print(f"  net P&L              ${_fmt(report.net_pnl_usd)}")
+    print(f"  gross P&L (pre-cost) ${_fmt(report.gross_pnl_usd)}")
+    print(f"  expectancy / trade   ${_fmt(stats.expectancy_usd)}")
+    print(f"  profit factor        {_fmt(stats.profit_factor, '{:.2f}')}")
+    print(f"  max drawdown         {stats.max_drawdown_pct:.1f}%")
+    print(f"  avg win / avg loss   ${_fmt(stats.avg_win_usd)} / ${_fmt(stats.avg_loss_usd)}")
+    print(f"  longest losing run   {stats.longest_losing_streak}")
+
+    ex = report.extremes
+    print(f"  largest win          ${_fmt(ex.largest_win_usd)}  ({ex.largest_win_symbol or 'n/a'})")
+    print(f"  largest loss         ${_fmt(ex.largest_loss_usd)}  ({ex.largest_loss_symbol or 'n/a'})")
+    if ex.profit_depends_on_one_trade:
+        print("   ! one trade produced most of the gross profit - this is a lucky sample, not an edge")
+
+    print()
+    print(RULE)
+    print(" WHAT IT COST")
+    print(RULE)
+    c = report.costs
+    print(f"  fees                 ${_fmt(c.total_fees_usd)}")
+    print(f"  slippage + impact    ${_fmt(c.total_slippage_usd)}")
+    print(f"  total execution cost ${_fmt(c.total_execution_cost_usd)}")
+    print(f"  avg cost per leg     {_fmt((c.avg_execution_cost_pct or 0) * 100, '{:.3f}')}%")
+    print(f"  avg fill delay       {_fmt(c.avg_fill_delay_seconds, '{:.2f}')}s")
+    print(f"  cost data coverage   {c.coverage_pct:.0f}% "
+          f"({c.legs_missing_cost_data} leg(s) unrecorded)")
+
+    # The verdict on whether those cost figures can be believed at all.
+    # app/analysis/fill_audit.py has always been able to answer this and
+    # was reachable only from `research.py fills`, so the numbers above
+    # were read without it - which is precisely when a mean cost far
+    # below the spread+fee floor looks like cheap execution rather than
+    # like a fill model that never received a market snapshot.
+    if db is not None:
+        from app.analysis.fill_audit import build_fill_audit
+
+        audit = build_fill_audit(db)
+        print(f"  spread+fee floor     {audit.floor_pct:.3f}%  "
+              f"(a fill cannot cost less than this before drift)")
+        if audit.mean_cost_pct is not None:
+            print(f"  notional-weighted    {audit.mean_cost_pct:+.3f}%")
+        print(f"  fill audit           {audit.verdict()}")
+
+    h = report.holding
+    print()
+    print(RULE)
+    print(" HOLDING TIME")
+    print(RULE)
+    _dur = ta.format_duration_hours
+    print(f"  average / median     {_dur(h.avg_hours) or 'n/a'} / {_dur(h.median_hours) or 'n/a'}")
+    print(f"  shortest / longest   {_dur(h.shortest_hours) or 'n/a'} / {_dur(h.longest_hours) or 'n/a'}")
+    print(f"  winners / losers     {_dur(h.avg_winner_hours) or 'n/a'} / "
+          f"{_dur(h.avg_loser_hours) or 'n/a'}")
+    if h.winners_held_longer is False:
+        print("   ! losers are held longer than winners - cutting winners short and riding losers")
+
+    print()
+    print(RULE)
+    print(" BREAKDOWNS   (buckets marked * have too few trades to mean anything)")
+    print(RULE)
+    for breakdown in report.breakdowns:
+        print(f"\n  by {breakdown.dimension}"
+              + (f"   [{breakdown.unknown_count} not recorded]" if breakdown.unknown_count else ""))
+        if not breakdown.buckets:
+            print("    (no closed trades with this attribute yet)")
+            continue
+        print(f"    {'bucket':<24}{'trades':>8}{'win %':>8}{'total P&L':>13}{'per trade':>12}")
+        for b in breakdown.buckets:
+            mark = " " if b.meaningful else "*"
+            print(f"  {mark} {b.label:<24}{b.trade_count:>8}{b.win_rate:>7.0f}%"
+                  f"{b.total_pnl_usd:>13,.2f}{b.expectancy_usd:>12,.2f}")
+
+    if report.rejections and report.rejections.total:
+        print()
+        print(RULE)
+        print(" WHERE CANDIDATES WERE REJECTED")
+        print(RULE)
+        for entry in report.rejections.as_dict()["by_reason"]:
+            print(f"  {entry['reason']:<32}{entry['count']:>7}  ({entry['share_pct']:.0f}%)")
+        print("\n  A filter rejecting a lot is doing its job. The fix for too few trades is")
+        print("  better candidates, never a lower filter.")
+
+    if report.monte_carlo:
+        print()
+        print(RULE)
+        print(" MONTE CARLO   (the realized path was one draw; this is the range)")
+        print(RULE)
+        print("  " + report.monte_carlo.summary().replace("\n", "\n  "))
+
+    if report.version_counts:
+        print()
+        print(RULE)
+        print(" STRATEGY VERSIONS IN THIS RECORD")
+        print(RULE)
+        for label, count in sorted(report.version_counts.items()):
+            print(f"  {label:<20}{count:>6} trade legs")
+
+    print()
+    print(RULE)
+    print(" Paper trading only. No real funds, no wallet, no private key involved.")
+    print(RULE)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", help="restrict the report to one strategy version label")
+    parser.add_argument("--list-versions", action="store_true",
+                        help="list the strategy versions on record and exit")
+    parser.add_argument("--json", action="store_true", help="emit the report as JSON")
+    parser.add_argument("--simulations", type=int, default=2_000,
+                        help="Monte Carlo paths to run (default 2000)")
+    parser.add_argument("--mc-mode", choices=("bootstrap", "shuffle"), default="bootstrap",
+                        help="bootstrap (default) resamples WITH replacement and answers "
+                             "'what range of outcomes is consistent with this edge'; "
+                             "shuffle reorders the exact trades and answers "
+                             "'given this edge, how bad could the ride have been'")
+    parser.add_argument("--backtest-evidence", metavar="PATH",
+                        help="a JSON file from scripts/run_backtest.py --evidence-out, "
+                             "supplying the out-of-sample and walk-forward criteria. "
+                             "Runs on synthetic candles are refused.")
+    args = parser.parse_args()
+
+    init_db()
+    db = SessionLocal()
+    try:
+        if args.list_versions:
+            rows = db.query(models.StrategyVersion).order_by(models.StrategyVersion.created_at).all()
+            if not rows:
+                print("No strategy versions recorded yet - the bot hasn't processed a signal.")
+                return 0
+            print(f"{'label':<16}{'first seen':<22}{'last seen':<22}")
+            for r in rows:
+                print(f"{r.label:<16}{str(r.created_at):<22}{str(r.last_seen_at):<22}")
+            return 0
+
+        evidence = None
+        if args.backtest_evidence:
+            evidence, message = load_backtest_evidence(args.backtest_evidence)
+            # Printed either way: a refusal is the most important thing this
+            # command can say, and a silent None would look like a pass that
+            # simply had not been reached.
+            print(f"backtest evidence: {message}\n")
+
+        report = build_performance_report(
+            db,
+            strategy_version=args.version,
+            monte_carlo_simulations=args.simulations,
+            monte_carlo_mode=args.mc_mode,
+            backtest_evidence=evidence,
+        )
+        if args.json:
+            print(json.dumps(report.as_dict(), indent=2))
+        else:
+            print_report(report, db)
+    finally:
+        db.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

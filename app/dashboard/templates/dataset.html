@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dataset — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1200px; margin: 0 auto; }
+  .muted { color: var(--muted); } .pos { color: var(--green); } .neg { color: var(--red); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+  .pill.pass { background: rgba(61,220,151,.15); color: var(--green); }
+  .pill.fail { background: rgba(255,92,122,.16); color: var(--red); }
+  .pill.warn { background: rgba(245,195,68,.15); color: var(--amber); }
+  .pill.insufficient { background: rgba(139,147,167,.15); color: var(--muted); }
+  .headline { font-size: 15px; line-height: 1.55; margin: 0 0 6px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+  .track { height: 10px; background: rgba(139,147,167,.15); border-radius: 999px; overflow: hidden; min-width: 140px; }
+  .track > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), rgba(91,141,239,.5)); }
+  .bar { height: 8px; background: linear-gradient(90deg, rgba(91,141,239,.65), rgba(91,141,239,.22)); border-radius: 3px; min-width: 1px; }
+  .chiprow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .chip { font-size: 11.5px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
+  .chip b { color: var(--text); font-weight: 600; }
+  ul.gaps { margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.65; }
+  .empty { padding: 26px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 Dataset</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/research">Research</a>
+    &nbsp;&nbsp;<a class="navlink" href="/pipeline">Pipeline</a>
+    &nbsp;&nbsp;<a class="navlink" href="/performance">Performance</a>
+    &nbsp;&nbsp;<a class="navlink" href="/early">Early</a>
+  </div>
+</header>
+<main>
+
+<div class="card">
+  <h2>Where the sample stands</h2>
+  <p class="headline">{{ report.verdict() }}</p>
+  <p class="note">
+    Strategy version <b>{{ report.strategy_version }}</b>. Observations from other versions are
+    not pooled here — a threshold that moved mid-run makes the two halves different strategies,
+    and averaging them describes neither.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Paired progress toward the milestone</h2>
+  {% if report.paired %}
+  <table>
+    <tr><th>Challenger</th><th class="num">Paired</th><th>Progress</th><th class="num">Target</th></tr>
+    {% for name, n in report.paired.items() | sort %}
+    {% set pct = (n / report.target_pairs * 100) if report.target_pairs else 0 %}
+    <tr>
+      <td>{{ name }}</td>
+      <td class="num">{{ n }}</td>
+      <td><div class="track"><span style="width: {{ '%.1f' % (pct if pct < 100 else 100) }}%"></span></div></td>
+      <td class="num muted">{{ report.target_pairs }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    Progress is the <b>slowest</b> arm, not the average. A paired comparison is limited by
+    whichever challenger has the least data, so an average would report progress the
+    experiment does not have.
+  </p>
+  {% else %}
+  <div class="empty">No paired opportunities recorded yet.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Coverage by source</h2>
+  <table>
+    <tr>
+      <th>Source</th><th class="num">Rows</th><th class="num">Usable</th>
+      <th class="num">Pending</th><th class="num">Unusable</th><th class="num">Usable %</th>
+    </tr>
+    {% for s in report.sources %}
+    <tr>
+      <td>{{ s.name }}<div class="muted" style="font-size:11.5px">{{ s.note }}</div></td>
+      <td class="num">{{ s.total }}</td>
+      <td class="num">{{ s.usable }}</td>
+      <td class="num muted">{{ s.pending }}</td>
+      <td class="num {% if s.unusable %}neg{% else %}muted{% endif %}">{{ s.unusable }}</td>
+      <td class="num">{{ '%.1f' % s.usable_pct }}%</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    &ldquo;Unusable&rdquo; rows are kept, never deleted. A dataset that quietly shrinks is worse
+    than one with known holes, and the count is itself a signal about the feed.
+    Integrity exclusions across all sources: <b>{{ report.integrity_exclusions }}</b>.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Market conditions represented</h2>
+  {% if report.regimes %}
+  {% set biggest = report.regimes.values() | max %}
+  {% for label, n in report.regimes.items() | sort(attribute='1', reverse=true) %}
+  <div style="display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:4px">
+    <span style="width:230px" class="muted">{{ label }}</span>
+    <span style="width:44px;text-align:right" class="muted">{{ n }}</span>
+    <span class="bar" style="width: {{ '%.1f' % (n / biggest * 55) }}%"></span>
+  </div>
+  {% endfor %}
+  <div class="chiprow" style="margin-top:12px">
+    {% for label, n in report.liquidity.items() | sort %}
+    <span class="chip">{{ label }} <b>{{ n }}</b></span>
+    {% endfor %}
+  </div>
+  <p class="note">
+    Contrast exists on:
+    {% if report.contrasting_axes %}<b>{{ report.contrasting_axes | join(', ') }}</b>{% else %}<b class="neg">nothing yet</b>{% endif %}.
+    The consistency bar needs two different values on the <em>same</em> axis. Counting distinct
+    full labels instead would let one condition satisfy it three times over.
+  </p>
+  {% else %}
+  <div class="empty">No regime data recorded yet.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Collection health</h2>
+  <table>
+    <tr><th>Check</th><th>Status</th><th>Detail</th></tr>
+    {% for c in collection.checks %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><span class="pill {{ 'pass' if c.status == 'PASS' else ('fail' if c.status == 'FAIL' else ('warn' if c.status == 'WARN' else 'insufficient')) }}">{{ c.status }}</span></td>
+      <td class="muted" style="font-size:12px">{{ c.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="card">
+  <h2>What is still missing</h2>
+  {% if gaps %}
+  <ul class="gaps">
+    {% for name, text in gaps.items() %}<li>{{ text }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="headline">Nothing. The sample meets the stated milestone — run the promotion gate.</p>
+  {% endif %}
+  <p class="note">
+    Stated as a shortfall rather than a percentage on purpose: &ldquo;68% of the way&rdquo; reads
+    as nearly done, and &ldquo;160 more paired opportunities&rdquo; reads as what it is.
+    Nothing on this page is about returns — coverage first, conclusions after.
+  </p>
+</div>
+
+</main>
+</body>
+</html>

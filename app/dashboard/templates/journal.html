@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trade Journal — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  .pos { color: var(--green); } .neg { color: var(--red); } .muted { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 8px; }
+  .card-head .symbol { font-weight: 700; font-size: 15px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+  .badge.open { background: rgba(91,141,239,.15); color: var(--accent); }
+  .badge.closed { background: rgba(139,147,167,.15); color: var(--muted); }
+  .card-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0; }
+  .block { padding: 12px 16px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 13px; }
+  .block:last-child { border-right: none; }
+  .block h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  .kv { display: flex; justify-content: space-between; padding: 2px 0; }
+  .kv .k { color: var(--muted); }
+  .exit-leg { padding: 6px 0; border-top: 1px solid var(--border); }
+  .exit-leg:first-child { border-top: none; }
+  .empty { padding: 40px 16px; color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📓 Trade Journal</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/pipeline">Pipeline</a>
+    &nbsp;&nbsp;<a class="navlink" href="/performance">Performance</a>
+    &nbsp;&nbsp;<a class="navlink" href="/research">Research</a>
+    &nbsp;&nbsp;<a class="navlink" href="/dataset">Dataset</a>
+    &nbsp;&nbsp;<a class="navlink" href="/early">Early</a>
+  </div>
+</header>
+<main>
+  {% if not rows %}
+  <div class="empty">No trades yet. Once a position opens, its full record — indicators, rug score, every exit leg and why it fired — will show up here.</div>
+  {% endif %}
+
+  {% for row in rows %}
+  {% set p = row.position %}
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <span class="symbol">{{ p.symbol }}</span>
+        <span class="muted">{{ p.chain }} · {{ p.mode }}</span>
+        <span class="badge {{ 'open' if p.status == 'open' else 'closed' }}">{{ p.status|upper }}</span>
+      </div>
+      <div class="{{ 'pos' if row.total_realized_pnl >= 0 else 'neg' }}">
+        Net P&amp;L: ${{ "%.2f"|format(row.total_realized_pnl) }}
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="block">
+        <h3>Entry</h3>
+        <div class="kv"><span class="k">Opened</span><span>{{ p.opened_at.strftime("%Y-%m-%d %H:%M UTC") if p.opened_at else "-" }}</span></div>
+        <div class="kv"><span class="k">Price</span><span>${{ "%.8f"|format(p.entry_price) }}</span></div>
+        <div class="kv"><span class="k">Qty</span><span>{{ "%.6f"|format(p.initial_qty or p.qty) }}</span></div>
+        <div class="kv"><span class="k">Size</span><span>${{ "%.2f"|format((p.initial_qty or p.qty) * p.entry_price) }}</span></div>
+        <div class="kv"><span class="k">Stop / Target</span><span>${{ "%.8f"|format(p.stop_loss) }} / ${{ "%.8f"|format(p.take_profit) }}</span></div>
+      </div>
+
+      <div class="block">
+        <h3>Signal indicators</h3>
+        {% if row.signal %}
+        <div class="kv"><span class="k">RSI</span><span>{{ "%.1f"|format(row.signal.rsi) if row.signal.rsi is not none else "-" }}</span></div>
+        <div class="kv"><span class="k">EMA9 / EMA21</span><span>{{ "%.8f"|format(row.signal.ema9) if row.signal.ema9 is not none else "-" }} / {{ "%.8f"|format(row.signal.ema21) if row.signal.ema21 is not none else "-" }}</span></div>
+        <div class="kv"><span class="k">Volume / SMA</span><span>{{ "%.0f"|format(row.signal.volume) if row.signal.volume is not none else "-" }} / {{ "%.0f"|format(row.signal.volume_sma) if row.signal.volume_sma is not none else "-" }}</span></div>
+        <div class="kv"><span class="k">Breakout level</span><span>{{ "%.8f"|format(row.signal.breakout_level) if row.signal.breakout_level is not none else "-" }}</span></div>
+        {% if row.signal.signal_score is not none %}
+        <div class="kv"><span class="k">Signal score</span>
+          <span class="{{ 'pos' if row.signal.signal_score >= 75 else 'neg' }}">
+            {{ "%.1f"|format(row.signal.signal_score) }}/100
+            {{ "(unreliable)" if not row.signal.signal_score_reliable else "" }}
+          </span>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="muted">No TradingView indicator payload on record for this entry.</div>
+        {% endif %}
+      </div>
+
+      <div class="block">
+        <h3>Rug check</h3>
+        {% if row.rug_check %}
+        <div class="kv"><span class="k">Score</span>
+          <span class="{{ 'neg' if row.rug_check.rug_risk_score and row.rug_check.rug_risk_score >= 45 else 'pos' }}">
+            {{ "%.0f"|format(row.rug_check.rug_risk_score) if row.rug_check.rug_risk_score is not none else "-" }}/100
+            ({{ row.rug_check.rug_risk_level or "-" }})
+          </span>
+        </div>
+        <div class="kv"><span class="k">Scanner</span><span>{{ row.rug_check.scanner_source or "-" }}</span></div>
+        <div class="kv"><span class="k">Liquidity</span><span>${{ "%.0f"|format(row.rug_check.liquidity_usd) if row.rug_check.liquidity_usd is not none else "-" }}</span></div>
+        <div class="kv"><span class="k">Top10 holders</span><span>{{ "%.1f"|format(row.rug_check.top10_holder_pct * 100) if row.rug_check.top10_holder_pct is not none else "-" }}%</span></div>
+        {% else %}
+        <div class="muted">No rug-check record linked to this entry.</div>
+        {% endif %}
+      </div>
+
+      <div class="block">
+        <h3>Exits ({{ row.exit_trades|length }})</h3>
+        {% if row.exit_trades %}
+          {% for t in row.exit_trades %}
+          <div class="exit-leg">
+            <div class="kv"><span class="k">{{ t.closed_at.strftime("%Y-%m-%d %H:%M") if t.closed_at else "-" }}</span>
+              <span class="{{ 'pos' if (t.pnl_usd or 0) >= 0 else 'neg' }}">${{ "%.2f"|format(t.pnl_usd) if t.pnl_usd is not none else "-" }}</span>
+            </div>
+            <div class="kv"><span class="k">Qty / Price</span><span>{{ "%.6f"|format(t.qty) if t.qty else "-" }} @ ${{ "%.8f"|format(t.exit_price) if t.exit_price else "-" }}</span></div>
+            <div class="muted">{{ t.close_reason or "-" }}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="muted">Still open — no exit leg yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</main>
+</body>
+</html>

@@ -1,0 +1,340 @@
+"""Solana execution via the Jupiter aggregator (https://station.jup.ag/docs/apis/swap-api).
+
+Quantities and prices on SwapResult are in the same units every other
+execution backend uses: filled_qty is WHOLE tokens, avg_price is USD per
+whole token — matching app/execution/paper.py's contract, which the rest
+of the system (RiskManager, the position monitor, the dashboard) assumes
+everywhere it does `qty * price`. Jupiter itself speaks only in each
+mint's raw base units, so every conversion crosses that boundary here via
+the mint's on-chain decimals (fetched once per mint via Solana RPC
+`getAccountInfo`, cached in-process since a mint's decimals never change).
+
+This used to be a documented, deliberate bug: avg_price was computed as
+raw inAmount/outAmount, which only equals USD-per-whole-token when the
+output token happens to have exactly 6 decimals (USDC's own). Solana
+memecoins commonly use 9, which made the stored entry price 1000x too low
+and closed every live position on the first monitor tick at a fabricated
+profit. Fixed by converting through decimals at both boundaries -
+to_base_units / from_base_units are the only two functions that do that
+math, so there is exactly one place to audit it.
+
+Endpoints/params match the Jupiter v6 Quote/Swap API as of this build.
+Jupiter has changed API hosts/auth requirements before (e.g. adding paid
+tiers) — if requests start failing, check https://station.jup.ag/docs and
+update JUPITER_API_BASE / JUPITER_PRICE_API_BASE in .env accordingly.
+"""
+import base64
+import logging
+
+import httpx
+
+from app.config import settings
+from app.services import http
+from app.execution.base import ExecutionClient, SwapResult
+
+logger = logging.getLogger(__name__)
+
+USDC_DECIMALS = 6
+
+# Solana execution has never been exercised against a funded wallet or
+# mainnet from this codebase's own test suite - it can't be, without moving
+# real money. The unit-conversion math below (decimals fetch, base-unit
+# round-tripping, avg_price computation) is unit-tested against mocked RPC
+# responses; the sign-and-submit path itself (solders/solana-py) is not,
+# and never can be from an automated test. Requiring this ADDITIONAL
+# explicit flag - separate from LIVE_TRADING - means enabling it is a
+# second deliberate decision, not a side effect of flipping one setting,
+# and the deployer has seen this warning before their first real swap.
+LIVE_EXECUTION_UNACKNOWLEDGED_MSG = (
+    "Jupiter live execution requires LIVE_EXECUTION_ACKNOWLEDGED=true in addition "
+    "to LIVE_TRADING=true. This code path signs and submits real on-chain swaps "
+    "and has only been tested against mocked responses, never a funded wallet - "
+    "review app/execution/jupiter.py yourself before setting the flag, and start "
+    "with a small trade size. EXECUTION_BACKEND=cex uses a mature, widely-used "
+    "client library (ccxt) instead if you'd rather avoid that. LIVE_TRADING=false "
+    "keeps paper trading unaffected either way."
+)
+
+_decimals_cache: dict[str, int] = {}
+
+
+async def get_mint_decimals(mint: str, rpc_url: str | None = None) -> int:
+    """Look up an SPL mint's decimals via Solana JSON-RPC `getAccountInfo`.
+
+    Cached per mint for the life of the process - decimals are immutable
+    once a mint is created, so there is never a reason to refetch one.
+    """
+    if mint in _decimals_cache:
+        return _decimals_cache[mint]
+    if mint == settings.QUOTE_MINT:
+        _decimals_cache[mint] = USDC_DECIMALS
+        return USDC_DECIMALS
+
+    rpc_url = rpc_url or settings.SOLANA_RPC_URL
+    # idempotent: getAccountInfo is a read. Repeating it changes nothing,
+    # so it retries on network errors like a GET would.
+    data = await http.post_json(
+        rpc_url,
+        json={
+            "jsonrpc": "2.0", "id": 1, "method": "getAccountInfo",
+            "params": [mint, {"encoding": "jsonParsed"}],
+        },
+        timeout=10, label=f"solana rpc decimals {mint}", service="solana_rpc",
+        idempotent=True,
+    )
+    if data is None:
+        raise ValueError(f"could not read decimals for mint {mint}: RPC did not answer")
+
+    try:
+        decimals = data["result"]["value"]["data"]["parsed"]["info"]["decimals"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"could not read decimals for mint {mint} from RPC response: {data}") from exc
+
+    decimals = int(decimals)
+    _decimals_cache[mint] = decimals
+    return decimals
+
+
+def to_base_units(whole_amount: float, decimals: int) -> int:
+    """Whole-token amount -> raw base units, the integer Jupiter's API expects."""
+    return int(round(whole_amount * (10 ** decimals)))
+
+
+def from_base_units(raw_amount: int, decimals: int) -> float:
+    """Raw base units -> whole-token amount, the unit every other execution
+    backend's SwapResult uses."""
+    return raw_amount / (10 ** decimals)
+
+
+def _execution_error(confirmation) -> object | None:
+    """The on-chain error from a confirmation response, or None.
+
+    solana-py returns a GetSignatureStatusesResp whose `value` is a list of
+    per-signature statuses, each with an `err` that is None on success.
+    Written defensively because the shape differs across client versions
+    and this runs on the live path: a response that cannot be read is
+    treated as an error rather than as success, so an unrecognised shape
+    fails closed.
+    """
+    if confirmation is None:
+        return "no confirmation response"
+    value = getattr(confirmation, "value", None)
+    if value is None:
+        return "confirmation response carried no status"
+    statuses = value if isinstance(value, (list, tuple)) else [value]
+    if not statuses:
+        return "confirmation response carried no status"
+    status = statuses[0]
+    if status is None:
+        return "confirmation reported no status for this signature"
+    return getattr(status, "err", None)
+
+
+class JupiterExecutionClient(ExecutionClient):
+    def __init__(self):
+        self.base = settings.JUPITER_API_BASE
+        self.price_base = settings.JUPITER_PRICE_API_BASE
+        self.quote_mint = settings.QUOTE_MINT
+
+    async def get_price(self, instrument: str) -> float | None:
+        data = await http.get_json(
+            f"{self.price_base}/price", params={"ids": instrument},
+            timeout=10, label=f"jupiter price {instrument}", service="jupiter",
+        )
+        if data is None:
+            return None
+        entry = (data.get("data") or {}).get(instrument)
+        return float(entry["price"]) if entry else None
+
+    async def _get_quote(self, input_mint: str, output_mint: str, amount: int, slippage_bps: int) -> dict:
+        quote = await http.get_json(
+            f"{self.base}/quote",
+            params={
+                "inputMint": input_mint,
+                "outputMint": output_mint,
+                "amount": int(amount),
+                "slippageBps": slippage_bps,
+            },
+            timeout=15, label="jupiter quote", service="jupiter",
+        )
+        if quote is None:
+            raise http.LookupFailed("Jupiter did not return a quote")
+        return quote
+
+    async def _execute_swap(self, quote: dict, input_decimals: int, output_decimals: int) -> SwapResult:
+        if not settings.LIVE_TRADING:
+            return SwapResult(success=False, error="LIVE_TRADING is false; refusing to submit an on-chain swap")
+        if not settings.LIVE_EXECUTION_ACKNOWLEDGED:
+            return SwapResult(success=False, error=LIVE_EXECUTION_UNACKNOWLEDGED_MSG)
+
+        try:
+            from solana.rpc.async_api import AsyncClient
+            from solana.rpc.types import TxOpts
+            from solders.keypair import Keypair
+            from solders.transaction import VersionedTransaction
+        except ImportError as exc:
+            return SwapResult(
+                success=False,
+                error=f"live trading deps missing - run `pip install -r requirements-live.txt`: {exc}",
+            )
+
+        if not settings.SOLANA_PRIVATE_KEY:
+            return SwapResult(success=False, error="SOLANA_PRIVATE_KEY not configured")
+
+        try:
+            keypair = Keypair.from_base58_string(settings.SOLANA_PRIVATE_KEY)
+        except Exception as exc:
+            # A malformed key raised straight out of the client, so the
+            # caller skipped its failed-trade record and its notification -
+            # the trade simply vanished instead of being reported.
+            return SwapResult(
+                success=False,
+                error=f"SOLANA_PRIVATE_KEY could not be parsed: {type(exc).__name__}",
+            )
+
+        # idempotent: /swap BUILDS an unsigned transaction, it does not
+        # submit one. Nothing reaches the chain until the signed bytes are
+        # sent separately, so asking twice cannot double-spend.
+        swap_data = await http.post_json(
+            f"{self.base}/swap",
+            json={
+                "quoteResponse": quote,
+                "userPublicKey": str(keypair.pubkey()),
+                "wrapAndUnwrapSol": True,
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto",
+            },
+            timeout=20, label="jupiter swap build", service="jupiter",
+            idempotent=True,
+        )
+        if swap_data is None:
+            return SwapResult(success=False, error="Jupiter did not return a swap transaction")
+
+        encoded = (swap_data or {}).get("swapTransaction")
+        if not encoded:
+            return SwapResult(
+                success=False,
+                error="Jupiter's swap response carried no swapTransaction field",
+            )
+
+        # Build and sign. Nothing has reached the chain yet, so a failure
+        # here is clean - there is no signature to preserve and no
+        # possibility that the swap landed anyway.
+        try:
+            tx_bytes = base64.b64decode(encoded)
+            unsigned_tx = VersionedTransaction.from_bytes(tx_bytes)
+            signed_tx = VersionedTransaction(unsigned_tx.message, [keypair])
+        except Exception as exc:
+            return SwapResult(
+                success=False,
+                error=f"could not decode or sign the Jupiter swap transaction: "
+                      f"{type(exc).__name__}: {exc}",
+            )
+
+        # Past this point a failure is NOT clean. Submission can raise after
+        # the transaction has already been broadcast, so any signature we
+        # obtained is reported even on the failure path - without it there
+        # is no way to find out afterwards whether the swap landed, and the
+        # position would be reconciled as never opened.
+        # The signature is determined by the signed bytes, so it is known
+        # BEFORE submission. Captured here so an ambiguous send failure can
+        # still name the transaction: "it may have been broadcast" is not
+        # actionable without the id to go and look it up with.
+        presubmit_signature = None
+        try:
+            signatures = getattr(signed_tx, "signatures", None)
+            if signatures:
+                presubmit_signature = str(signatures[0])
+        except Exception:                       # pragma: no cover - defensive
+            presubmit_signature = None
+
+        async with AsyncClient(settings.SOLANA_RPC_URL) as rpc:
+            try:
+                send_result = await rpc.send_raw_transaction(
+                    bytes(signed_tx), opts=TxOpts(skip_preflight=False)
+                )
+                signature = send_result.value
+            except Exception as exc:
+                return SwapResult(
+                    success=False, tx_hash=presubmit_signature,
+                    error=f"submitting the swap failed: {type(exc).__name__}: {exc}. "
+                          "The transaction may still have been broadcast - check "
+                          + (f"signature {presubmit_signature}" if presubmit_signature
+                             else "the wallet")
+                          + " before retrying",
+                )
+
+            try:
+                confirmation = await rpc.confirm_transaction(signature, commitment="confirmed")
+            except Exception as exc:
+                return SwapResult(
+                    success=False, tx_hash=str(signature),
+                    error=f"submitted {signature} but could not confirm it: "
+                          f"{type(exc).__name__}: {exc}. It may still land",
+                )
+
+        # CONFIRMED IS NOT SUCCEEDED. A transaction can reach the requested
+        # commitment and still carry an execution error - a slippage revert
+        # is exactly that - and the old code read "confirmed" as "filled",
+        # recording a position the wallet never held.
+        execution_error = _execution_error(confirmation)
+        if execution_error is not None:
+            return SwapResult(
+                success=False, tx_hash=str(signature),
+                error=f"swap {signature} confirmed but reverted on-chain: {execution_error}",
+            )
+
+        # UNITS. `filled_qty` is the TOKEN quantity and `avg_price` is USD
+        # per token, on both sides - the contract the paper engine sets and
+        # the one trading_service does its arithmetic in (proceeds =
+        # filled_qty * avg_price, and a partial exit subtracts filled_qty
+        # from position.qty). Reporting a sell's USDC leg as filled_qty,
+        # with tokens-per-USDC as the price, corrupted both.
+        in_whole = from_base_units(int(quote["inAmount"]), input_decimals)
+        out_whole = from_base_units(int(quote["outAmount"]), output_decimals)
+        if output_decimals == USDC_DECIMALS:          # a sell: tokens in, USDC out
+            token_qty, usd_value = in_whole, out_whole
+        else:                                          # a buy: USDC in, tokens out
+            token_qty, usd_value = out_whole, in_whole
+        avg_price = (usd_value / token_qty) if token_qty else 0.0
+
+        return SwapResult(
+            success=True, filled_qty=token_qty, avg_price=avg_price,
+            tx_hash=str(signature),
+            # From the quote, not the receipt: these are what the router
+            # expected before slippage. Reading the executed amounts needs
+            # the transaction's token balance deltas, which this backend
+            # does not parse yet - so the estimate is labelled rather than
+            # passed off as a measurement.
+            fill_estimated_from_quote=True,
+        )
+
+    async def buy(self, instrument: str, usd_amount: float, slippage_bps: int) -> SwapResult:
+        try:
+            output_decimals = await get_mint_decimals(instrument)
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
+            return SwapResult(success=False, error=f"could not read decimals for {instrument}: {exc}")
+
+        amount_units = to_base_units(usd_amount, USDC_DECIMALS)
+        try:
+            quote = await self._get_quote(self.quote_mint, instrument, amount_units, slippage_bps)
+        except (httpx.HTTPError, http.LookupFailed) as exc:
+            return SwapResult(success=False, error=f"Jupiter quote failed: {exc}")
+        if "error" in quote:
+            return SwapResult(success=False, error=f"Jupiter quote error: {quote['error']}")
+        return await self._execute_swap(quote, input_decimals=USDC_DECIMALS, output_decimals=output_decimals)
+
+    async def sell(self, instrument: str, qty: float, slippage_bps: int) -> SwapResult:
+        try:
+            input_decimals = await get_mint_decimals(instrument)
+        except (httpx.HTTPError, http.LookupFailed, ValueError) as exc:
+            return SwapResult(success=False, error=f"could not read decimals for {instrument}: {exc}")
+
+        amount_units = to_base_units(qty, input_decimals)
+        try:
+            quote = await self._get_quote(instrument, self.quote_mint, amount_units, slippage_bps)
+        except (httpx.HTTPError, http.LookupFailed) as exc:
+            return SwapResult(success=False, error=f"Jupiter quote failed: {exc}")
+        if "error" in quote:
+            return SwapResult(success=False, error=f"Jupiter quote error: {quote['error']}")
+        return await self._execute_swap(quote, input_decimals=input_decimals, output_decimals=USDC_DECIMALS)

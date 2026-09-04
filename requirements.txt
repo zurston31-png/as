@@ -1,0 +1,27 @@
+# Core dependencies — enough to run the webhook listener, paper trading
+# engine, rug-check filter, dashboard, and notifications.
+#
+# Live on-chain / exchange execution needs extra packages — see
+# requirements-live.txt. Paper trading (the default mode) does NOT need them.
+#
+# Versions are minimum floors rather than exact pins on purpose. Several of
+# these (pydantic-core, watchfiles) ship compiled Rust/C extensions, and a
+# hard pin to an older release means pip finds no prebuilt wheel for a newer
+# Python and tries to compile from source — which fails on a machine without
+# a Rust/C toolchain. Floors let pip pick a release that has a real wheel for
+# whatever Python you're on.
+
+# Plain `uvicorn`, not `uvicorn[standard]`: the [standard] extra pulls in
+# uvloop (Unix-only) and watchfiles (Rust), neither of which this bot needs
+# at its traffic level — a handful of webhooks per hour. Keeping them out
+# means far less can go wrong installing on Windows.
+fastapi>=0.115.0
+uvicorn>=0.30.6
+pydantic>=2.9.2
+pydantic-settings>=2.5.2
+SQLAlchemy>=2.0.35
+httpx>=0.27.2
+Jinja2>=3.1.4
+python-multipart>=0.0.9
+APScheduler>=3.10.4
+python-dotenv>=1.0.1
