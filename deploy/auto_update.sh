@@ -4,7 +4,16 @@
 #
 # Run from a systemd timer (deploy/systemd/memecoin-bot-update.*). Safe to
 # run when nothing has changed: it fetches, sees the same commit, and
-# exits without touching the container.
+# exits without touching the service.
+#
+# Both documented deployment paths are supported and auto-detected:
+#
+#   docker   - deploy/vps_setup.md section 1. Rebuilds the image, then
+#              swaps the container.
+#   systemd  - deploy/vps_setup.md section 2. Reinstalls requirements into
+#              the venv, then restarts the unit.
+#
+# Override with MODE=docker or MODE=systemd if detection guesses wrong.
 #
 # WHAT THIS REFUSES TO DO, AND WHY
 #
@@ -17,17 +26,17 @@
 #   * the strategy version hash would change. That is the freeze, enforced
 #     mechanically: a new hash splits the dataset, and no convenience is
 #     worth silently doing that at 4am. The check runs against the NEW
-#     image BEFORE the running container is replaced.
+#     code BEFORE the running service is replaced.
 #   * LIVE_TRADING or LIVE_EXECUTION_ACKNOWLEDGED is not false in the new
-#     image's settings. Paper-only is not a preference.
+#     code's settings. Paper-only is not a preference.
 #   * the pull is not a fast-forward. Divergence means someone did
 #     something by hand and an automated merge would hide it.
-#   * the build fails. The old container is left running, untouched.
-#   * the new container is not healthy within HEALTH_TIMEOUT. The previous
-#     commit is restored and rebuilt automatically.
+#   * the build or dependency install fails. The old service keeps running.
+#   * the service is not healthy within HEALTH_TIMEOUT. The previous commit
+#     is restored, rebuilt and restarted automatically.
 #
-# The database is backed up before any restart, and lives on /data outside
-# the clone, so it is not at risk from the update itself.
+# The database is backed up before any restart. On a correctly configured
+# host it also lives outside the clone, so it is not at risk either way.
 set -uo pipefail
 
 REPO_DIR="${REPO_DIR:-/root/memecoin-bot-live}"
@@ -36,6 +45,9 @@ DATA_DIR="${DATA_DIR:-/data}"
 DB_PATH="${DB_PATH:-$DATA_DIR/memecoin_bot.db}"
 BACKUP_DIR="${BACKUP_DIR:-$DATA_DIR/deploy-backups}"
 CONTAINER="${CONTAINER:-memecoin-bot}"
+SERVICE="${SERVICE:-memecoin-bot}"
+RUN_USER="${RUN_USER:-botuser}"
+VENV="${VENV:-venv}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8000/health}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-90}"
 BACKUPS_KEPT="${BACKUPS_KEPT:-10}"
@@ -44,6 +56,19 @@ log() { printf '%s  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 die() { log "ABORT: $*"; exit 1; }
 
 cd "$REPO_DIR" || die "no such repo directory: $REPO_DIR"
+
+# --- which deployment is this? -----------------------------------------
+if [ -z "${MODE:-}" ]; then
+    if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1 \
+       && docker compose ps --quiet 2>/dev/null | grep -q .; then
+        MODE=docker
+    elif [ -x "$VENV/bin/python" ]; then
+        MODE=systemd
+    else
+        die "cannot tell whether this is a docker or systemd deployment - set MODE"
+    fi
+fi
+log "deployment mode: $MODE"
 
 # --- is there anything to do? ------------------------------------------
 git fetch --quiet origin "$BRANCH" || die "git fetch failed"
@@ -60,40 +85,41 @@ if ! git merge-base --is-ancestor "$LOCAL" "$REMOTE"; then
 fi
 
 log "update available: ${LOCAL:0:7} -> ${REMOTE:0:7}"
+PREVIOUS="$LOCAL"
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
-    # docker-compose.yml is intentionally skip-worktree'd on this host, so
+    # docker-compose.yml may be intentionally skip-worktree'd on a host, so
     # a dirty tree here means something ELSE was edited in place.
     log "WARNING: working tree has uncommitted changes; they will be preserved by"
     log "         the fast-forward but may conflict. Files:"
     git diff --name-only | sed 's/^/           /'
 fi
 
-# --- record what we can roll back to -----------------------------------
-PREVIOUS="$LOCAL"
+# --- reading the strategy version and the live flags --------------------
+# In docker mode these run in a THROWAWAY container off the freshly built
+# image; in systemd mode they run from the updated checkout. Either way the
+# answer describes what is ABOUT to be deployed, not what is running. The
+# image has a CMD and no ENTRYPOINT, so passing a command simply replaces
+# the uvicorn CMD.
+PROBE_VERSION='from app.strategy.version import current_label; print(current_label())'
+PROBE_FLAGS='from app.config import settings; print(settings.LIVE_TRADING, settings.LIVE_EXECUTION_ACKNOWLEDGED)'
 
-strategy_version_of_image() {
-    # Runs in a THROWAWAY container off the freshly built image, so the
-    # answer describes what is about to be deployed, not what is running.
-    # The image has a CMD and no ENTRYPOINT, so a command passed here
-    # simply replaces the uvicorn CMD - no --entrypoint override needed,
-    # and adding one would clear something that does not exist.
-    docker compose run --rm --no-deps bot \
-        python -c 'from app.strategy.version import current_label; print(current_label())' \
-        2>/dev/null | tr -d '\r' | tail -n 1
+probe_new() {
+    if [ "$MODE" = docker ]; then
+        docker compose run --rm --no-deps bot python -c "$1" 2>/dev/null
+    else
+        sudo -u "$RUN_USER" "$VENV/bin/python" -c "$1" 2>/dev/null
+    fi | tr -d '\r' | tail -n 1
 }
 
-live_flags_of_image() {
-    docker compose run --rm --no-deps bot \
-        python -c 'from app.config import settings; print(settings.LIVE_TRADING, settings.LIVE_EXECUTION_ACKNOWLEDGED)' \
-        2>/dev/null | tr -d '\r' | tail -n 1
-}
+if [ "$MODE" = docker ]; then
+    RUNNING_VERSION="$(docker exec "$CONTAINER" python -c "$PROBE_VERSION" 2>/dev/null | tr -d '\r' | tail -n 1)"
+else
+    RUNNING_VERSION="$(sudo -u "$RUN_USER" "$VENV/bin/python" -c "$PROBE_VERSION" 2>/dev/null | tr -d '\r' | tail -n 1)"
+fi
 
-RUNNING_VERSION="$(docker exec "$CONTAINER" \
-    python -c 'from app.strategy.version import current_label; print(current_label())' \
-    2>/dev/null | tr -d '\r' | tail -n 1)"
 if [ -z "$RUNNING_VERSION" ]; then
-    log "WARNING: could not read the running strategy version (container down?)."
+    log "WARNING: could not read the running strategy version (service down?)."
     log "         The freeze check needs a baseline, so this update is skipped."
     log "         Start the bot, or deploy by hand, then the timer resumes."
     exit 1
@@ -112,42 +138,65 @@ else
     log "WARNING: no database at $DB_PATH - continuing, but check DATABASE_URL"
 fi
 
-# --- pull and build (old container still serving) -----------------------
+# --- pull and prepare (old service still serving) -----------------------
 git merge --ff-only "origin/$BRANCH" --quiet || die "fast-forward merge failed"
 log "now at $(git rev-parse --short HEAD)"
 
-if ! docker compose build; then
-    log "build failed - rolling the checkout back, old container still running"
+rollback_checkout() {
     git reset --hard "$PREVIOUS" --quiet
-    die "build failed at ${REMOTE:0:7}"
+}
+
+prepare() {
+    if [ "$MODE" = docker ]; then
+        docker compose build
+    else
+        sudo -u "$RUN_USER" "$VENV/bin/pip" install --quiet -r requirements.txt
+    fi
+}
+
+restart() {
+    if [ "$MODE" = docker ]; then
+        docker compose up -d
+    else
+        systemctl restart "$SERVICE"
+    fi
+}
+
+if ! prepare; then
+    log "build/install failed - rolling the checkout back, old service still running"
+    rollback_checkout
+    die "prepare failed at ${REMOTE:0:7}"
 fi
 
-# --- gate on the new image BEFORE it replaces the running one -----------
-NEW_VERSION="$(strategy_version_of_image)"
+# --- gate on the NEW code before it replaces the running service --------
+NEW_VERSION="$(probe_new "$PROBE_VERSION")"
 if [ -z "$NEW_VERSION" ]; then
-    git reset --hard "$PREVIOUS" --quiet
-    die "could not read the strategy version from the new image"
+    rollback_checkout
+    prepare >/dev/null 2>&1
+    die "could not read the strategy version from the new build"
 fi
 
 if [ "$NEW_VERSION" != "$RUNNING_VERSION" ]; then
-    git reset --hard "$PREVIOUS" --quiet
     log "strategy version would change: $RUNNING_VERSION -> $NEW_VERSION"
     log "That splits the collection dataset. Not deploying automatically."
     log "If the change is intended, deploy it by hand and start a new run."
+    rollback_checkout
+    prepare >/dev/null 2>&1
     die "frozen strategy version would change"
 fi
 log "strategy version unchanged ($NEW_VERSION)"
 
-LIVE_FLAGS="$(live_flags_of_image)"
+LIVE_FLAGS="$(probe_new "$PROBE_FLAGS")"
 if [ "$LIVE_FLAGS" != "False False" ]; then
-    git reset --hard "$PREVIOUS" --quiet
-    die "new image reports LIVE_TRADING/LIVE_EXECUTION_ACKNOWLEDGED = '$LIVE_FLAGS', expected 'False False'"
+    rollback_checkout
+    prepare >/dev/null 2>&1
+    die "new build reports LIVE_TRADING/LIVE_EXECUTION_ACKNOWLEDGED = '$LIVE_FLAGS', expected 'False False'"
 fi
 log "paper-only confirmed"
 
 # --- swap ---------------------------------------------------------------
 log "restarting"
-docker compose up -d
+restart
 
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
 healthy=0
@@ -161,9 +210,9 @@ done
 
 if [ "$healthy" -ne 1 ]; then
     log "NOT healthy within ${HEALTH_TIMEOUT}s - rolling back to ${PREVIOUS:0:7}"
-    git reset --hard "$PREVIOUS" --quiet
-    docker compose build && docker compose up -d
-    die "rolled back to ${PREVIOUS:0:7}; investigate $(git rev-parse --short "$REMOTE")"
+    rollback_checkout
+    prepare && restart
+    die "rolled back to ${PREVIOUS:0:7}; investigate ${REMOTE:0:7}"
 fi
 
 log "healthy at $(git rev-parse --short HEAD) - update complete"

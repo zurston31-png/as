@@ -124,6 +124,15 @@ sudo ufw enable
 The guide above installs. This section upgrades — a different and more
 dangerous operation, because the thing you must not lose is the database.
 
+> **Set up the timer once and skip most of this section.**
+> [Automatic updates](#automatic-updates-systemd-timer) below installs a
+> systemd timer that does everything here every 15 minutes, on either
+> deployment path, and rolls itself back if the new build is unhealthy.
+> The manual steps stay documented because you still need them the first
+> time, when the automatic update deliberately refuses (a strategy-version
+> change), and when something has gone wrong enough that you want to drive
+> it yourself.
+
 **Every accounting fix since the first deployment is on the READ side.**
 `app/execution/paper.py` and `app/execution/fill_model.py` — the code that
 computes `fee_usd` and `execution_cost_pct` and writes them to the trade
@@ -208,10 +217,20 @@ service restarted, rather than assuming the data is missing.
 ### Automatic updates (systemd timer)
 
 `deploy/auto_update.sh` plus the two units in `deploy/systemd/` poll the
-branch every 15 minutes and redeploy when it moves. Install on the VPS:
+branch every 15 minutes and redeploy when it moves. It handles **both**
+deployment paths in this guide and detects which one it is on:
+
+| Mode | Detected by | Prepare step | Restart |
+|---|---|---|---|
+| `docker` (section 1) | a `docker-compose.yml` and a running compose project | `docker compose build` | `docker compose up -d` |
+| `systemd` (section 2) | an executable `$VENV/bin/python` | `pip install -r requirements.txt` into the venv | `systemctl restart` |
+
+Force it with `MODE=docker` or `MODE=systemd` if detection guesses wrong.
+
+Install on the VPS — identical for both paths:
 
 ```bash
-cd /root/memecoin-bot-live
+cd /root/memecoin-bot-live          # or /opt/memecoin-bot
 chmod +x deploy/auto_update.sh
 
 # dry run FIRST - it exits harmlessly when there is nothing to pull
@@ -226,10 +245,16 @@ systemctl list-timers memecoin-bot-update.timer
 tail -f /var/log/memecoin-bot-update.log
 ```
 
-The units assume the clone is at `/root/memecoin-bot-live`. Edit
-`WorkingDirectory` and `ExecStart` if yours is elsewhere; the script also
-reads `REPO_DIR`, `BRANCH`, `DATA_DIR`, `CONTAINER`, `HEALTH_URL`,
-`HEALTH_TIMEOUT` and `BACKUPS_KEPT` from the environment.
+The units assume the clone is at `/root/memecoin-bot-live`. On a
+systemd + venv host it is usually `/opt/memecoin-bot` — edit
+`WorkingDirectory` and `ExecStart` to match. Everything else is an
+environment variable with a sensible default: `REPO_DIR`, `BRANCH`,
+`MODE`, `DATA_DIR`, `DB_PATH`, `BACKUP_DIR`, `CONTAINER`, `SERVICE`,
+`RUN_USER`, `VENV`, `HEALTH_URL`, `HEALTH_TIMEOUT`, `BACKUPS_KEPT`.
+
+A systemd + venv host also needs the updater to run as root (to restart
+the unit) while installing packages as the service account — that is what
+`RUN_USER` is for, and it defaults to `botuser` to match section 2.
 
 **What it refuses to deploy.** Automatic deployment puts code on a running
 bot with nobody in between, so the script is built to abort rather than
@@ -240,12 +265,13 @@ proceed:
 | Strategy version hash would change | Aborts, checkout reset. A new hash splits the collection dataset — that decision is never made by a timer. |
 | `LIVE_TRADING` / `LIVE_EXECUTION_ACKNOWLEDGED` not both false | Aborts, checkout reset. |
 | Not a fast-forward | Aborts. Divergence means someone worked by hand; an automatic merge would bury it. |
-| Build fails | Checkout reset, old container never stopped. |
-| New container unhealthy within 90s | Previous commit restored, rebuilt, and brought back up automatically. |
+| Build or dependency install fails | Checkout reset, old service never stopped. |
+| Service unhealthy within 90s | Previous commit restored, rebuilt/reinstalled, and brought back up automatically. |
 
-The version and paper-only checks run against the **new image before it
-replaces the running container**, in a throwaway container, so a bad
-deploy is caught before it serves anything.
+The version and paper-only checks run against the **new code before it
+replaces the running service** — in a throwaway container on the docker
+path, from the updated checkout on the systemd path — so a bad deploy is
+caught before it serves anything.
 
 The database is copied to `/data/deploy-backups/` before any restart (last
 10 kept) and lives outside the clone, so the update cannot touch it.

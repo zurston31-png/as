@@ -1,3 +1,34 @@
+# Auto-update covers both deployment paths — 4 September 2026
+
+The updater shipped earlier today only handled the Docker path, while
+`deploy/vps_setup.md` documents two: Docker (section 1) and systemd + venv
+(section 2). Half the documented deployments would have self-updated and
+half would not, with nothing saying which.
+
+`deploy/auto_update.sh` now detects the mode and handles both — build and
+container swap on Docker, `pip install` into the venv and `systemctl
+restart` on systemd — behind the same refusal set. `MODE=docker|systemd`
+overrides detection. The freeze and paper-only checks still run against
+the NEW code before it replaces the running service: in a throwaway
+container on the Docker path, from the updated checkout on the systemd
+path.
+
+Section 4 of the guide now opens by pointing at the timer instead of
+leading with the manual procedure. The manual steps stay, because they are
+still needed for the first deploy, for the case where the automatic update
+deliberately refuses, and for when something has gone wrong enough to want
+to drive it by hand.
+
+Verified: the no-op path was run end to end on this checkout and exited
+cleanly at `up to date at d4b0c98, nothing to do`. The deploy paths
+themselves cannot be exercised from here — there is no access to the VPS —
+which is why the install instructions lead with a dry run.
+
+Deploy tooling and documentation only. **Strategy version unchanged at
+`v-83c77cda`. Suite: 1,730 passing.**
+
+---
+
 # The VPS updates itself, and refuses to — 4 September 2026
 
 `deploy/auto_update.sh` plus a systemd timer poll the branch every 15
