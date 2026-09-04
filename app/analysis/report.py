@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.analysis import trade_analytics as ta
+from app.analysis.backtest_evidence import BacktestEvidence
 from app.analysis.monte_carlo import MonteCarloResult, run_monte_carlo
 from app.analysis.validation import ValidationInputs, ValidationReport, evaluate
 from app.config import settings
@@ -103,6 +104,8 @@ def build_performance_report(
     *,
     strategy_version: str | None = None,
     monte_carlo_simulations: int = 2_000,
+    monte_carlo_mode: str = "bootstrap",
+    backtest_evidence: BacktestEvidence | None = None,
     rng: random.Random | None = None,
 ) -> PerformanceReport:
     """Everything known about the record, in one object.
@@ -111,6 +114,17 @@ def build_performance_report(
     None reports across ALL versions, which is the honest default only when
     a single version exists - so the report says so in its warnings rather
     than presenting a pooled number as if it described one strategy.
+
+    `monte_carlo_mode` selects which question the resampling answers:
+    "bootstrap" (default) for OUTCOME risk - what range of results is
+    consistent with this edge - or "shuffle" for PATH risk - given this
+    exact edge, how bad could the ride have been. See app/analysis/
+    monte_carlo.py; the two are not interchangeable.
+
+    `backtest_evidence` supplies out-of-sample and walk-forward results
+    from a backtest run. It is None by default and must be passed
+    deliberately: those two criteria describe a test that was actually
+    performed, and nothing here may invent one.
     """
     query = db.query(models.Trade)
     if strategy_version is not None:
@@ -174,7 +188,7 @@ def build_performance_report(
         monte_carlo = run_monte_carlo(
             pnls,
             starting_equity=settings.PORTFOLIO_STARTING_BALANCE_USD,
-            mode="bootstrap",
+            mode=monte_carlo_mode,
             simulations=monte_carlo_simulations,
             rng=rng,
         )
@@ -191,9 +205,21 @@ def build_performance_report(
             monte_carlo_p95_drawdown_pct=monte_carlo.p95_max_drawdown_pct if monte_carlo else None,
             monte_carlo_sample_size=monte_carlo.sample_size if monte_carlo else None,
             # Out-of-sample and walk-forward come from the backtester, not
-            # from live rows. Left unmeasured here rather than guessed -
-            # scripts/run_backtest.py and scripts/walk_forward.py produce
-            # them, and an operator supplies them deliberately.
+            # from live rows, so they arrive only when an operator passes a
+            # real backtest result in. Absent one they stay None, which the
+            # gate reports as "not run" rather than as a failure or a pass.
+            out_of_sample_trades=(
+                backtest_evidence.out_of_sample_trades if backtest_evidence else None
+            ),
+            out_of_sample_profitable=(
+                backtest_evidence.out_of_sample_profitable if backtest_evidence else None
+            ),
+            walk_forward_windows=(
+                backtest_evidence.walk_forward_windows if backtest_evidence else None
+            ),
+            walk_forward_profitable_windows=(
+                backtest_evidence.walk_forward_profitable_windows if backtest_evidence else None
+            ),
         )
     )
 

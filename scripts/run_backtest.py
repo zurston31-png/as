@@ -5,6 +5,14 @@
     python scripts/run_backtest.py --regime pump --seed 7
     python scripts/run_backtest.py --csv data/WIF_15m.csv    # your own OHLCV history
     python scripts/run_backtest.py --walk-forward            # train/validation/out-of-sample split
+    python scripts/run_backtest.py --csv data/ --walk-forward --evidence-out wf.json
+
+`--evidence-out` writes the out-of-sample and walk-forward figures in the
+form scripts/performance_report.py --backtest-evidence reads, so a real
+backtest can satisfy those two validation criteria. A run on SYNTHETIC
+candles still writes the file, and the reader still refuses it: generated
+history cannot be evidence about this strategy, and the refusal is the
+point of recording the source at all.
 
 This does NOT touch the live database, the webhook, or any network call -
 it is pure history-in, statistics-out, exactly what "prove the strategy
@@ -14,11 +22,13 @@ rug-pull filter: no, it needs live scanner data with nothing historical to
 replay against).
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.analysis.backtest_evidence import as_payload  # noqa: E402
 from app.backtesting.engine import run_backtest  # noqa: E402
 from app.backtesting.types import BacktestConfig, BacktestResult  # noqa: E402
 from app.backtesting.walk_forward import run_walk_forward  # noqa: E402
@@ -39,6 +49,10 @@ def main() -> None:
     parser.add_argument("--min-score", type=float, default=75.0)
     parser.add_argument("--walk-forward", action="store_true",
                          help="split into train/validation/out-of-sample instead of one straight run")
+    parser.add_argument("--evidence-out", metavar="PATH",
+                         help="write the out-of-sample/walk-forward figures for "
+                              "scripts/performance_report.py --backtest-evidence "
+                              "(requires --walk-forward)")
     args = parser.parse_args()
 
     timeframe = Timeframe(args.timeframe)
@@ -71,9 +85,44 @@ def main() -> None:
             print("\nWalk-forward warnings:")
             for w in wf.warnings:
                 print(f"    - {w}")
+        if args.evidence_out:
+            _write_evidence(args, wf, timeframe, len(series))
     else:
         result = run_backtest(series, config, symbol=args.symbol)
         _print_result(result, timeframe)
+        if args.evidence_out:
+            print("\n--evidence-out needs --walk-forward: a single straight run has no "
+                  "out-of-sample window to report. Nothing written.")
+
+
+def _write_evidence(args, wf, timeframe: Timeframe, candle_count: int) -> None:
+    """Record the walk-forward outcome, INCLUDING where the candles came from.
+
+    The three windows are counted as profitable on total return, and the
+    source is written as the producer knows it rather than left for the
+    reader to guess. A synthetic run is written truthfully and rejected on
+    load - see app/analysis/backtest_evidence.py for why that matters more
+    than it looks.
+    """
+    windows = (wf.train, wf.validation, wf.out_of_sample)
+    payload = as_payload(
+        out_of_sample_trades=wf.out_of_sample.stats.trade_count,
+        out_of_sample_profitable=wf.out_of_sample.stats.total_return_usd > 0,
+        walk_forward_windows=len(windows),
+        walk_forward_profitable_windows=sum(
+            1 for w in windows if w.stats.total_return_usd > 0
+        ),
+        data_source="csv" if args.csv else "synthetic",
+        symbol=args.symbol,
+        timeframe=timeframe.value,
+        candles=candle_count,
+    )
+    Path(args.evidence_out).write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"\nWrote backtest evidence to {args.evidence_out} "
+          f"(data_source={payload['data_source']})")
+    if payload["data_source"] == "synthetic":
+        print("  NOTE: synthetic candles. performance_report.py will REFUSE this "
+              "file for the out-of-sample and walk-forward criteria, by design.")
 
 
 def _print_result(result: BacktestResult, timeframe: Timeframe, heading: str | None = None) -> None:

@@ -1,3 +1,49 @@
+# Two unreachable analyses, made reachable — 4 September 2026
+
+## Monte Carlo: the second mode was implemented but unusable
+
+`app/analysis/monte_carlo.py` has always supported two resampling modes.
+BOOTSTRAP (with replacement) answers *what range of OUTCOMES is consistent
+with this edge*. SHUFFLE (order only) reorders the exact trades, so every
+path ends at the same total by construction, and answers *given this edge,
+how bad could the RIDE have been* — the survivability question, and the
+one that says whether a different ordering of the same trades would have
+breached the daily loss limit.
+
+Only bootstrap was reachable. `scripts/performance_report.py --mc-mode
+{bootstrap,shuffle}` now selects; bootstrap remains the default so no
+historical report changes meaning.
+
+## Out-of-sample and walk-forward could never be answered at all
+
+Both criteria read *"no analysis run yet"* permanently, however many times
+`scripts/run_backtest.py --walk-forward` was run — nothing carried a
+backtest result into the gate. `--evidence-out` now writes one and
+`--backtest-evidence` reads it.
+
+**Connecting them creates a hazard bigger than the feature, and most of
+this work is the guard.** The backtester DEFAULTS to synthetic candles.
+Run on this machine, a default `--walk-forward` produced 3 of 3 profitable
+windows and a profitable 12-trade out-of-sample window — enough to flip
+both criteria green on a market that never existed. So a run records where
+its candles came from, and `app/analysis/backtest_evidence.py` refuses
+anything that is not real market history: synthetic outright, unrecognised
+sources fail-closed, stale schema, missing fields, and arithmetic that
+cannot be true (more profitable windows than windows). A refusal returns
+None with a printed reason rather than raising, because the correct
+response is to keep reporting the criteria as unmeasured — not to crash
+and not to substitute a pass.
+
+Read-side only: `app/analysis/`, `scripts/`. No scoring, threshold,
+weight, exit policy, fee, slippage, classifier or horizon touched.
+**Strategy version unchanged at `v-83c77cda`.**
+
+14 new tests across `tests/test_backtest_evidence.py` and
+`tests/test_report_mc_mode_and_evidence.py`, including the synthetic
+figures above pinned end to end. **Suite: 1,730 passing.**
+
+---
+
 # Holding time reported at the scale the strategy trades at — 1 September 2026
 
 The repaired holding-time panel immediately showed why it needed to be

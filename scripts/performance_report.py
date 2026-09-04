@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import models  # noqa: E402
 from app.analysis import trade_analytics as ta  # noqa: E402
+from app.analysis.backtest_evidence import load as load_backtest_evidence  # noqa: E402
 from app.analysis.report import build_performance_report  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.database import SessionLocal, init_db  # noqa: E402
@@ -174,6 +175,15 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="emit the report as JSON")
     parser.add_argument("--simulations", type=int, default=2_000,
                         help="Monte Carlo paths to run (default 2000)")
+    parser.add_argument("--mc-mode", choices=("bootstrap", "shuffle"), default="bootstrap",
+                        help="bootstrap (default) resamples WITH replacement and answers "
+                             "'what range of outcomes is consistent with this edge'; "
+                             "shuffle reorders the exact trades and answers "
+                             "'given this edge, how bad could the ride have been'")
+    parser.add_argument("--backtest-evidence", metavar="PATH",
+                        help="a JSON file from scripts/run_backtest.py --evidence-out, "
+                             "supplying the out-of-sample and walk-forward criteria. "
+                             "Runs on synthetic candles are refused.")
     args = parser.parse_args()
 
     init_db()
@@ -189,8 +199,20 @@ def main() -> int:
                 print(f"{r.label:<16}{str(r.created_at):<22}{str(r.last_seen_at):<22}")
             return 0
 
+        evidence = None
+        if args.backtest_evidence:
+            evidence, message = load_backtest_evidence(args.backtest_evidence)
+            # Printed either way: a refusal is the most important thing this
+            # command can say, and a silent None would look like a pass that
+            # simply had not been reached.
+            print(f"backtest evidence: {message}\n")
+
         report = build_performance_report(
-            db, strategy_version=args.version, monte_carlo_simulations=args.simulations
+            db,
+            strategy_version=args.version,
+            monte_carlo_simulations=args.simulations,
+            monte_carlo_mode=args.mc_mode,
+            backtest_evidence=evidence,
         )
         if args.json:
             print(json.dumps(report.as_dict(), indent=2))
