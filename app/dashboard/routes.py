@@ -35,8 +35,12 @@ from app.analysis.report import build_performance_report
 from app.analysis.token_detail import build_token_detail
 from app.analysis.trade_analytics import MIN_TRADES_FOR_A_MEANINGFUL_BUCKET
 from app.config import settings
-from app.dashboard.analytics import compute_equity_curve, compute_portfolio_stats
-from app.dashboard.charts import equity_curve_svg
+from app.dashboard.analytics import (
+    build_equity_markers,
+    compute_equity_points,
+    compute_portfolio_stats,
+)
+from app.dashboard.charts import CURVE_HEIGHT, equity_curve_svg
 from app.database import SessionLocal
 from app.risk.manager import halt_trading, is_trading_halted, resume_trading
 from app.scanner.loop import scanner_blocked_reason
@@ -217,8 +221,9 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
 
         all_trades = db.query(models.Trade).all()
         portfolio_stats = compute_portfolio_stats(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
-        equity_curve = compute_equity_curve(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
-        equity_svg = equity_curve_svg(equity_curve)
+        equity_points = compute_equity_points(all_trades, settings.PORTFOLIO_STARTING_BALANCE_USD)
+        equity_svg = equity_curve_svg([(p.at, p.equity_usd) for p in equity_points])
+        equity_markers = build_equity_markers(equity_points, all_trades)
 
         today = dt.datetime.now(dt.timezone.utc).date()
         realized_today_usd = sum(
@@ -272,6 +277,8 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
                 "signals": recent_signals,
                 "checks": checks_by_signal,
                 "equity_svg": equity_svg,
+                "equity_markers": equity_markers,
+                "equity_height": CURVE_HEIGHT,
                 "scanned_tokens": scanned_tokens,
                 "scanner": scanner_summary,
                 "config_warnings": config_warnings,

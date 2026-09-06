@@ -39,6 +39,45 @@
   .side-buy { color: var(--green); font-weight: 600; }
   .side-sell { color: var(--red); font-weight: 600; }
   footer { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; }
+
+  /* --- equity curve, with a marker per closed trade -------------------
+     The markers are HTML on top of the SVG, not circles inside it: the
+     chart is drawn with preserveAspectRatio="none", which stretches
+     anything round in the viewBox into an ellipse. Percent offsets of the
+     same box do not distort, so app/dashboard/charts.py hands the template
+     percentages and the overlay lines up at every screen width. */
+  .eq-chart { position: relative; }
+  .eq-chart svg { display: block; }
+  .eq-hits { position: absolute; inset: 0; }
+  .eq-hit {
+    position: absolute; top: 0; bottom: 0; padding: 0; min-width: 16px;
+    transform: translateX(-50%); background: none; border: 0; border-radius: 0; cursor: pointer;
+  }
+  .eq-hit::before {
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 0;
+    border-left: 1px dashed transparent;
+  }
+  .eq-hit:hover::before, .eq-hit.is-current::before { border-left-color: rgba(91,141,239,.45); }
+  .eq-hit:focus { outline: none; }
+  .eq-hit:focus-visible::before { border-left-color: var(--accent); }
+  .eq-dot {
+    position: absolute; left: 50%; width: 7px; height: 7px; margin: -4px 0 0 -4px;
+    border-radius: 50%; background: var(--muted); border: 1px solid var(--panel);
+    transition: transform .08s ease-out;
+  }
+  .eq-dot.win { background: var(--green); }
+  .eq-dot.loss { background: var(--red); }
+  .eq-hit:hover .eq-dot, .eq-hit:focus-visible .eq-dot { transform: scale(1.8); }
+  .eq-hit.is-current .eq-dot { transform: scale(2.1); box-shadow: 0 0 0 3px rgba(91,141,239,.3); }
+  .eq-detail { border-top: 1px solid var(--border); padding: 14px 16px; font-size: 13px; }
+  .eq-detail .eq-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .eq-detail .eq-head .n { font-weight: 700; font-size: 15px; }
+  .eq-detail .eq-head a { color: var(--accent); text-decoration: none; }
+  .eq-detail .eq-reason { color: var(--text); margin-bottom: 10px; line-height: 1.5; }
+  .eq-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; }
+  .eq-grid .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; display: block; }
+  .eq-grid .v { font-variant-numeric: tabular-nums; }
+  .eq-hint { padding: 0 16px 14px; color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -89,10 +128,75 @@
     <div class="stat"><div class="label">Current Exposure</div><div class="value">${{ "%.2f"|format(stats.current_exposure_usd) }} <span class="muted" style="font-size:12px">({{ "%.0f"|format(stats.exposure_pct_of_portfolio) }}%)</span></div></div>
   </div>
 
-  <section>
+  <section id="equity">
     <h2>Equity Curve</h2>
     {% if equity_svg %}
-      {{ equity_svg | safe }}
+      <div class="eq-chart" style="height: {{ equity_height }}px;">
+        {{ equity_svg | safe }}
+        <div class="eq-hits">
+          {# One band per point, as wide as the gap between points, so the
+             bands tile the chart exactly and every x lands on the nearest
+             marker. Derived from the rendered positions rather than from
+             100/(n-1), which ignores the curve's padding and would leave
+             each band a sliver out of step with the line. #}
+          {% set band = equity_markers[1].x_pct - equity_markers[0].x_pct %}
+          {% for m in equity_markers %}
+          {# A full-height band, not a dot-sized target: on a phone a 7px
+             circle is unhittable, and the reader means "this point in
+             time" rather than "this pixel". #}
+          <button type="button" class="eq-hit" data-eq="{{ loop.index0 }}"
+                  aria-pressed="false" aria-controls="eq-card-{{ loop.index0 }}"
+                  style="left: {{ "%.4f"|format(m.x_pct) }}%; width: {{ "%.4f"|format(band) }}%;"
+                  title="{% if m.is_start %}Start · ${{ "%.2f"|format(m.equity_usd) }}{% else %}#{{ m.trade_number }} {{ m.symbol }} · {{ "%+.2f"|format(m.pnl_usd or 0) }} → ${{ "%.2f"|format(m.equity_usd) }}{% endif %}">
+            <span class="eq-dot {{ '' if m.is_start else ('win' if m.won else 'loss') }}"
+                  style="top: {{ "%.4f"|format(m.y_pct) }}%;"></span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="eq-detail">
+        {% for m in equity_markers %}
+        <div class="eq-card" id="eq-card-{{ loop.index0 }}" {% if not loop.last %}hidden{% endif %}>
+          {% if m.is_start %}
+            <div class="eq-head">
+              <span class="n">Starting balance</span>
+              <span class="muted">before the first closed trade</span>
+            </div>
+            <div class="eq-grid">
+              <div><span class="k">Equity</span><span class="v">${{ "%.2f"|format(m.equity_usd) }}</span></div>
+              <div><span class="k">Closed trades</span><span class="v">{{ m.total_trades }}</span></div>
+            </div>
+          {% else %}
+            <div class="eq-head">
+              <span class="n">Trade {{ m.trade_number }} of {{ m.total_trades }}</span>
+              {% if m.token_address %}
+                <a href="/token/{{ m.token_address }}">{{ m.symbol }}</a>
+              {% else %}
+                <span>{{ m.symbol }}</span>
+              {% endif %}
+              <span class="{{ 'pos' if m.won else 'neg' }}">
+                {{ "%+.2f"|format(m.pnl_usd or 0) }} USD{% if m.pnl_pct is not none %} ({{ "%+.2f"|format(m.pnl_pct) }}%){% endif %}
+              </span>
+              <span class="muted">{{ m.closed_at.strftime("%Y-%m-%d %H:%M:%S") if m.closed_at else "-" }} UTC</span>
+            </div>
+            {% if m.exit_reason %}<div class="eq-reason">Exit: {{ m.exit_reason }}</div>{% endif %}
+            <div class="eq-grid">
+              <div><span class="k">Equity</span><span class="v">${{ "%.2f"|format(m.equity_before_usd) }} → ${{ "%.2f"|format(m.equity_usd) }}</span></div>
+              <div><span class="k">Held for</span><span class="v">{{ m.holding_time or "not recorded" }}</span></div>
+              <div><span class="k">Entry → exit price</span><span class="v">{% if m.entry_price is not none %}{{ "%.6g"|format(m.entry_price) }}{% else %}?{% endif %} → {% if m.exit_price is not none %}{{ "%.6g"|format(m.exit_price) }}{% else %}?{% endif %}</span></div>
+              <div><span class="k">Leg size</span><span class="v">{% if m.size_usd is not none %}${{ "%.2f"|format(m.size_usd) }}{% else %}not recorded{% endif %}</span></div>
+              <div><span class="k">Execution cost</span><span class="v">{% if m.execution_cost_pct is not none %}{{ "%.2f"|format(m.execution_cost_pct) }}%{% else %}not recorded{% endif %}</span></div>
+              <div><span class="k">Fee</span><span class="v">{% if m.fee_usd is not none %}${{ "%.4f"|format(m.fee_usd) }}{% else %}not recorded{% endif %}</span></div>
+              <div><span class="k">Peak equity</span><span class="v">${{ "%.2f"|format(m.peak_usd) }}</span></div>
+              <div><span class="k">Drawdown here</span><span class="v">{{ "%.2f"|format(m.drawdown_pct) }}%</span></div>
+              <div><span class="k">Mode / version</span><span class="v">{{ m.mode or "?" }} · {{ m.strategy_version or "unversioned" }}</span></div>
+            </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="eq-hint">Hover or tap a point to see the trade behind it. Arrow keys step through them once one is focused.</div>
     {% else %}
     <div class="empty">Not enough closed trades yet to draw an equity curve.</div>
     {% endif %}
@@ -277,5 +381,65 @@
   </section>
 </main>
 <footer>Watchlist: {{ stats.watchlist }} · auto-refreshes every 20s</footer>
+<script>
+// Equity-curve inspector: hover or tap a point, read the trade that made
+// that step. Vanilla and inline on purpose - the dashboard loads no JS
+// libraries and has to work on an offline VPS (same reason the chart is
+// hand-rolled SVG in app/dashboard/charts.py).
+//
+// Every point's card is already in the HTML, rendered and escaped by
+// Jinja; this only decides which one is visible. Nothing here fetches,
+// computes or formats a number, so a scripting failure degrades to the
+// last trade's card plus the native title tooltips, not to a blank panel.
+(function () {
+  var chart = document.querySelector('.eq-chart');
+  var hits = chart ? Array.prototype.slice.call(chart.querySelectorAll('.eq-hit')) : [];
+  if (hits.length < 2) return;
+
+  var cards = hits.map(function (h) {
+    return document.getElementById('eq-card-' + h.getAttribute('data-eq'));
+  });
+  var sticky = hits.length - 1;
+
+  function show(i) {
+    for (var n = 0; n < cards.length; n++) {
+      if (cards[n]) cards[n].hidden = n !== i;
+      hits[n].classList.toggle('is-current', n === i);
+      hits[n].setAttribute('aria-pressed', n === sticky ? 'true' : 'false');
+    }
+  }
+
+  function pin(i) {
+    sticky = i;
+    show(i);
+    // The page reloads itself every 20 seconds. The fragment survives a
+    // reload, so the point being studied is still the one on screen
+    // afterwards instead of snapping back to the newest trade.
+    try { history.replaceState(null, '', '#eq=' + i); } catch (e) { /* file:// etc. */ }
+  }
+
+  hits.forEach(function (hit, i) {
+    hit.addEventListener('mouseenter', function () { show(i); });
+    hit.addEventListener('focus', function () { show(i); });
+    hit.addEventListener('click', function () { pin(i); });
+    hit.addEventListener('keydown', function (e) {
+      var step = e.key === 'ArrowRight' ? 1 : (e.key === 'ArrowLeft' ? -1 : 0);
+      if (!step) return;
+      e.preventDefault();
+      var next = Math.max(0, Math.min(hits.length - 1, i + step));
+      hits[next].focus();
+      pin(next);
+    });
+  });
+  chart.addEventListener('mouseleave', function () { show(sticky); });
+
+  var fromHash = /[#&]eq=(\d+)/.exec(location.hash || '');
+  var initial = fromHash
+    ? Math.max(0, Math.min(hits.length - 1, parseInt(fromHash[1], 10)))
+    : hits.length - 1;
+  sticky = initial;
+  show(initial);
+})();
+</script>
 </body>
 </html>
