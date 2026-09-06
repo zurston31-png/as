@@ -53,6 +53,19 @@ def is_trading_halted(db: Session) -> bool:
     return bool(get_state(db, HALT_KEY, False))
 
 
+def halt_reason(db: Session) -> str:
+    """Why trading is halted, or "" when it is not.
+
+    The reason has always been stored next to the flag; nothing read it
+    back. Every surface that reported the halt therefore reported only
+    THAT it happened - and "the bot stopped" without "because it lost
+    four in a row" is an alarm with its message removed.
+    """
+    if not is_trading_halted(db):
+        return ""
+    return get_state(db, HALT_REASON_KEY, "") or ""
+
+
 def halt_trading(db: Session, reason: str) -> None:
     set_state(db, HALT_KEY, True)
     set_state(db, HALT_REASON_KEY, reason)

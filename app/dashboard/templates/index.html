@@ -93,7 +93,7 @@
     <a href="/early" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">🌱 Early</a>
     <span class="badge {{ 'live' if stats.mode == 'LIVE' else 'paper' }}">{{ stats.mode }} · {{ stats.chain }}/{{ stats.execution_backend }}</span>
     {% if stats.halted %}
-      <span class="badge halted">HALTED</span>
+      <span class="badge halted" {% if stats.halt_reason %}title="{{ stats.halt_reason }}"{% endif %}>HALTED</span>
       <form method="post" action="/api/resume"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="ok">Resume trading</button></form>
     {% else %}
       <span class="badge running">RUNNING</span>
@@ -102,6 +102,19 @@
   </div>
 </header>
 <main>
+  {% if stats.halted %}
+  <section style="border-color: rgba(245,195,68,.4);">
+    <h2 style="color: var(--amber);">⛔ Trading is halted — no new positions will be opened</h2>
+    <div style="padding: 12px 16px; font-size: 13px; line-height: 1.6;">
+      <div style="color: var(--amber);">{{ stats.halt_reason or "no reason was recorded" }}</div>
+      <div class="muted" style="margin-top: 8px;">
+        Open positions are unaffected and are still managed by the exit monitor.
+        Resume from the button in the header once you know why this happened.
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
   {% if config_warnings %}
   <section style="border-color: rgba(245,195,68,.4);">
     <h2 style="color: var(--amber);">⚠ Config warnings — these may stop the bot trading</h2>

@@ -42,7 +42,12 @@ from app.dashboard.analytics import (
 )
 from app.dashboard.charts import CURVE_HEIGHT, equity_curve_svg
 from app.database import SessionLocal
-from app.risk.manager import halt_trading, is_trading_halted, resume_trading
+from app.risk.manager import (
+    halt_reason,
+    halt_trading,
+    is_trading_halted,
+    resume_trading,
+)
 from app.scanner.loop import scanner_blocked_reason
 from app.services import api_health, portfolio, price_feed
 from app.startup_checks import check_config_coherence
@@ -249,6 +254,12 @@ async def dashboard(request: Request, user: str = Depends(check_auth)):
             "chain": settings.CHAIN,
             "execution_backend": settings.EXECUTION_BACKEND,
             "halted": is_trading_halted(db),
+            # The badge said HALTED and nothing said why. The reason was
+            # only reachable from the Risk Events table at the bottom of
+            # the page - which is capped at 20 rows and shares them with
+            # every rejection, so on a busy day the one row explaining
+            # why the bot stopped had already scrolled off.
+            "halt_reason": halt_reason(db),
             "watchlist": settings.SYMBOLS_WATCHLIST,
             "scanner_interval_seconds": settings.SCANNER_INTERVAL_SECONDS,
             "profit_factor_display": (
@@ -759,6 +770,7 @@ async def api_stats(user: str = Depends(check_auth)):
                 "portfolio_value_usd": value,
                 "mode": "LIVE" if settings.LIVE_TRADING else "PAPER",
                 "halted": is_trading_halted(db),
+                "halt_reason": halt_reason(db),
             }
         )
     finally:
