@@ -21,6 +21,7 @@ from app.config import settings
 from app.concurrency import AlreadyReserved, reserve_entry, reserve_exit
 from app.execution import get_execution_client
 from app.identity import describe, instrument_key
+from app.notifications import milestones
 from app.notifications.notifier import notifier
 from app.risk import book
 from app.shadow import recorder as shadow_recorder
@@ -1003,6 +1004,7 @@ async def _close_position(db: Session, position: models.Position, reason: str, s
     )
 
     await _check_halt_conditions(db)
+    await milestones.announce_if_crossed(db)
 
 
 async def partial_close_position(
@@ -1107,6 +1109,7 @@ async def _partial_close_position(
         position.close_reason = reason
 
     await _check_halt_conditions(db)
+    await milestones.announce_if_crossed(db)
 
 
 async def _check_halt_conditions(db: Session) -> None:

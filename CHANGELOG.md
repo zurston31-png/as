@@ -916,12 +916,24 @@ Reported as findings-of-no-finding rather than skipped:
   in later P&L. Reading the executed amounts needs the transaction's token
   balance deltas, which this backend does not parse. Live path only —
   unreachable while the flags are off.
-- **The VPS is still running bundle `b21a6ab`.** Everything in this
-  changelog is on the branch and in the delivered zips, but nothing has
-  been deployed — that needs your terminal.
+- ~~**The VPS is still running bundle `b21a6ab`.**~~ Resolved. The VPS
+  now deploys from a git clone at `/root/memecoin-bot-live` and updates
+  itself every 15 minutes via `deploy/auto_update.sh` (systemd timer),
+  which refuses any commit that would change the strategy version hash or
+  turn a live flag on, and rolls back a container that fails its health
+  check.
 - **`paper.py` feeds `price_change_1h_pct` into a parameter named
   `volatility_1h_pct`.** Flagged in an earlier session and deliberately
   not changed: the slippage model is frozen.
-- **Zero trading observations.** Nothing in this session produced
-  evidence of an edge, and the bot still has none. Every analysis page
-  added here currently reports INSUFFICIENT, which is the correct answer.
+- **No evidence of an edge.** The record is no longer empty - it now
+  carries closed paper trades, and the validation gate reports
+  EXPERIMENTAL rather than INSUFFICIENT. That is not a promotion: the
+  gate wants 100 closed trades before it will judge anything, and at the
+  time of writing three partial profit-takes account for more than the
+  whole net result, with the remaining trades slightly negative. The bot
+  still has no demonstrated edge, and the sample is too small to have
+  one.
+
+  `app/notifications/milestones.py` announces the count as it crosses 25,
+  50, 100, 200, 500 and 1000, so nobody has to watch the dashboard for
+  the moment the gate can finally answer.

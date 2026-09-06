@@ -119,6 +119,15 @@ class Notifier:
         )
         await self._broadcast(text)
 
+    async def notify_milestone(self, text: str) -> None:
+        """A collection milestone (app/notifications/milestones.py).
+
+        Its own method rather than notify_error so the channel keeps one
+        message shape per kind of event - a progress note wearing a
+        warning sign trains the operator to distrust the warning sign.
+        """
+        await self._broadcast(text)
+
     async def notify_daily_summary(self, summary: dict) -> None:
         mode = "LIVE" if settings.LIVE_TRADING else "PAPER"
         text = (
