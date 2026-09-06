@@ -154,6 +154,40 @@ about the old version; they just must not be averaged with the new ones.
 If you do need to change something, treat it as a **new challenger**, not
 an edit to the champion.
 
+### Changing the account size
+
+`PORTFOLIO_STARTING_BALANCE_USD` is part of the freeze too, even though
+it does not look like a strategy setting. Position size is
+`portfolio x MAX_PORTFOLIO_PCT_PER_TRADE / stop distance`, capped per
+token and absolutely, so changing the balance changes every notional,
+which changes modelled price impact, which changes every fill. Trades
+taken at two balances are not one sample.
+
+The version hash covers it once it moves off the value the current run
+was collected at ($1,000), so the split is recorded rather than silent -
+and `deploy/auto_update.sh` will then refuse to deploy it unattended,
+which is right for a deliberate restart.
+
+Do not just edit `.env`. The cash ledger is seeded once and will not
+follow, and the accounting check would report a discrepancy the size of
+the edit - which fails the kill switch closed and stops the bot opening
+positions. Use the script, which moves all three together:
+
+```bash
+# 1. set the new value in .env
+# 2. dry run - prints what would change, refuses if positions are open
+python scripts/set_starting_balance.py
+# 3. apply, then restart
+python scripts/set_starting_balance.py --yes
+docker compose restart bot
+```
+
+It refuses while any position is open: one bought before the reset and
+sold after would have its proceeds credited against a baseline that
+never funded its purchase, and the books would stay wrong by its cost
+basis. Old trades are never deleted - they keep their own strategy
+version and stay readable at `/performance?version=<label>`.
+
 ---
 
 ## What never happens automatically

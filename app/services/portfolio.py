@@ -8,6 +8,7 @@ trading wallet/exchange account with — the bot does not (yet) reconcile
 against an on-chain/exchange balance automatically. Reconcile periodically
 if you want tighter accuracy.
 """
+import datetime as dt
 import json
 import logging
 from dataclasses import dataclass
@@ -23,6 +24,79 @@ from app.state import get_state, set_state
 logger = logging.getLogger(__name__)
 
 CASH_KEY = "cash_balance_usd"
+
+# What the ledger was actually seeded (or last reset) to, and from when.
+#
+# The reconciliation check reconstructs the cash balance as
+# `starting + sells - buys`, and until this existed the `starting` term
+# came from PORTFOLIO_STARTING_BALANCE_USD - the CURRENT value of a
+# setting, used to explain a ledger that was seeded from whatever the
+# value happened to be when the database was created. Those are the same
+# number only until someone edits the setting, at which point the check
+# reports a discrepancy the size of the edit, the kill switch fails
+# closed on it, and the bot stops opening positions for a reason that has
+# nothing to do with its books being wrong.
+#
+# Recording the baseline makes the check answer the question it is
+# actually asking: does the ledger match the trades that have moved it
+# since it was set?
+BASELINE_KEY = "cash_ledger_baseline"
+
+
+@dataclass(frozen=True)
+class LedgerBaseline:
+    """The cash the ledger started from, and the point it started from.
+
+    `since` is None for a ledger that has never been reset - the baseline
+    covers the whole trade record, which is what every existing database
+    means.
+    """
+
+    balance_usd: float
+    since: dt.datetime | None
+
+
+def get_ledger_baseline(db: Session) -> LedgerBaseline:
+    """The recorded baseline, or the configured starting balance.
+
+    The fallback is what databases created before this existed need, and
+    it reproduces the old behaviour exactly: baseline = the setting,
+    covering every trade.
+    """
+    raw = get_state(db, BASELINE_KEY, None)
+    if not isinstance(raw, dict) or "balance_usd" not in raw:
+        return LedgerBaseline(settings.PORTFOLIO_STARTING_BALANCE_USD, None)
+
+    since = None
+    if raw.get("since"):
+        try:
+            since = dt.datetime.fromisoformat(raw["since"])
+        except (TypeError, ValueError):
+            logger.error(
+                "ledger baseline has an unreadable 'since' (%r) - treating the "
+                "baseline as covering the whole record", raw.get("since"),
+            )
+    try:
+        balance = float(raw["balance_usd"])
+    except (TypeError, ValueError):
+        logger.error(
+            "ledger baseline has an unreadable balance (%r) - falling back to "
+            "the configured starting balance", raw.get("balance_usd"),
+        )
+        return LedgerBaseline(settings.PORTFOLIO_STARTING_BALANCE_USD, None)
+
+    return LedgerBaseline(balance, since)
+
+
+def set_ledger_baseline(
+    db: Session, balance_usd: float, *, since: dt.datetime | None = None
+) -> None:
+    """Record what the ledger was set to, and from when."""
+    set_state(
+        db,
+        BASELINE_KEY,
+        {"balance_usd": float(balance_usd), "since": since.isoformat() if since else None},
+    )
 
 
 def get_cash_balance_usd(db: Session) -> float:

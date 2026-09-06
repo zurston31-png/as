@@ -74,6 +74,14 @@ def _seed_state() -> None:
     try:
         if get_state(db, "cash_balance_usd") is None:
             set_state(db, "cash_balance_usd", settings.PORTFOLIO_STARTING_BALANCE_USD)
+            # Record WHAT it was seeded with, not just the balance itself.
+            # Reconciliation explains the ledger as `starting + sells -
+            # buys`; without this it uses the setting's current value, so
+            # editing the setting later reports a discrepancy the size of
+            # the edit and the kill switch stops the bot trading.
+            from app.services.portfolio import set_ledger_baseline
+
+            set_ledger_baseline(db, settings.PORTFOLIO_STARTING_BALANCE_USD)
         if get_state(db, "trading_halted") is None:
             set_state(db, "trading_halted", False)
         db.commit()

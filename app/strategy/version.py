@@ -123,6 +123,33 @@ OPT_IN_BEHAVIORAL_SETTINGS = (
     "RISK_EQUITY_AWARE_DAILY_LOSS",
 )
 
+# Settings that decide trades but were left out of the hash while the
+# current dataset was collected, digested ONLY once they move off the
+# value that dataset was collected at.
+#
+# PORTFOLIO_STARTING_BALANCE_USD belongs in BEHAVIORAL_SETTINGS on the
+# merits: position size is `portfolio * MAX_PORTFOLIO_PCT_PER_TRADE /
+# stop distance`, capped per token and absolutely, so halving the balance
+# halves every notional, which changes modelled price impact, which
+# changes every fill and every recorded P&L. Trades taken at two
+# different balances are not one sample.
+#
+# Adding it outright would mint a new version immediately and split the
+# very dataset the freeze exists to protect - punishing the fix for the
+# bug. Digesting it only once it DIFFERS from the collection value gives
+# both halves: today's runs hash exactly as before, and the moment
+# someone changes the balance the label changes with it, the dataset
+# splits visibly, and deploy/auto_update.sh refuses to roll it out
+# unattended. Which is correct - that change is a deliberate restart, not
+# a routine deploy.
+#
+# The recorded value is a constant, not a default read from Settings: a
+# later edit to the default must not silently redefine what "unchanged"
+# means for a dataset already in the ground.
+DEFAULTED_BEHAVIORAL_SETTINGS = {
+    "PORTFOLIO_STARTING_BALANCE_USD": 1000.0,
+}
+
 
 def _code_constants() -> dict:
     """Behavioral constants that live in code rather than in settings.
@@ -156,6 +183,10 @@ def current_config() -> dict:
     for name in sorted(OPT_IN_BEHAVIORAL_SETTINGS):
         if getattr(settings, name, False):
             config[name] = True
+    for name, collected_at in sorted(DEFAULTED_BEHAVIORAL_SETTINGS.items()):
+        value = getattr(settings, name, collected_at)
+        if value != collected_at:
+            config[name] = value
     config.update(_code_constants())
     return config
 

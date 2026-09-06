@@ -8,9 +8,18 @@ computed from that wrong number.
 
 So the balance is checked against the thing it is supposed to summarise:
 
-    expected cash = starting balance
-                  + sum(proceeds of every FILLED sell)
-                  - sum(cost of every FILLED buy)
+    expected cash = the ledger's baseline
+                  + sum(proceeds of every FILLED sell since it was set)
+                  - sum(cost of every FILLED buy since it was set)
+
+The baseline is what the ledger was actually seeded or last reset to
+(app/services/portfolio.py), NOT the current value of
+PORTFOLIO_STARTING_BALANCE_USD. Those agree until someone edits the
+setting, and then they do not: the check would report a discrepancy the
+exact size of the edit, and since the kill switch fails closed on a bad
+ledger, editing a config value would silently stop the bot opening
+positions. Databases with no recorded baseline fall back to the setting
+and the whole record, which is what they have always done.
 
 If the recorded balance and the expected balance disagree by more than a
 rounding tolerance, the books are wrong and the correct response is to
@@ -34,7 +43,6 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.config import settings
 from app.services import portfolio
 
 logger = logging.getLogger(__name__)
@@ -99,11 +107,17 @@ class Reconciliation:
 
 def reconcile(db: Session) -> Reconciliation:
     """Check the cash ledger against the trade record."""
-    trades = (
-        db.query(models.Trade)
-        .filter(models.Trade.status == models.TradeStatus.FILLED.value)
-        .all()
+    baseline = portfolio.get_ledger_baseline(db)
+
+    query = db.query(models.Trade).filter(
+        models.Trade.status == models.TradeStatus.FILLED.value
     )
+    if baseline.since is not None:
+        # Trades from before a reset moved a ledger that no longer exists.
+        # Counting them would restate history against a baseline that was
+        # never true for them.
+        query = query.filter(models.Trade.created_at >= baseline.since)
+    trades = query.all()
 
     buys = 0.0
     sells = 0.0
@@ -126,7 +140,7 @@ def reconcile(db: Session) -> Reconciliation:
         else:
             problems.append(f"trade {trade.id} has unrecognised side {trade.side!r}")
 
-    expected = settings.PORTFOLIO_STARTING_BALANCE_USD + sells - buys
+    expected = baseline.balance_usd + sells - buys
     recorded = portfolio.get_cash_balance_usd(db)
     tolerance = max(MIN_TOLERANCE_USD, len(trades) * FLOAT_TOLERANCE_PER_TRADE)
 
