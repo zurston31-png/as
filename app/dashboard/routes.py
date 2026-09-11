@@ -392,6 +392,7 @@ async def performance(
         # execution when it more often means the fill model never got a
         # market snapshot, and the audit that distinguishes those was
         # reachable only from the research CLI.
+        from app.analysis import concentration
         from app.analysis.fill_audit import build_fill_audit
 
         fills = build_fill_audit(db)
@@ -401,6 +402,7 @@ async def performance(
             {
                 "r": report,
                 "fills": fills,
+                "min_fragility_share": concentration.MIN_FRAGILITY_SHARE,
                 "inf": float("inf"),
                 "min_bucket": MIN_TRADES_FOR_A_MEANINGFUL_BUCKET,
             },

@@ -22,6 +22,7 @@ from app import models
 from app.analysis import trade_analytics as ta
 from app.analysis.backtest_evidence import BacktestEvidence
 from app.analysis.monte_carlo import MonteCarloResult, run_monte_carlo
+from app.analysis import concentration as conc
 from app.analysis.validation import ValidationInputs, ValidationReport, evaluate
 from app.config import settings
 from app.dashboard.analytics import PortfolioStats, compute_portfolio_stats
@@ -37,6 +38,7 @@ class PerformanceReport:
     breakdowns: list[ta.Breakdown] = field(default_factory=list)
     rejections: ta.RejectionSummary | None = None
     monte_carlo: MonteCarloResult | None = None
+    concentration: conc.ConcentrationReport | None = None
     validation: ValidationReport | None = None
     version_counts: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -194,6 +196,7 @@ def build_performance_report(
         )
 
     extremes = ta.find_extremes(trades)
+    concentration = conc.build(trades)
     validation = evaluate(
         ValidationInputs(
             closed_trades=stats.trade_count,
@@ -202,6 +205,7 @@ def build_performance_report(
             max_drawdown_pct=stats.max_drawdown_pct if stats.trade_count else None,
             best_trade_share_of_profit=extremes.best_trade_share_of_profit,
             winning_trades=stats.win_count,
+            trades_to_flip=concentration.trades_to_flip,
             monte_carlo_p95_drawdown_pct=monte_carlo.p95_max_drawdown_pct if monte_carlo else None,
             monte_carlo_sample_size=monte_carlo.sample_size if monte_carlo else None,
             # Out-of-sample and walk-forward come from the backtester, not
@@ -232,6 +236,7 @@ def build_performance_report(
         breakdowns=breakdowns,
         rejections=rejections,
         monte_carlo=monte_carlo,
+        concentration=concentration,
         validation=validation,
         version_counts=version_counts,
         warnings=warnings,

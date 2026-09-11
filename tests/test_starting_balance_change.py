@@ -20,7 +20,16 @@ from app.safety import reconcile as reconcile_mod
 from app.services import portfolio
 from app.state import set_state
 
-NOW = dt.datetime(2026, 9, 6, 12, 0, tzinfo=dt.timezone.utc)
+# Anchored to run time, deliberately in the FUTURE.
+#
+# This was originally a fixed date, chosen while it still happened to be
+# tomorrow. Reconciliation counts every filled trade at or after the
+# baseline, the test database is shared, and other test files write trades
+# stamped with the real current time - so the moment that fixed date fell
+# into the past, their rows started landing inside this file's
+# reconciliation window and three tests began failing on the calendar
+# rather than on the code. A relative anchor cannot rot the same way.
+NOW = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)
 
 
 @pytest.fixture()

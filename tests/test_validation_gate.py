@@ -26,6 +26,13 @@ def _passing(**overrides) -> ValidationInputs:
         max_drawdown_pct=14.0,
         best_trade_share_of_profit=0.18,
         winning_trades=140,
+        # UPDATED, not loosened: the profit-fragility criterion was added
+        # after this helper was written, so "inputs that clear every
+        # criterion" had a hole - the new input defaulted to None and the
+        # helper produced a record with an unjudgeable criterion in it.
+        # 40 of 250 (16%) clears the advisory bar; every assertion below
+        # is unchanged.
+        trades_to_flip=40,
         monte_carlo_p95_drawdown_pct=22.0,
         monte_carlo_sample_size=250,
         out_of_sample_trades=60,

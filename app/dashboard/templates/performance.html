@@ -121,6 +121,43 @@
   {% endif %}
 </div>
 
+{% if r.concentration and r.concentration.closed_trades %}
+<div class="card">
+  <h2>What the profit rests on</h2>
+  {% set c = r.concentration %}
+  {% if c.trades_to_flip is none %}
+    <p class="note">The record is not profitable, so there is no profit to be
+    concentrated. Expectancy is the criterion that speaks to this.</p>
+  {% else %}
+  <div class="grid">
+    <div class="stat"><div class="k">Trades to flip it</div><div class="v">
+      {{ c.trades_to_flip }} of {{ c.closed_trades }}</div></div>
+    <div class="stat"><div class="k">Share of the record</div><div class="v {{ 'neg' if not c.survives_bar else '' }}">
+      {{ '%.0f' % (c.flip_share * 100) }}%</div></div>
+    <div class="stat"><div class="k">Advisory bar</div><div class="v">&ge;{{ '%.0f' % (min_fragility_share * 100) }}%</div></div>
+  </div>
+  <p class="note">Removing the best {{ c.trades_to_flip }} trade(s) leaves the
+  record unprofitable.
+  {%- if not c.survives_bar %} The profit rests on a handful of trades.{% endif %}</p>
+  {% endif %}
+  {% if c.load_bearing %}
+  <div class="grid" style="margin-top: 12px;">
+    <div class="stat"><div class="k">Load-bearing exit</div><div class="v" style="font-size: 14px;">
+      {{ c.load_bearing.rule }}</div></div>
+    <div class="stat"><div class="k">It fired</div><div class="v">
+      {{ c.load_bearing.trade_count }} time(s) &middot; ${{ '%.2f' % c.load_bearing.total_pnl_usd }}</div></div>
+    <div class="stat"><div class="k">The rest of the book</div><div class="v {{ 'neg' if c.remainder_pnl_usd < 0 else 'pos' }}">
+      {{ c.remainder_trades }} trade(s) &middot; ${{ '%.2f' % c.remainder_pnl_usd }}</div></div>
+  </div>
+  {% endif %}
+  <p class="note">Advisory only &mdash; this does not gate. The gate's
+  concentration criterion asks whether one <em>trade</em> dominated; this asks
+  how few trades the result rests on, which is the question a record can fail
+  while passing the other. Its threshold is a judgement rather than a derived
+  bound, so it reports and leaves the decision to a person.</p>
+</div>
+{% endif %}
+
 <div class="card">
   <h2>What it cost</h2>
   <div class="grid">

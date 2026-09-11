@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import models  # noqa: E402
+from app.analysis import concentration as conc  # noqa: E402
 from app.analysis import trade_analytics as ta  # noqa: E402
 from app.analysis.backtest_evidence import load as load_backtest_evidence  # noqa: E402
 from app.analysis.report import build_performance_report  # noqa: E402
@@ -106,6 +107,30 @@ def print_report(report, db=None) -> None:
         if audit.mean_cost_pct is not None:
             print(f"  notional-weighted    {audit.mean_cost_pct:+.3f}%")
         print(f"  fill audit           {audit.verdict()}")
+
+    c = report.concentration
+    if c is not None and c.closed_trades:
+        print()
+        print(RULE)
+        print(" WHAT THE PROFIT RESTS ON")
+        print(RULE)
+        if c.trades_to_flip is None:
+            print("  the record is not profitable - nothing to concentrate")
+        else:
+            share = c.flip_share or 0.0
+            print(f"  trades to flip it    {c.trades_to_flip} of {c.closed_trades} "
+                  f"({share:.0%}) - removing the best this many leaves it unprofitable")
+            verdict = "ok" if c.survives_bar else "FRAGILE"
+            print(f"  advisory bar         >={conc.MIN_FRAGILITY_SHARE:.0%} of trades   [{verdict}]")
+        if c.load_bearing is not None:
+            lb = c.load_bearing
+            print(f"  load-bearing exit    {lb.rule}")
+            print(f"                       {lb.trade_count} trade(s), "
+                  f"${lb.total_pnl_usd:,.2f}")
+            print(f"  the rest of the book {c.remainder_trades} trade(s), "
+                  f"${c.remainder_pnl_usd:,.2f}")
+        print("  Advisory only: this does not gate. The threshold is a judgement,")
+        print("  not a derived bound - see app/analysis/concentration.py.")
 
     h = report.holding
     print()

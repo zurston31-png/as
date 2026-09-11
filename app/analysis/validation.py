@@ -25,6 +25,13 @@ The criteria, and why each is there:
                     usable strategy, whatever its endpoint.
   CONCENTRATION     If one trade produced most of the profit, the sample
                     is one trade wearing a costume.
+  FRAGILITY         The same question asked of a HANDFUL of trades rather
+                    than one, because the single-trade check has a blind
+                    spot: a record can spread its profit over four trades,
+                    pass concentration comfortably, and still be four
+                    trades. Advisory only - it reports and does not gate,
+                    because its threshold is a judgement rather than a
+                    derived bound (app/analysis/concentration.py says why).
   MONTE CARLO       The observed order was luck. The 95th-percentile
                     resampled drawdown, not the realized one, is the
                     drawdown to plan around.
@@ -71,6 +78,9 @@ MAX_SINGLE_TRADE_PROFIT_SHARE = 0.40
 # a third by definition. Below this the criterion says nothing.
 MIN_WINNERS_FOR_CONCENTRATION = 10
 MAX_MONTE_CARLO_P95_DRAWDOWN_PCT = 35.0
+# Advisory, and the only threshold here that does not gate. See
+# app/analysis/concentration.py for why it is reported rather than enforced.
+MIN_FRAGILITY_SHARE = 0.10
 MIN_OUT_OF_SAMPLE_TRADES = 30
 MIN_WALK_FORWARD_WINDOWS = 3
 MIN_WALK_FORWARD_PROFITABLE_SHARE = 0.60
@@ -103,8 +113,25 @@ class ValidationReport:
 
     @property
     def failures(self) -> list[Criterion]:
-        """Criteria with enough evidence behind them that failed anyway."""
+        """Every criterion with enough evidence behind it that failed anyway.
+
+        Includes advisory (non-blocking) ones, so nothing that failed is
+        hidden from a reader. `blocking_failures` is the subset that
+        actually decided the verdict.
+        """
         return [c for c in self.criteria if c.evidence_sufficient and not c.passed]
+
+    @property
+    def blocking_failures(self) -> list[Criterion]:
+        """The failures that made the status what it is.
+
+        Until the first advisory criterion existed these were the same
+        list, which is why `failure_count` is derived from this one: it
+        has always meant "the failures behind this verdict", and reporting
+        an advisory failure there would pair `status: validated` with
+        `failure_count: 1` in the same payload.
+        """
+        return [c for c in self.failures if c.blocking]
 
     @property
     def insufficient_evidence(self) -> list[Criterion]:
@@ -135,7 +162,8 @@ class ValidationReport:
                 }
                 for c in self.criteria
             ],
-            "failure_count": len(self.failures),
+            "failure_count": len(self.blocking_failures),
+            "advisory_failure_count": len(self.failures) - len(self.blocking_failures),
             "insufficient_evidence_count": len(self.insufficient_evidence),
         }
 
@@ -161,6 +189,10 @@ class ValidationInputs:
     max_drawdown_pct: float | None
     best_trade_share_of_profit: float | None = None
     winning_trades: int | None = None
+    # How many of its best trades the record could lose and still be
+    # profitable, and out of how many. None when the record is not
+    # profitable, which makes the question moot rather than failed.
+    trades_to_flip: int | None = None
     monte_carlo_p95_drawdown_pct: float | None = None
     monte_carlo_sample_size: int | None = None
     out_of_sample_trades: int | None = None
@@ -177,6 +209,7 @@ def evaluate(inputs: ValidationInputs) -> ValidationReport:
         _profit_factor(inputs),
         _drawdown(inputs),
         _concentration(inputs),
+        _fragility(inputs),
         _monte_carlo(inputs),
         _out_of_sample(inputs),
         _walk_forward(inputs),
@@ -185,6 +218,8 @@ def evaluate(inputs: ValidationInputs) -> ValidationReport:
     blocking = [c for c in criteria if c.blocking]
     unknown = [c for c in blocking if not c.evidence_sufficient]
     failed = [c for c in blocking if c.evidence_sufficient and not c.passed]
+    # Mirrors ValidationReport.blocking_failures. Computed here rather than
+    # built from the report because the report needs the status to exist.
 
     if failed:
         # A measured failure is a real answer, and outranks "not enough
@@ -295,6 +330,49 @@ def _concentration(i: ValidationInputs) -> Criterion:
         f"(limit {MAX_SINGLE_TRADE_PROFIT_SHARE:.0%})"
         + ("" if passed else " - the edge rests on one trade"),
     )
+
+
+def _fragility(i: ValidationInputs) -> Criterion:
+    """How few of its best trades the record rests on. Never blocking.
+
+    Non-blocking is the whole design, not an oversight: MIN_FRAGILITY_SHARE
+    is a reasonable-sounding number rather than a derived bound, and a
+    reasonable-sounding number has no business deciding silently whether a
+    strategy reads as VALIDATED. It reports its arithmetic and leaves the
+    judgement to a person.
+    """
+    if i.closed_trades <= 0:
+        return Criterion("profit fragility", False, "no closed trades yet",
+                         blocking=False, evidence_sufficient=False)
+
+    if i.trades_to_flip is None:
+        return Criterion(
+            "profit fragility", False,
+            "the record is not profitable, so there is no profit to be "
+            "concentrated - expectancy is the criterion that speaks to this",
+            blocking=False, evidence_sufficient=False,
+        )
+
+    if (i.winning_trades or 0) < MIN_WINNERS_FOR_CONCENTRATION:
+        return Criterion(
+            "profit fragility", False,
+            f"only {i.winning_trades or 0} winning trade(s) "
+            f"(need >={MIN_WINNERS_FOR_CONCENTRATION}) - with this few, a small "
+            "number of trades carrying the profit is arithmetic rather than "
+            "fragility",
+            blocking=False, evidence_sufficient=False,
+        )
+
+    share = i.trades_to_flip / i.closed_trades
+    passed = share >= MIN_FRAGILITY_SHARE
+    detail = (
+        f"removing the best {i.trades_to_flip} of {i.closed_trades} trades "
+        f"({share:.0%}) makes the record unprofitable "
+        f"(advisory bar: >={MIN_FRAGILITY_SHARE:.0%})"
+    )
+    if not passed:
+        detail += " - the profit rests on a handful of trades"
+    return Criterion("profit fragility", passed, detail, blocking=False)
 
 
 def _monte_carlo(i: ValidationInputs) -> Criterion:
