@@ -1,0 +1,66 @@
+services:
+  bot:
+    build:
+      context: .
+      args:
+        # Flip to "true" once you're past paper trading and ready to install
+        # the live-execution dependencies (solana/ccxt/web3).
+        INSTALL_LIVE_DEPS: "false"
+    image: memecoin-bot:latest
+    container_name: memecoin-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # /data on the HOST, an absolute path, not ./data relative to this
+      # compose file. A Docker deployment gets redeployed by unpacking a new
+      # bundle into a fresh directory - the same failure DATABASE_URL's
+      # absolute-path support (see app/database.py) exists to prevent - and
+      # a relative bind mount would silently reintroduce it one layer up:
+      # DATABASE_URL would point at a stable path while the volume backing
+      # it moved with every redeploy, so the container would write to an
+      # unmounted location that disappears with the container. Create the
+      # host directory once (`mkdir -p /data`) before first `up`; every
+      # future redeploy from any bundle directory reuses it unchanged.
+      #
+      # Point DATABASE_URL and BACKUP_DIR at THIS SAME /data in .env, e.g.
+      #   DATABASE_URL=sqlite:////data/memecoin_bot.db
+      #   BACKUP_DIR=/data/backups
+      # (four slashes: three for the sqlite:// scheme, one for the
+      # absolute path) - the container-side path in .env has to match the
+      # mount destination below, not the other way round.
+      - /data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # --- Optional: Caddy reverse proxy with automatic HTTPS for production. ---
+  # Point TradingView's webhook at https://your-domain.example/webhook/tradingview
+  # instead of exposing port 8000 directly. Uncomment and add a Caddyfile.
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - bot
+  #
+  # volumes:
+  #   caddy_data:
+  #   caddy_config:

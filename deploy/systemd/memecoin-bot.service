@@ -1,0 +1,27 @@
+[Unit]
+Description=Memecoin Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/opt/memecoin-bot
+EnvironmentFile=/opt/memecoin-bot/.env
+ExecStart=/opt/memecoin-bot/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Hardening (relax if your distro's systemd is older / these cause issues)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+StandardOutput=append:/var/log/memecoin-bot/bot.log
+StandardError=append:/var/log/memecoin-bot/bot.err.log
+
+[Install]
+WantedBy=multi-user.target

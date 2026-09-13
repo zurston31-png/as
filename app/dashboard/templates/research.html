@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  h3 { font-size: 13px; margin: 18px 0 8px; font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  .muted { color: var(--muted); } .pos { color: var(--green); } .neg { color: var(--red); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
+  .pill.pass { background: rgba(61,220,151,.15); color: var(--green); }
+  .pill.fail { background: rgba(255,92,122,.16); color: var(--red); }
+  .pill.insufficient { background: rgba(139,147,167,.15); color: var(--muted); }
+  .headline { font-size: 15px; line-height: 1.55; margin: 0 0 6px; }
+  .verdict-bar { display: flex; gap: 18px; font-size: 12px; margin: 14px 0 4px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+  .empty { padding: 26px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+  .finding { display: grid; grid-template-columns: 130px 1fr; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border); align-items: start; }
+  .finding:last-child { border-bottom: none; }
+  .finding .q { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+  .finding .d { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .hist { display: flex; align-items: center; gap: 10px; font-size: 11.5px; margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+  .hist .lbl { width: 62px; color: var(--muted); text-align: right; }
+  .hist .n { width: 40px; text-align: right; color: var(--muted); }
+  .hist .bar { height: 12px; background: linear-gradient(90deg, rgba(91,141,239,.6), rgba(91,141,239,.25)); border-radius: 3px; min-width: 1px; }
+  ul.plain { margin: 6px 0 0; padding-left: 20px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .thin { opacity: .5; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔬 Research</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/performance">Performance</a>
+    &nbsp;&nbsp;<a class="navlink" href="/dataset">Dataset</a>
+    &nbsp;&nbsp;<a class="navlink" href="/pipeline">Pipeline</a>
+    &nbsp;&nbsp;<a class="navlink" href="/journal">Journal</a>
+    &nbsp;&nbsp;<a class="navlink" href="/early">Early</a>
+  </div>
+</header>
+<main>
+
+<div class="card">
+  <h2>Validation status</h2>
+  <p class="headline">{{ report.headline }}</p>
+  <div class="verdict-bar">
+    <span><span class="pill pass">PASS</span> {{ report.counts['PASS'] }}</span>
+    <span><span class="pill fail">FAIL</span> {{ report.counts['FAIL'] }}</span>
+    <span><span class="pill insufficient">INSUFFICIENT</span> {{ report.counts['INSUFFICIENT DATA'] }}</span>
+  </div>
+  <p class="note">
+    Three grades, and the third does most of the work. Almost everything about a young
+    strategy is unknown, and saying so is the honest output — a page that resolved every
+    question into pass or fail would be inventing confidence, and the confidence it invents
+    is always “this looks fine”, because a small sample of a random strategy usually does.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Findings</h2>
+  {% for f in report.findings %}
+  <div class="finding">
+    <div>
+      <span class="pill {{ 'pass' if f.grade.value == 'PASS' else ('fail' if f.grade.value == 'FAIL' else 'insufficient') }}">
+        {{ f.grade.value }}
+      </span>
+    </div>
+    <div>
+      <div class="q">{{ f.question }}</div>
+      <div class="d">{{ f.detail }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Score distribution</h2>
+  <p class="note" style="margin-top:0">
+    Every score the engine produced, <strong>including candidates it then rejected</strong>.
+    A distribution over survivors puts every observation above the threshold by construction,
+    so it cannot be used to judge where the threshold belongs.
+  </p>
+  {% for d in distributions %}
+    <h3>{{ d.stage.replace('_', ' ').title() }}
+      <span class="muted">— n={{ d.sample_size }}{% if not d.reliable %}, too small to read{% endif %}</span>
+    </h3>
+    {% if d.sample_size %}
+      <table>
+        <tr>
+          <th class="num">mean</th><th class="num">median</th><th class="num">sd</th>
+          <th class="num">min</th><th class="num">max</th>
+          {% for t in [60, 65, 70, 75, 80] %}<th class="num">≥{{ t }}</th>{% endfor %}
+        </tr>
+        <tr>
+          <td class="num">{{ '%.1f' % d.mean }}</td>
+          <td class="num">{{ '%.1f' % d.median }}</td>
+          <td class="num">{{ '%.1f' % d.stdev }}</td>
+          <td class="num">{{ '%.1f' % d.minimum }}</td>
+          <td class="num">{{ '%.1f' % d.maximum }}</td>
+          {% for t in [60, 65, 70, 75, 80] %}
+            {% set share = d.share_reaching(t) %}
+            <td class="num">{{ '%.0f%%' % (share * 100) if share is not none else '—' }}</td>
+          {% endfor %}
+        </tr>
+      </table>
+      {% if d.histogram %}
+        {% set widest = d.histogram | map(attribute=1) | max %}
+        <div style="margin-top:12px">
+        {% for bucket, count in d.histogram %}
+          <div class="hist">
+            <span class="lbl">{{ bucket }}</span>
+            <span class="bar" style="width: {{ (280 * count / widest) | round | int }}px"></span>
+            <span class="n">{{ count }}</span>
+          </div>
+        {% endfor %}
+        </div>
+      {% endif %}
+      {% for w in d.warnings %}<p class="note">⚠ {{ w }}</p>{% endfor %}
+    {% else %}
+      <div class="empty">Nothing scored at this stage yet.</div>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Score calibration — does a higher score precede a better outcome?</h2>
+  <p class="note" style="margin-top:0">
+    Forward returns of every scored candidate, traded or not. Judging the score from trades
+    alone cannot answer this: the bot only trades what it already liked, so the rejected 55s
+    never get to disagree.
+    <br><br>
+    Dataset: <strong>{{ coverage.resolved }}</strong> resolved,
+    {{ coverage.pending }} pending, {{ coverage.unmeasurable }} unmeasurable
+    ({{ coverage.coverage_pct }}% coverage).
+  </p>
+
+  <p class="note" style="margin-top:0">
+    Resolver: <strong>{{ resolver.status.value }}</strong> &mdash; {{ resolver.detail }}
+    {%- if resolver.oldest_overdue_minutes is not none %}
+      <br>Oldest overdue row: {{ '%.0f' | format(resolver.oldest_overdue_minutes) }} minutes.
+    {%- endif %}
+    {%- if resolver.median_lateness_minutes is not none %}
+      <br>Resolutions are landing a median of
+      {{ '%.1f' | format(resolver.median_lateness_minutes) }} minutes past their horizon
+      (worst {{ '%.1f' | format(resolver.worst_lateness_minutes) }}), over
+      {{ resolver.lateness_samples }} measurements.
+    {%- elif resolver.lateness_samples %}
+      <br>{{ resolver.lateness_samples }} resolution(s) so far &mdash; too few to report a
+      lateness figure.
+    {%- endif %}
+    {%- if resolver.sealed_by_reason %}
+      <br>Sealed without a measurement:
+      {% for reason, count in resolver.sealed_by_reason.items() -%}
+        {{ count }} &times; {{ reason }}{% if not loop.last %}; {% endif %}
+      {%- endfor %}.
+      A row sealed for lateness is this worker falling behind; one sealed for a missing
+      price is the market. Only the first is fixable here.
+    {%- endif %}
+  </p>
+  {% if coverage.resolved %}
+    {% for c in calibrations %}
+      {% set usable = c.buckets | selectattr('sample_size') | list %}
+      {% if usable %}
+        <h3>{{ c.horizon_minutes }} minutes</h3>
+        <p class="d muted" style="font-size:12.5px; line-height:1.5">{{ c.verdict() }}</p>
+        <table>
+          <tr>
+            <th>bucket</th><th class="num">n</th><th class="num">unmeasured</th>
+            <th class="num">mean %</th><th class="num">median %</th>
+            <th class="num">win %</th><th class="num">net of costs %</th>
+          </tr>
+          {% for b in usable %}
+          <tr class="{{ '' if b.meaningful else 'thin' }}">
+            <td>{{ b.bucket }}{% if not b.meaningful %} <span class="muted">*</span>{% endif %}</td>
+            <td class="num">{{ b.sample_size }}</td>
+            <td class="num">{{ b.unmeasured }}</td>
+            <td class="num {{ 'pos' if b.mean_return_pct > 0 else 'neg' }}">{{ '%+.2f' % b.mean_return_pct }}</td>
+            <td class="num">{{ '%+.2f' % b.median_return_pct }}</td>
+            <td class="num">{{ '%.0f' % b.win_rate_pct }}</td>
+            <td class="num {{ 'pos' if b.mean_net_of_costs_pct > 0 else 'neg' }}">{{ '%+.2f' % b.mean_net_of_costs_pct }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% endif %}
+    {% endfor %}
+    <p class="note">
+      * fewer than 30 measured outcomes — shown so the table is not misleadingly tidy, but
+      not evidence. “unmeasured” counts horizons that elapsed with no obtainable price; those
+      are never counted as a 0% return, because a token that stopped trading did not break even.
+    </p>
+  {% else %}
+    <div class="empty">
+      No forward returns resolved yet. This accumulates on its own while the bot runs.
+    </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Strongest remaining weaknesses</h2>
+  <ul class="plain">{% for w in report.weaknesses %}<li>{{ w }}</li>{% endfor %}</ul>
+</div>
+
+<div class="card">
+  <h2>What would make this answerable</h2>
+  <ul class="plain">{% for d in report.data_needed %}<li>{{ d }}</li>{% endfor %}</ul>
+  <p class="note">
+    The backtest-driven questions (out-of-sample, walk-forward, ablation, parameter
+    stability) are run from the terminal, not from here:
+    <code>python scripts/research.py report | thresholds | ablate | sweep</code>.
+  </p>
+</div>
+
+<p class="note" style="text-align:center; margin: 26px 0">
+  Paper trading only. No real funds, wallet or private key is involved anywhere in this bot.
+</p>
+
+</main>
+</body>
+</html>
