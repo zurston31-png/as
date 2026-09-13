@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "valcoach"
+version = "0.1.0"
+description = "Tracks your VALORANT matches, works out how you die, and tells you what to fix"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["valorant", "coaching", "analytics", "esports", "riot"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "Programming Language :: Python :: 3",
+  "Topic :: Games/Entertainment :: First Person Shooters",
+]
+# No required dependencies: the whole analysis pipeline is standard library only.
+dependencies = []
+
+[project.optional-dependencies]
+# Written, natural-language coaching from Claude.
+coach = ["anthropic>=1.0"]
+
+[project.scripts]
+valcoach = "valcoach.cli:main"
+
+[tool.setuptools]
+packages = [
+  "valcoach",
+  "valcoach.providers",
+  "valcoach.analysis",
+  "valcoach.coach",
+  "valcoach.render",
+]
+
+[tool.setuptools.package-data]
+valcoach = ["fixtures/*.json", "data/*.json"]
