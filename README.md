@@ -44,6 +44,9 @@ python3 -m valcoach demo
 python3 -m valcoach demo --html review.html   # and open review.html
 ```
 
+[Here is that HTML report, published](https://claude.ai/code/artifact/9193be24-1176-411e-b569-2d1dabd7153f)
+— the same page the command writes, from the same synthetic demo matches.
+
 ## Install
 
 ```bash
@@ -205,7 +208,9 @@ Everything is local, in `~/.valcoach` (override with `VALCOACH_HOME`):
 
 Outbound network calls: your chosen match-data provider, `valorant-api.com` if
 you run `valcoach assets`, and the Anthropic API only when you ask for written
-coaching. Nothing else, and no telemetry.
+coaching. Nothing else, and no telemetry. The HTML report is self-contained and
+loads nothing at all unless you pass `--webfonts`, which links its display
+faces from Google Fonts.
 
 ## Configuration
 
@@ -248,7 +253,7 @@ watcher.py                        poll for new matches, review them as they land
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -t .    # 155 tests, no network needed
+python3 -m unittest discover -s tests -t .    # 162 tests, no network needed
 python3 tools/make_fixture.py --count 5 --out valcoach/fixtures/demo_matches.json
 ```
 

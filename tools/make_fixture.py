@@ -387,13 +387,24 @@ class MatchBuilder:
                 "location": {"x": round(px, 1), "y": round(py, 1)},
             })
 
+        # Roughly a quarter of kills are assisted, as in a real game.
+        assistants = []
+        if rng.random() < 0.28:
+            helpers = [
+                p for p in self.players
+                if p["team_id"] == killer["team_id"] and alive[p["puuid"]]
+                and p["puuid"] != killer["puuid"]
+            ]
+            if helpers:
+                assistants = [_ref(rng.choice(helpers))]
+
         return {
             "round": round_index,
             "time_in_round_in_ms": time_ms,
             "time_in_match_in_ms": clock_ms + time_ms,
             "killer": _ref(killer),
             "victim": _ref(victim),
-            "assistants": [],
+            "assistants": assistants,
             "location": {"x": round(vx, 1), "y": round(vy, 1)},
             "weapon": {"type": kind, "id": _uuid(weapon), "name": weapon},
             "secondary_fire_mode": False,

@@ -31,6 +31,10 @@ from .store import Store
 from .watcher import Watcher, notify, review_window, sync_matches
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "demo_matches.json")
+DEMO_NOTICE = (
+    "This review was generated from synthetic matches bundled with valcoach, "
+    "to show what the output looks like. It is not a record of real games."
+)
 
 
 # --------------------------------------------------------------------------
@@ -89,12 +93,14 @@ def _print_report(report: Report, args: argparse.Namespace) -> None:
     )
 
 
-def _write_html(report: Report, path: str) -> str:
+def _write_html(
+    report: Report, path: str, notice: str = "", webfonts: bool = False
+) -> str:
     path = os.path.expanduser(path)
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(render_html(report))
+        handle.write(render_html(report, notice=notice, webfonts=webfonts))
     return path
 
 
@@ -309,7 +315,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         _maybe_coach(report, config, store, args)
     _print_report(report, args)
     if args.html:
-        print(f"\nHTML report: {_write_html(report, args.html)}")
+        print(
+            f"\nHTML report: "
+            f"{_write_html(report, args.html, webfonts=args.webfonts)}"
+        )
     if not args.no_save:
         _save_report(store, report)
     store.close()
@@ -386,7 +395,10 @@ def cmd_coach(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(report.to_dict(include_deaths=False), indent=2, default=str))
     if args.html:
-        print(f"\nHTML report: {_write_html(report, args.html)}")
+        print(
+            f"\nHTML report: "
+            f"{_write_html(report, args.html, webfonts=args.webfonts)}"
+        )
     if not args.no_save:
         _save_report(store, report)
     store.close()
@@ -410,7 +422,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         if args.coach:
             _maybe_coach(report, config, store, args)
         if args.html:
-            _write_html(report, args.html)
+            _write_html(report, args.html, webfonts=getattr(args, "webfonts", False))
         _save_report(store, report)
 
     watcher = Watcher(
@@ -460,7 +472,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
         _maybe_coach(report, config, store, args)
     _print_report(report, args)
     if args.html:
-        print(f"\nHTML report: {_write_html(report, args.html)}")
+        print(
+            f"\nHTML report: "
+            f"{_write_html(report, args.html, notice=DEMO_NOTICE, webfonts=args.webfonts)}"
+        )
     store.close()
     return 0
 
@@ -580,6 +595,9 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--no-deaths", action="store_true",
                          help="skip the death log")
         sub.add_argument("--death-limit", type=int, default=25)
+        sub.add_argument("--webfonts", action="store_true",
+                         help="load display fonts in the HTML report "
+                              "(otherwise it needs no network at all)")
 
     subs = parser.add_subparsers(dest="command", required=True)
 
@@ -640,6 +658,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", help="override the coaching model")
     p.add_argument("--json", action="store_true")
     p.add_argument("--html", help="also write an HTML report")
+    p.add_argument("--webfonts", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--no-save", action="store_true")
     p.add_argument("--verbose", action="store_true")
     p.set_defaults(func=cmd_coach)
@@ -651,6 +670,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--coach", action="store_true", help="write a review per match")
     p.add_argument("--notify", action="store_true", help="desktop notification")
     p.add_argument("--html", help="rewrite this HTML report after each match")
+    p.add_argument("--webfonts", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--cycles", type=int, help="stop after this many polls")
     p.add_argument("--question", help=argparse.SUPPRESS)
     p.add_argument("--focus", help=argparse.SUPPRESS)

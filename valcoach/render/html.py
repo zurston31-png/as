@@ -26,12 +26,12 @@ SEVERITY_LABEL = {
 CSS = """
 :root {
   color-scheme: light dark;
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --panel-2: #f0f2f5;
-  --ink: #14161a;
-  --ink-2: #5a6069;
-  --line: #dfe3e8;
+  --bg: #f7f4f3;
+  --panel: #fffdfc;
+  --panel-2: #efeae9;
+  --ink: #191415;
+  --ink-2: #6b6062;
+  --line: #e2dad9;
   --accent: #b4363f;
   --critical: #b4363f;
   --high: #d1662b;
@@ -41,15 +41,20 @@ CSS = """
   --attack: #c2603a;
   --defense: #3f7192;
   --radius: 10px;
+  --display: "Oswald", "Archivo Narrow", "Roboto Condensed", "Liberation Sans Narrow",
+             ui-sans-serif, system-ui, sans-serif;
+  --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #101215;
-    --panel: #191c21;
-    --panel-2: #22262c;
-    --ink: #eceef1;
-    --ink-2: #9aa2ad;
-    --line: #2c3138;
+    --bg: #131011;
+    --panel: #1c1819;
+    --panel-2: #262021;
+    --ink: #efeae9;
+    --ink-2: #a59a9c;
+    --line: #302a2b;
     --accent: #ff6b74;
     --critical: #ff6b74;
     --high: #ff9a5a;
@@ -61,12 +66,12 @@ CSS = """
   }
 }
 :root[data-theme="dark"] {
-  --bg: #101215;
-  --panel: #191c21;
-  --panel-2: #22262c;
-  --ink: #eceef1;
-  --ink-2: #9aa2ad;
-  --line: #2c3138;
+  --bg: #131011;
+  --panel: #1c1819;
+  --panel-2: #262021;
+  --ink: #efeae9;
+  --ink-2: #a59a9c;
+  --line: #302a2b;
   --accent: #ff6b74;
   --critical: #ff6b74;
   --high: #ff9a5a;
@@ -81,22 +86,27 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        "Helvetica Neue", Arial, sans-serif;
+  font: 15px/1.55 var(--body);
   -webkit-font-smoothing: antialiased;
 }
 .wrap { max-width: 1040px; margin: 0 auto; padding-block: 28px; padding-left: 18px; padding-right: 18px; }
 header.top { border-bottom: 1px solid var(--line); padding-bottom: 18px; margin-bottom: 26px; }
-h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.02em; }
-h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
-     color: var(--ink-2); margin: 34px 0 14px; font-weight: 600; }
-h3 { font-size: 17px; margin: 0 0 6px; }
+h1 { font-family: var(--display); font-size: 34px; font-weight: 500; margin: 0 0 4px;
+     letter-spacing: 0.005em; text-transform: uppercase; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 15px; text-transform: uppercase;
+     letter-spacing: 0.14em; color: var(--ink-2); margin: 38px 0 14px;
+     font-weight: 500; display: flex; align-items: center; gap: 12px; }
+h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+h3 { font-size: 17px; margin: 0 0 6px; text-wrap: balance; }
 p { margin: 0 0 10px; }
 .sub { color: var(--ink-2); font-size: 14px; }
 .tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
-.tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2); }
-.tile .v { font-size: 22px; font-weight: 650; margin-top: 3px; letter-spacing: -0.02em; }
+.tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em;
+           color: var(--ink-2); font-weight: 600; }
+.tile .v { font-family: var(--display); font-size: 27px; font-weight: 500;
+           margin-top: 2px; letter-spacing: 0.01em;
+           font-variant-numeric: tabular-nums; }
 .tile .n { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
 .tile.warn .v { color: var(--high); }
 .tile.good .v { color: var(--strength); }
@@ -107,22 +117,25 @@ p { margin: 0 0 10px; }
 .card.medium { border-left-color: var(--medium); }
 .card.low { border-left-color: var(--low); }
 .card.strength { border-left-color: var(--strength); }
-.badge { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+.badge { display: inline-block; font-family: var(--display); font-size: 12px;
+         font-weight: 500; letter-spacing: 0.1em;
          text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
          background: var(--panel-2); color: var(--ink-2); }
 .badge.critical { color: #fff; background: var(--critical); }
 .badge.high { color: var(--high); }
 .badge.medium { color: var(--medium); }
 .badge.strength { color: var(--strength); }
-.card .meta { font-size: 12px; color: var(--ink-2); margin: 6px 0 10px; }
+.card .meta { font-size: 12px; color: var(--ink-2); margin: 6px 0 10px;
+              font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
                color: var(--ink-2); margin-top: 12px; }
 .evidence { list-style: none; padding: 0; margin: 6px 0 0; }
-.evidence li { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+.evidence li { font-family: var(--mono);
                font-size: 12px; color: var(--ink-2); padding: 4px 0 4px 10px;
                border-left: 2px solid var(--line); margin-bottom: 3px; word-break: break-word; }
 .table-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px;
+         font-variant-numeric: tabular-nums; }
 th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
      color: var(--ink-2); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 td { padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -143,16 +156,31 @@ td.wrap-cell { white-space: normal; min-width: 240px; }
 .narrative h3 { margin-top: 18px; }
 .narrative h3:first-child { margin-top: 0; }
 .focus { counter-reset: focus; list-style: none; padding: 0; }
-.focus li { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-            padding: 14px 16px; margin-bottom: 10px; }
+.focus li { background: var(--panel); border: 1px solid var(--line);
+            border-radius: var(--radius); padding: 14px 16px 14px 52px;
+            margin-bottom: 10px; position: relative; counter-increment: focus; }
+.focus li::before { content: counter(focus); position: absolute; left: 16px; top: 13px;
+                    font-family: var(--display); font-size: 20px; font-weight: 500;
+                    color: var(--accent); }
 .focus li b { display: block; margin-bottom: 4px; }
 .delta.up { color: var(--strength); }
 .delta.down { color: var(--critical); }
 footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line);
          color: var(--ink-2); font-size: 12px; }
+.notice { display: flex; gap: 10px; align-items: baseline; background: var(--panel-2);
+          border: 1px dashed var(--line); border-radius: var(--radius);
+          padding: 11px 14px; margin-bottom: 22px; font-size: 13px;
+          color: var(--ink-2); }
+.notice b { font-family: var(--display); text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--ink); font-weight: 500;
+            white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
 @media (max-width: 560px) {
-  h1 { font-size: 21px; }
-  .tile .v { font-size: 19px; }
+  h1 { font-size: 26px; }
+  .tile .v { font-size: 22px; }
+  .wrap { padding-block: 20px; }
 }
 """
 
@@ -190,7 +218,8 @@ def _finding_card(f: Finding) -> str:
     if meta:
         bits.append(f'<div class="meta">{" · ".join(meta)}</div>')
     if f.why:
-        bits.append(f'<div class="label">Why it costs rounds</div><p>{_esc(f.why)}</p>')
+        why_label = "Why it matters" if sev == "strength" else "Why it costs rounds"
+        bits.append(f'<div class="label">{why_label}</div><p>{_esc(f.why)}</p>')
     if f.fix:
         bits.append(f'<div class="label">What to do</div><p>{_esc(f.fix)}</p>')
     if f.evidence:
@@ -210,7 +239,7 @@ def _death_scatter(map_name: str, deaths: Sequence[Any], size: int = 240) -> str
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
     span = max(max_x - min_x, max_y - min_y) or 1.0
-    pad = 14
+    pad = 18
 
     def place(x: float, y: float) -> Tuple[float, float]:
         # Riot's y axis runs opposite to SVG's, and the axes are swapped
@@ -303,7 +332,25 @@ def _markdown_lite(text: str) -> str:
     return "\n".join(out)
 
 
-def render_html(report: Report, title: Optional[str] = None) -> str:
+FONT_LINK = (
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+    "family=Oswald:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&"
+    'family=IBM+Plex+Mono:wght@400&display=swap">'
+)
+
+
+def render_html(
+    report: Report,
+    title: Optional[str] = None,
+    notice: str = "",
+    webfonts: bool = False,
+) -> str:
+    """Render a self-contained report page.
+
+    ``notice`` puts a labelled banner at the top (the demo uses it to say the
+    data is synthetic). ``webfonts`` links the display faces from Google Fonts;
+    off by default so the file stays usable with no network at all.
+    """
     m = report.metrics
     who = report.riot_id or report.puuid[:8] or "player"
     page_title = title or f"{who} · VALORANT review"
@@ -423,9 +470,16 @@ def render_html(report: Report, title: Optional[str] = None) -> str:
     if report.queue_filter:
         subtitle += f" · {_esc(report.queue_filter)}"
 
+    notice_html = (
+        f'<div class="notice"><b>Note</b><span>{_esc(notice)}</span></div>'
+        if notice else ""
+    )
+
     return f"""<title>{_esc(page_title)}</title>
+{FONT_LINK if webfonts else ""}
 <style>{CSS}</style>
 <div class="wrap">
+{notice_html}
 <header class="top">
   <h1>{_esc(who)} — what to fix</h1>
   <div class="sub">{subtitle} · generated {_esc(generated)}</div>

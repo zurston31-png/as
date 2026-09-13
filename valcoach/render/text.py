@@ -117,8 +117,12 @@ def render_findings(
             lines.append(paint.dim(f"    {f.sample}  ·  {f.confidence} confidence"))
         if detail:
             if f.why:
+                why_label = (
+                    "Why it matters" if f.severity == "strength"
+                    else "Why it costs rounds"
+                )
                 lines.append("")
-                lines.extend(_wrap(f"Why it costs rounds: {f.why}", indent=4))
+                lines.extend(_wrap(f"{why_label}: {f.why}", indent=4))
             if f.fix:
                 lines.append("")
                 lines.extend(_wrap(f"What to do: {f.fix}", indent=4))

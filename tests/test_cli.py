@@ -314,3 +314,44 @@ class TestRenderers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFindingCopy(unittest.TestCase):
+    """A strength is not a mistake, so it must not be labelled like one."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(FIXTURE, "r", encoding="utf-8") as handle:
+            payloads = json.load(handle)
+        matches = [
+            parse_payload(single)
+            for payload in payloads for single in iter_payloads(payload)
+        ]
+        me = matches[0].find_player("You#0000")
+        cls.report = build_report(matches, me.ref.puuid, me.ref.riot_id)
+
+    def test_strengths_use_a_positive_why_label(self):
+        self.assertTrue(self.report.strengths, "fixture should surface a strength")
+        from valcoach.render.html import _finding_card
+
+        card = _finding_card(self.report.strengths[0])
+        self.assertIn("Why it matters", card)
+        self.assertNotIn("Why it costs rounds", card)
+
+    def test_problems_keep_the_cost_framing(self):
+        from valcoach.render.html import _finding_card
+
+        card = _finding_card(self.report.problems[0])
+        self.assertIn("Why it costs rounds", card)
+
+    def test_text_renderer_matches(self):
+        from valcoach.render.text import Painter, render_findings
+
+        paint = Painter(False)
+        self.assertIn("Why it matters",
+                      render_findings(self.report.strengths, paint))
+        self.assertIn("Why it costs rounds",
+                      render_findings(self.report.problems[:1], paint))
+
+    def test_demo_data_now_records_assists(self):
+        self.assertGreater(self.report.metrics.assists, 0)
