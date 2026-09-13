@@ -44,9 +44,16 @@ from app import models
 # ---------------------------------------------------------------------------
 
 def closed_trades(trades: list[models.Trade]) -> list[models.Trade]:
-    """Realized trades only, oldest close first."""
+    """Realized trades only, oldest close first.
+
+    Sorted through `_aware` (defined just below) because a list mixing
+    rows reloaded from SQLite, which come back naive, with rows created in
+    the current session, which are aware, cannot be sorted at all -
+    comparing the two raises TypeError and takes the caller down with it.
+    The helper existed for exactly this and simply was not applied here.
+    """
     closed = [t for t in trades if t.pnl_usd is not None and t.closed_at is not None]
-    return sorted(closed, key=lambda t: t.closed_at)
+    return sorted(closed, key=lambda t: _aware(t.closed_at))
 
 
 def _aware(moment: dt.datetime | None) -> dt.datetime | None:

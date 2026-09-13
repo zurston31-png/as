@@ -23,6 +23,7 @@ from app.analysis import trade_analytics as ta
 from app.analysis.backtest_evidence import BacktestEvidence
 from app.analysis.monte_carlo import MonteCarloResult, run_monte_carlo
 from app.analysis import concentration as conc
+from app.analysis.round_trips import RoundTripSummary, group_round_trips
 from app.analysis.validation import ValidationInputs, ValidationReport, evaluate
 from app.config import settings
 from app.dashboard.analytics import PortfolioStats, compute_portfolio_stats
@@ -39,6 +40,10 @@ class PerformanceReport:
     rejections: ta.RejectionSummary | None = None
     monte_carlo: MonteCarloResult | None = None
     concentration: conc.ConcentrationReport | None = None
+    #: Exit legs folded into positions. `stats` above still counts legs -
+    #: both are kept because they answer different questions, and the one
+    #: that is a SAMPLE SIZE is this one.
+    round_trips: RoundTripSummary | None = None
     validation: ValidationReport | None = None
     version_counts: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -68,7 +73,38 @@ class PerformanceReport:
     def as_dict(self) -> dict:
         return {
             "strategy_version": self.strategy_version,
+            # Kept under its original key so nothing reading this payload
+            # breaks, but it counts EXIT LEGS. The sample size a
+            # statistical claim rests on is round_trips.count below.
             "trade_count": self.stats.trade_count,
+            "round_trips": (
+                {
+                    "count": self.round_trips.count,
+                    "exit_leg_count": self.round_trips.exit_leg_count,
+                    "positions_with_partials": self.round_trips.positions_with_partials,
+                    "unattributed_leg_count": self.round_trips.unattributed_leg_count,
+                    "counts_agree": self.round_trips.counts_agree,
+                    "win_rate": (
+                        round(self.round_trips.win_rate_pct, 1)
+                        if self.round_trips.win_rate_pct is not None else None
+                    ),
+                    "expectancy_usd": (
+                        round(self.round_trips.expectancy_usd, 2)
+                        if self.round_trips.expectancy_usd is not None else None
+                    ),
+                    # Same infinity guard as profit_factor above: an
+                    # all-winners record has no denominator and must not
+                    # serialise as a number.
+                    "profit_factor": (
+                        self.round_trips.profit_factor
+                        if self.round_trips.profit_factor is not None
+                        and math.isfinite(self.round_trips.profit_factor)
+                        else None
+                    ),
+                    "longest_losing_streak": self.round_trips.longest_losing_streak,
+                }
+                if self.round_trips else None
+            ),
             "net_pnl_usd": round(self.net_pnl_usd, 2),
             "gross_pnl_usd": round(self.gross_pnl_usd, 2),
             "win_rate": round(self.stats.win_rate, 1),
@@ -197,9 +233,25 @@ def build_performance_report(
 
     extremes = ta.find_extremes(trades)
     concentration = conc.build(trades)
+
+    # Sample size is counted in POSITIONS, not exit legs. A position that
+    # took a partial profit writes two filled sell rows, so a book with
+    # partials reaches "100 closed trades" before it has placed 100
+    # independent bets - and the gate would open on a record that had not
+    # actually met its own threshold. See app/analysis/round_trips.py.
+    round_trips = group_round_trips(trades)
+    note = round_trips.discrepancy_note()
+    if note is not None:
+        warnings.append(note)
     validation = evaluate(
         ValidationInputs(
-            closed_trades=stats.trade_count,
+            # Round trips, not exit legs: two legs of one position share an
+            # entry, a signal, a token, a regime and a sizing decision, so
+            # they are not two observations. Feeding correlated legs to a
+            # threshold that assumes independent trials errs toward
+            # overconfidence, which is the one direction this gate exists
+            # to prevent.
+            closed_trades=round_trips.count,
             expectancy_usd=stats.expectancy_usd if stats.trade_count else None,
             profit_factor=stats.profit_factor,
             max_drawdown_pct=stats.max_drawdown_pct if stats.trade_count else None,
@@ -237,6 +289,7 @@ def build_performance_report(
         rejections=rejections,
         monte_carlo=monte_carlo,
         concentration=concentration,
+        round_trips=round_trips,
         validation=validation,
         version_counts=version_counts,
         warnings=warnings,

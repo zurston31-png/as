@@ -218,3 +218,87 @@ def test_the_report_writes_nothing(clean_db):
 
     assert clean_db.query(models.Trade).count() == before
     assert not clean_db.new and not clean_db.dirty and not clean_db.deleted
+
+
+# ---------------------------------------------------------------------------
+# sample size is counted in positions, not exit legs
+# ---------------------------------------------------------------------------
+
+def test_the_gate_counts_round_trips_not_exit_legs(clean_db):
+    """The threshold that decides when a record becomes evidence.
+
+    A position that takes a partial writes two filled sell rows, so a book
+    with partials reaches "100 closed trades" before it has placed 100
+    independent bets. The gate would then open on a record that had not
+    met its own threshold - and the two legs of one position share an
+    entry, a signal, a token, a regime and a sizing decision, so they were
+    never two observations to begin with.
+    """
+    for i in range(6):
+        t = _add_trade(clean_db, 5.0)
+        t.position_id = i + 1
+    # One more position, split across a partial and a final close.
+    partial = _add_trade(clean_db, 4.0)
+    partial.position_id = 99
+    final = _add_trade(clean_db, -6.0)
+    final.position_id = 99
+    clean_db.flush()
+
+    report = build_performance_report(clean_db, monte_carlo_simulations=50,
+                                      rng=random.Random(1))
+
+    assert report.stats.trade_count == 8          # exit legs
+    assert report.round_trips.count == 7          # positions
+    sample = next(
+        c for c in report.validation.criteria if c.name == "sample size"
+    )
+    assert "7 closed trades" in sample.detail, (
+        f"the gate is still counting exit legs as trades: {sample.detail!r}"
+    )
+    assert report.round_trips.positions_with_partials == 1
+
+
+def test_the_report_warns_when_legs_and_round_trips_disagree(clean_db):
+    """Silence would be the failure mode: a reader has no way to know the
+    headline count is not the sample size unless the report says so."""
+    partial = _add_trade(clean_db, 4.0)
+    partial.position_id = 1
+    final = _add_trade(clean_db, -6.0)
+    final.position_id = 1
+    clean_db.flush()
+
+    report = build_performance_report(clean_db, monte_carlo_simulations=50,
+                                      rng=random.Random(1))
+    assert any("round trips" in w for w in report.warnings)
+
+
+def test_a_book_with_no_partials_reports_identical_counts(clean_db):
+    """No warning, no change, when every position closed in one go."""
+    for i in range(3):
+        t = _add_trade(clean_db, 5.0)
+        t.position_id = i + 1
+    clean_db.flush()
+
+    report = build_performance_report(clean_db, monte_carlo_simulations=50,
+                                      rng=random.Random(1))
+    assert report.round_trips.count == report.stats.trade_count == 3
+    assert report.round_trips.counts_agree is True
+    assert not any("round trips" in w for w in report.warnings)
+
+
+def test_round_trip_figures_survive_serialisation(clean_db):
+    """An all-winners round-trip book has an infinite profit factor, which
+    is not valid JSON - the same guard the leg-level figure needed."""
+    for i in range(3):
+        t = _add_trade(clean_db, 5.0)
+        t.position_id = i + 1
+    clean_db.flush()
+
+    payload = build_performance_report(
+        clean_db, monte_carlo_simulations=50, rng=random.Random(1)
+    ).as_dict()
+    json.dumps(payload, allow_nan=False)
+
+    assert payload["round_trips"]["count"] == 3
+    assert payload["round_trips"]["profit_factor"] is None
+    assert payload["round_trips"]["win_rate"] == pytest.approx(100.0)

@@ -35,9 +35,23 @@ class PortfolioStats:
     longest_losing_streak: int
 
 
+def _aware(moment: dt.datetime) -> dt.datetime:
+    """Treat a naive timestamp as UTC rather than raising when it meets an
+    aware one.
+
+    SQLite hands back naive datetimes while rows created in the current
+    session are aware, so any list mixing the two - a freshly closed trade
+    alongside reloaded history - could not be sorted at all: the
+    comparison raises TypeError and takes the whole dashboard panel with
+    it. app/analysis/trade_analytics.py already carries this guard for the
+    same reason; this copy is the one that was missing.
+    """
+    return moment if moment.tzinfo else moment.replace(tzinfo=dt.timezone.utc)
+
+
 def _closed_sorted(trades: list[models.Trade]) -> list[models.Trade]:
     closed = [t for t in trades if t.pnl_usd is not None and t.closed_at is not None]
-    return sorted(closed, key=lambda t: t.closed_at)
+    return sorted(closed, key=lambda t: _aware(t.closed_at))
 
 
 @dataclass(frozen=True)

@@ -63,7 +63,25 @@ def print_report(report, db=None) -> None:
     print(RULE)
     print(" RESULTS")
     print(RULE)
-    print(f"  closed trades        {stats.trade_count}")
+    print(f"  closed exit legs     {stats.trade_count}")
+    rt = report.round_trips
+    if rt is not None:
+        # Printed right underneath, because the two being different is the
+        # whole point: the number above counts fills, the number below
+        # counts independent bets, and only the second is a sample size.
+        suffix = "" if rt.counts_agree else "  <- sample size, not the line above"
+        print(f"  round trips          {rt.count}{suffix}")
+        if rt.positions_with_partials:
+            print(f"    of which took a partial exit: {rt.positions_with_partials}")
+        if rt.unattributed_leg_count:
+            print(f"    legs with no position_id (may still overcount): "
+                  f"{rt.unattributed_leg_count}")
+        if not rt.counts_agree:
+            print(f"    position-level win rate  "
+                  f"{rt.win_rate_pct:.1f}%" if rt.win_rate_pct is not None else "")
+            print(f"    position-level expectancy "
+                  f"${rt.expectancy_usd:,.2f}" if rt.expectancy_usd is not None else "")
+            print(f"    longest losing run of POSITIONS: {rt.longest_losing_streak}")
     print(f"  win rate             {stats.win_rate:.1f}%  ({stats.win_count}W / {stats.loss_count}L)")
     print(f"  net P&L              ${_fmt(report.net_pnl_usd)}")
     print(f"  gross P&L (pre-cost) ${_fmt(report.gross_pnl_usd)}")
