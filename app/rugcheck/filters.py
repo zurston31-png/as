@@ -142,9 +142,33 @@ def normalise_pcts(values: list[float]) -> list[float]:
 
 
 def _top10_from(entries: list[dict], pct_key: str) -> float | None:
+    """Top-10 holder share as a 0-1 fraction, or None when it cannot be read.
+
+    Returning None matters more than it looks. The caller treats None as
+    "holder concentration unverifiable" and fails the token closed, but
+    treats a number as a measurement it can compare against
+    MAX_TOP10_HOLDER_PCT. So a holder list whose percentages are missing
+    must NOT come back as 0.0: that is the most reassuring value in the
+    range, and it would wave through exactly the sparse-data case the gate
+    exists to catch. `_to_float(..., 0.0) or 0.0` did precisely that -
+    every unreadable entry silently became a 0% holder.
+
+    An entry present but unreadable is therefore fatal to the whole
+    measurement rather than to itself. CLAUDE.md: a measurement that
+    cannot be taken is recorded as unmeasurable, never as zero.
+    """
     if not entries:
         return None
-    pcts = [_to_float(e.get(pct_key), 0.0) or 0.0 for e in entries]
+    pcts: list[float] = []
+    for entry in entries:
+        pct = _to_float(entry.get(pct_key))
+        if pct is None:
+            logger.warning(
+                "holder entry has no readable %r - treating top-10 concentration "
+                "as unverifiable rather than assuming 0%%", pct_key,
+            )
+            return None
+        pcts.append(pct)
     return sum(normalise_pcts(pcts)[:10])
 
 

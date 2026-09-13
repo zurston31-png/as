@@ -178,6 +178,39 @@ class CostSummary:
         return (self.legs_counted / total * 100) if total else 0.0
 
 
+
+def _costed_notional(t) -> float:
+    """The dollar base that `execution_cost_pct` is a percentage OF.
+
+    Not the same thing as `size_usd`, and the difference is a real
+    misstatement rather than a rounding quibble. The fill model builds a
+    sell as `fill_price = reference_price * (1 - total_cost)`
+    (app/execution/fill_model.py), so the rate describes the SELL, and the
+    dollars it represents are `filled_qty * exit_price`. But a sell leg
+    records `size_usd = qty * entry_price` - the cost basis, which is what
+    the reconciler and the buy side want. Multiplying the sell's cost rate
+    by the entry notional prices the exit as though it happened at the
+    entry price.
+
+    On a winner that understates the exit cost, on a loser it overstates
+    it, and both errors run in the direction that flatters the strategy:
+    the trades that made money look cheaper to trade than they were. Since
+    these totals are what "does the edge survive costs?" is judged on, the
+    bias landed exactly where it does the most damage.
+
+    A buy leg is unaffected - there `size_usd` IS the traded notional.
+    """
+    if t.side == "sell":
+        exit_notional = (t.qty or 0.0) * (t.exit_price or 0.0)
+        if exit_notional:
+            return exit_notional
+        # No usable exit fill: size_usd is the entry notional and would be
+        # the wrong base, so report the leg as unmeasured rather than
+        # quietly substituting it. CLAUDE.md: unmeasurable is never zero.
+        return 0.0
+    return t.size_usd or ((t.qty or 0.0) * (t.entry_price or 0.0))
+
+
 def summarize_costs(trades: list[models.Trade]) -> CostSummary:
     """Total what execution cost across every filled leg, buys and sells.
 
@@ -220,7 +253,7 @@ def summarize_costs(trades: list[models.Trade]) -> CostSummary:
         # counting as covered - understating costs and reporting 100%
         # coverage while doing it, which is the precise failure this module
         # exists to avoid. Such a leg is counted as unmeasured instead.
-        notional = t.size_usd or ((t.qty or 0.0) * (t.exit_price or t.entry_price or 0.0))
+        notional = _costed_notional(t)
         if not notional:
             missing += 1
             continue

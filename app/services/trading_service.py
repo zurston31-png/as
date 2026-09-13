@@ -974,6 +974,18 @@ async def _close_position(db: Session, position: models.Position, reason: str, s
     trade.fill_estimated_from_quote = result.fill_estimated_from_quote
     db.add(trade)
 
+    # Fold the final leg in too. partial_close_position already adds its
+    # leg to this running total, but the closing leg used to be recorded
+    # only on the Trade row - so a position that took a partial and then
+    # closed carried a realized_pnl_usd holding just the partial.
+    #
+    # Reports that sum the exit legs themselves were right and hid it;
+    # app/analysis/postmortem.py reads position.realized_pnl_usd directly
+    # and was not. Two reports over the same position could therefore
+    # disagree, and the postmortem's answer was the flattering one
+    # whenever the partial banked a profit the final close gave back.
+    position.realized_pnl_usd = (position.realized_pnl_usd or 0.0) + pnl_usd
+
     position.status = models.PositionStatus.CLOSED.value
     position.closed_at = now
     position.close_reason = reason
@@ -1047,6 +1059,23 @@ async def _partial_close_position(
     if qty_to_sell <= 0:
         return
 
+    # Read the COMMITTED flag, not the attribute. The exit manager has
+    # already set position.partial_exit_taken = True on the live object by
+    # the time it calls in here, so the attribute cannot distinguish "this
+    # pass just claimed the partial" from "an earlier partial really did
+    # fill". The committed row can, and the failure path below needs that
+    # distinction to know whether it is entitled to hand the partial back.
+    #
+    # A column query rather than db.refresh() for the reason documented in
+    # _close_position: refresh() reloads the whole row and would discard
+    # the very flag being inspected. SessionLocal is autoflush=False, so
+    # this sees committed state.
+    taken_before = bool(
+        db.query(models.Position.partial_exit_taken)
+        .filter(models.Position.id == position.id)
+        .scalar()
+    )
+
     instrument = _instrument_id(position.symbol, position.token_address)
     client = get_execution_client()
     result = await client.sell(instrument, qty_to_sell, settings.SLIPPAGE_BPS)
@@ -1067,6 +1096,22 @@ async def _partial_close_position(
         trade.status = models.TradeStatus.FAILED.value
         trade.error = result.error
         db.add(trade)
+        # Give the partial back. The exit manager sets
+        # partial_exit_taken BEFORE calling in here, so that one evaluation
+        # pass cannot fire the same partial twice - but that flag is on a
+        # live ORM object, and the monitor commits at the end of every
+        # pass. Leaving it set after a failed sell therefore PERSISTS
+        # "already taken" for a partial that never happened, and the
+        # position can never take it again: one transient fill failure
+        # silently disables profit-taking for the rest of that trade's
+        # life.
+        #
+        # Only reset what this call claimed. A position that genuinely
+        # took a partial earlier keeps its flag, because that earlier
+        # success set it in the committed row and `taken_before` reads
+        # True here.
+        if not taken_before:
+            position.partial_exit_taken = False
         await notifier.notify_error(f"Partial sell failed for {position.symbol} ({reason}): {result.error}")
         return
 

@@ -18,6 +18,7 @@ from app.rugcheck.filters import (
     estimate_dev_holder_pct,
     evaluate_snapshot,
     evaluate_token_security,
+    _top10_from,
     normalise_pcts,
     read_flag,
     snapshot_from_goplus,
@@ -360,3 +361,67 @@ def test_thresholds_come_from_settings(monkeypatch):
     report = evaluate_snapshot(snapshot_from_goplus("solana", data))
     assert not report.passed
     assert any("top 10 holders" in r for r in report.reasons)
+
+
+# ---------------------------------------------------------------------------
+# holder concentration must not read missing data as safe data
+# ---------------------------------------------------------------------------
+
+def test_holders_with_no_readable_percentage_are_unverifiable_not_zero():
+    """The fail-open this gate exists to prevent.
+
+    `_to_float(entry.get(pct_key), 0.0) or 0.0` turned every unreadable
+    holder entry into a 0% holder, so a response that listed holders but
+    carried no percentages summed to exactly 0.0 - the most reassuring
+    value in the range. evaluate_snapshot only fails a token closed when
+    top10_pct is None, so that 0.0 sailed through the concentration check
+    as a measured result.
+
+    The direction is what makes it serious rather than untidy: sparse or
+    malformed holder data is exactly the shape a scam token's data tends
+    to arrive in, and the bug converted it into the strongest possible
+    evidence of safety. CLAUDE.md: a measurement that cannot be taken is
+    recorded as unmeasurable, never as zero.
+    """
+    entries = [{"address": f"holder{i}"} for i in range(10)]   # no "pct" at all
+    assert _top10_from(entries, "pct") is None
+
+
+def test_one_unreadable_holder_makes_the_whole_measurement_unverifiable():
+    """Partial data cannot be summed into a trustworthy total.
+
+    Dropping the unreadable entry and summing the rest would understate
+    concentration by however much that holder owns - which is unknown,
+    and could be all of it. There is no safe way to fill the gap, so the
+    measurement is refused rather than approximated.
+    """
+    entries = [
+        {"address": "a", "pct": 5.0},
+        {"address": "b", "pct": None},      # present, unreadable
+        {"address": "c", "pct": 5.0},
+    ]
+    assert _top10_from(entries, "pct") is None
+
+
+def test_a_genuine_zero_percent_holder_is_still_a_measurement():
+    """0 is only wrong when it stands in for unknown.
+
+    A holder whose share really is reported as zero is data, and must keep
+    being summed as data - otherwise the fix trades a fail-open for a
+    fail-closed that rejects healthy tokens.
+    """
+    entries = [{"address": "a", "pct": 0.0}, {"address": "b", "pct": 10.0}]
+    assert _top10_from(entries, "pct") == pytest.approx(0.10)
+
+
+def test_a_token_with_unreadable_holders_fails_the_security_gate_closed():
+    """End to end: the parser's None must reach the verdict as a refusal."""
+    data = goplus_solana()
+    data["holders"] = [{"account": f"h{i}"} for i in range(10)]   # no "percent"
+    snap = snapshot_from_goplus("solana", data)
+
+    assert snap.top10_pct is None
+    report = evaluate_snapshot(snap)
+    assert not report.passed
+    assert any("could not verify" in r and "holder concentration" in r
+               for r in report.reasons)

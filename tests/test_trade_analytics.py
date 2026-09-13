@@ -17,10 +17,11 @@ NOW = dt.datetime(2026, 8, 19, 12, 0, tzinfo=dt.timezone.utc)
 def _trade(
     pnl=None, *, symbol="TESTCOIN", opened_hours_ago=6.0, closed_hours_ago=0.0,
     fee=None, cost_pct=None, delay=None, size=100.0, side="sell",
+    qty=None, exit_price=None,
     status=models.TradeStatus.FILLED.value, signal_id=None, close_reason=None,
     version="v-aaaa1111", pnl_pct=None,
 ) -> models.Trade:
-    return models.Trade(
+    trade = models.Trade(
         symbol=symbol, side=side, status=status, size_usd=size,
         pnl_usd=pnl, pnl_pct=pnl_pct,
         opened_at=NOW - dt.timedelta(hours=opened_hours_ago),
@@ -28,6 +29,28 @@ def _trade(
         fee_usd=fee, execution_cost_pct=cost_pct, fill_delay_seconds=delay,
         signal_id=signal_id, close_reason=close_reason, strategy_version=version,
     )
+    # UPDATED, not loosened: no assertion in this file changed, only the
+    # realism of the row underneath them.
+    #
+    # A sell leg used to be built with size_usd alone, which no real sell
+    # leg ever is - app/services/trading_service.py sets trade.qty and
+    # trade.exit_price on every filled sell, in both the full-close and
+    # partial-close paths. The omission stopped mattering the moment
+    # summarize_costs started pricing a sell's execution cost off its EXIT
+    # fill instead of off size_usd (which on a sell is the entry cost
+    # basis, not the traded notional). Without qty and exit_price these
+    # legs then priced at $0 and were reported unmeasured.
+    #
+    # Defaults are chosen so exit notional == size, keeping every existing
+    # expectation arithmetically identical. Tests that want entry and exit
+    # notionals to DIFFER set exit_price themselves.
+    if side == "sell" and exit_price is None and size:
+        trade.qty = 1.0
+        trade.exit_price = size
+    elif exit_price is not None:
+        trade.qty = qty if qty is not None else 1.0
+        trade.exit_price = exit_price
+    return trade
 
 
 # ---------------------------------------------------------------------------
@@ -410,3 +433,69 @@ def test_a_leg_priced_from_qty_is_still_counted():
     costs = ta.summarize_costs([trade])
     assert costs.legs_counted == 1
     assert costs.total_execution_cost_usd == pytest.approx(0.1)
+
+
+def test_a_sells_execution_cost_is_priced_off_the_exit_not_the_entry():
+    """A sell's cost rate describes the SELL, so its dollars are qty x exit.
+
+    This is the regression test for a real misstatement. A sell leg records
+    `size_usd = qty * entry_price` (the cost basis - what the reconciler
+    and the buy side want), but the fill model builds a sell as
+    `fill_price = reference_price * (1 - total_cost)`, so
+    `execution_cost_pct` is a fraction of the EXIT price. Multiplying the
+    two together priced the exit as though it had happened at the entry
+    price.
+
+    The bias is not symmetric in the way that matters: it understates cost
+    on winners and overstates it on losers, so the trades that made money
+    looked cheaper to trade than they were - in a report whose entire
+    purpose is deciding whether the edge survives costs.
+
+    A doubling here is not an exaggerated fixture. It is one 2x memecoin
+    trade, and the whole recorded profit currently rests on four of them.
+    """
+    # Bought $100 worth, sold it for $200, paid 2% to get out.
+    trade = _trade(pnl=100.0, fee=0.0, cost_pct=0.02, size=100.0,
+                   qty=2.0, exit_price=100.0)
+    assert trade.size_usd == 100.0                       # entry cost basis
+    assert trade.qty * trade.exit_price == 200.0         # what was actually sold
+
+    costs = ta.summarize_costs([trade])
+    assert costs.total_execution_cost_usd == pytest.approx(4.0)   # 2% of $200
+    assert costs.total_execution_cost_usd != pytest.approx(2.0)   # not 2% of $100
+    assert costs.avg_execution_cost_pct == pytest.approx(0.02)
+    assert costs.legs_counted == 1
+
+
+def test_a_buy_legs_cost_still_prices_off_size_usd():
+    """The exit-price rule is for sells only.
+
+    On a buy there is no exit fill, and size_usd IS the traded notional.
+    Pinning this stops a future "simplification" applying the sell rule to
+    both sides and zeroing every buy leg's cost.
+    """
+    trade = _trade(pnl=None, fee=0.10, cost_pct=0.01, size=250.0, side="buy")
+    trade.entry_price = 5.0
+    trade.qty = 50.0
+
+    costs = ta.summarize_costs([trade])
+    assert costs.total_execution_cost_usd == pytest.approx(2.5)   # 1% of $250
+    assert costs.legs_counted == 1
+
+
+def test_a_sell_with_no_exit_fill_is_unmeasured_rather_than_priced_off_entry():
+    """Falling back to size_usd would silently reintroduce the bug.
+
+    A sell missing its exit fill has no correct notional available. Using
+    the entry cost basis would produce a confident wrong number; reporting
+    the leg as unmeasured is the behaviour CLAUDE.md requires.
+    """
+    trade = _trade(pnl=10.0, fee=0.25, cost_pct=0.02, size=100.0)
+    trade.qty = None
+    trade.exit_price = None
+
+    costs = ta.summarize_costs([trade])
+    assert costs.legs_counted == 0
+    assert costs.legs_missing_cost_data == 1
+    assert costs.cost_data_complete is False
+    assert costs.total_execution_cost_usd == pytest.approx(0.0)

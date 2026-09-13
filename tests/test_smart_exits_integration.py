@@ -155,3 +155,53 @@ def test_position_monitor_tick_triggers_partial_exit_then_a_later_full_close(_pa
         position_monitor.exit_manager = original_exit_manager
         for name, value in original.items():
             setattr(settings, name, value)
+
+
+def test_a_positions_realized_pnl_covers_every_exit_leg_not_just_the_partial(_patch_price):
+    """position.realized_pnl_usd must be the whole round trip.
+
+    partial_close_position added its leg to this running total; the final
+    close recorded its P&L only on the Trade row. So a position that took
+    a partial and then closed carried a realized_pnl_usd holding just the
+    partial's contribution.
+
+    Reports that sum the exit legs themselves were unaffected, which is
+    why the suite stayed green - but app/analysis/postmortem.py reads
+    position.realized_pnl_usd directly, so two reports over the same
+    position could disagree. The disagreement was not neutral: it favoured
+    the partial, so a trade that banked a small gain and then gave back
+    more on the close looked profitable in the postmortem.
+    """
+    import asyncio
+    from app.services.trading_service import close_position
+
+    db = SessionLocal()
+    try:
+        pos = _open_position(db, "WHOLECOIN")
+
+        asyncio.run(partial_close_position(db, pos, fraction=0.5, reason="partial"))
+        db.commit()
+        after_partial = pos.realized_pnl_usd
+        assert after_partial != 0.0
+
+        asyncio.run(close_position(db, pos, reason="final close"))
+        db.commit()
+
+        assert pos.status == models.PositionStatus.CLOSED.value
+
+        legs = (
+            db.query(models.Trade)
+            .filter_by(symbol="WHOLECOIN", side="sell", status="filled")
+            .all()
+        )
+        assert len(legs) == 2, "expected a partial leg and a closing leg"
+        summed = sum(t.pnl_usd for t in legs if t.pnl_usd is not None)
+
+        assert pos.realized_pnl_usd == pytest.approx(summed), (
+            "position realized P&L does not match the sum of its exit legs"
+        )
+        assert pos.realized_pnl_usd != pytest.approx(after_partial), (
+            "the closing leg was never added to the position's realized P&L"
+        )
+    finally:
+        db.close()

@@ -51,6 +51,19 @@ def _add_trade(db, pnl, *, version="v-test0001", fee=0.25, cost_pct=0.006,
         close_reason=reason, strategy_version=version,
         signal_id=signal.id if signal else None,
     )
+    # UPDATED, not loosened: every assertion in this file is unchanged.
+    #
+    # summarize_costs prices a SELL leg's execution cost off its exit fill
+    # (qty x exit_price), because that is what execution_cost_pct is a
+    # fraction of - size_usd on a sell is the entry cost basis. Every real
+    # sell leg carries qty and exit_price
+    # (app/services/trading_service.py); this fixture did not, so its legs
+    # priced at $0 once the analytics stopped using the wrong notional.
+    #
+    # qty x exit_price is set equal to size_usd here, which keeps the
+    # existing expected cost figures exactly as they were.
+    trade.qty = 1.0
+    trade.exit_price = 100.0
     db.add(trade)
     return trade
 

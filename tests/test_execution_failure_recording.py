@@ -197,3 +197,65 @@ async def test_a_failed_partial_exit_records_and_keeps_the_whole_position(
     assert refreshed.qty == pytest.approx(100.0), "a failed partial still reduced the position"
     assert refreshed.status == models.PositionStatus.OPEN.value
     assert captured_errors, "a failed partial exit sent no alert"
+
+
+async def test_a_failed_partial_exit_gives_the_partial_back(
+    clean_db, refusing_client, captured_errors
+):
+    """A failed partial must stay eligible, or profit-taking dies silently.
+
+    The exit manager sets position.partial_exit_taken = True BEFORE calling
+    the sell, so a single evaluation pass cannot fire the same partial
+    twice. That is correct on the success path. On the failure path it was
+    a trap: the flag lives on a live ORM object and the position monitor
+    commits at the end of every pass
+    (app/monitor/position_monitor.py), so "already taken" was persisted
+    for a partial that never executed. The position could then never take
+    its partial again - one transient fill failure disabled profit-taking
+    for the remaining life of that trade, with nothing in the logs saying
+    the strategy had changed.
+
+    The sibling test above pins that quantity and status survive a failed
+    partial. This pins that the OPPORTUNITY survives it, which is the part
+    that was broken.
+    """
+    position = _open_position(clean_db)
+    # What ExitManager.evaluate() does immediately before dispatching.
+    position.partial_exit_taken = True
+
+    await trading_service._partial_close_position(
+        clean_db, position, 0.5, "take partial profit", signal_id=None
+    )
+    clean_db.commit()
+
+    refreshed = clean_db.get(models.Position, position.id)
+    assert refreshed.partial_exit_taken is False, (
+        "a failed partial exit consumed the position's one partial"
+    )
+    assert refreshed.qty == pytest.approx(100.0)
+    assert refreshed.status == models.PositionStatus.OPEN.value
+
+
+async def test_a_failed_partial_does_not_revive_one_that_already_succeeded(
+    clean_db, refusing_client, captured_errors
+):
+    """The rollback must only return what this call claimed.
+
+    A position whose partial genuinely filled earlier has the flag set in
+    its COMMITTED row. If a later failed partial reset that, the position
+    would take a second partial it was never entitled to - turning a fix
+    for lost profit-taking into a source of unintended extra exits.
+    """
+    position = _open_position(clean_db)
+    position.partial_exit_taken = True
+    clean_db.commit()          # the earlier partial really did happen
+
+    await trading_service._partial_close_position(
+        clean_db, position, 0.5, "take partial profit", signal_id=None
+    )
+    clean_db.commit()
+
+    refreshed = clean_db.get(models.Position, position.id)
+    assert refreshed.partial_exit_taken is True, (
+        "a failed partial handed back a partial that had already been used"
+    )
