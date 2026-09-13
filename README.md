@@ -42,12 +42,16 @@ with the package. VALORANT runs on Windows, so that comes first.
 `&&` as a separator, and the command is `python`, not `python3`:
 
 ```powershell
-git clone https://github.com/zurston31-png/as.git
+git clone -b claude/valorant-gameplay-agent-5f9fgk https://github.com/zurston31-png/as.git
 cd as
 python -m valcoach demo
 python -m valcoach demo --html review.html
 start review.html
 ```
+
+The `-b` matters: the code lives on that branch, and a plain `git clone` checks
+out `main`, which has nothing in it but this README. Already cloned without it?
+Run `git checkout claude/valorant-gameplay-agent-5f9fgk`.
 
 If `python` is not recognised, use `py` instead (`py -m valcoach demo`). If
 neither exists, install Python from <https://python.org/downloads> and tick
@@ -56,7 +60,8 @@ neither exists, install Python from <https://python.org/downloads> and tick
 **macOS / Linux**
 
 ```bash
-git clone https://github.com/zurston31-png/as.git && cd as
+git clone -b claude/valorant-gameplay-agent-5f9fgk \
+    https://github.com/zurston31-png/as.git && cd as
 python3 -m valcoach demo
 python3 -m valcoach demo --html review.html && open review.html
 ```
