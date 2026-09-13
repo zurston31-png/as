@@ -36,12 +36,29 @@ deaths as evidence and a drill for each one.
 ## Try it right now
 
 No account, no API key, no network — runs against synthetic matches bundled
-with the package:
+with the package. VALORANT runs on Windows, so that comes first.
+
+**Windows (PowerShell)** — one command per line; PowerShell 5.1 does not accept
+`&&` as a separator, and the command is `python`, not `python3`:
+
+```powershell
+git clone https://github.com/zurston31-png/as.git
+cd as
+python -m valcoach demo
+python -m valcoach demo --html review.html
+start review.html
+```
+
+If `python` is not recognised, use `py` instead (`py -m valcoach demo`). If
+neither exists, install Python from <https://python.org/downloads> and tick
+"Add python.exe to PATH".
+
+**macOS / Linux**
 
 ```bash
 git clone https://github.com/zurston31-png/as.git && cd as
 python3 -m valcoach demo
-python3 -m valcoach demo --html review.html   # and open review.html
+python3 -m valcoach demo --html review.html && open review.html
 ```
 
 [Here is that HTML report, published](https://claude.ai/code/artifact/9193be24-1176-411e-b569-2d1dabd7153f)
@@ -49,12 +66,17 @@ python3 -m valcoach demo --html review.html   # and open review.html
 
 ## Install
 
-```bash
+Running `python -m valcoach` from the repo folder needs no install at all. To
+get a `valcoach` command you can run from anywhere:
+
+```powershell
 pip install -e .                  # core tool, zero dependencies
 pip install -e ".[coach]"         # plus written coaching from Claude
 ```
 
-Then `valcoach` is on your path (or use `python3 -m valcoach` anywhere).
+The rest of this README writes commands as `valcoach ...`. Without the install,
+prefix them with `python -m` (Windows) or `python3 -m` (macOS/Linux) and run
+them from the repo folder.
 
 ## Point it at your matches
 
@@ -72,7 +94,7 @@ You need a source of match data. Pick one:
    <https://docs.henrikdev.xyz/valorant/api-reference>.
 2. Save it:
 
-```bash
+```powershell
 valcoach init --riot-id "YourName#TAG" --region eu --henrik-key YOUR_KEY
 valcoach sync --count 10
 valcoach analyze
@@ -80,13 +102,15 @@ valcoach analyze
 
 Regions: `na`, `eu`, `ap`, `kr`, `br`, `latam`.
 
-### Local game client (no key)
+### Local game client (no key, Windows)
 
-Start VALORANT, sign in, then:
+This is the native path on a machine you actually play on. Start VALORANT, sign
+in, then in PowerShell:
 
-```bash
+```powershell
 valcoach init --riot-id "YourName#TAG" --provider local --region na
 valcoach sync
+valcoach analyze
 ```
 
 It reads the Riot Client `lockfile` to authenticate against the local API, then
@@ -97,7 +121,7 @@ sent anywhere.
 
 Death locations are game coordinates until you download Riot's map data once:
 
-```bash
+```powershell
 valcoach assets     # from valorant-api.com; adds "A Main", "Heaven", ...
 ```
 
@@ -105,7 +129,7 @@ Without it, reports still cluster your deaths and report them by coordinates.
 
 ## Everyday use
 
-```bash
+```powershell
 valcoach sync                       # pull new matches
 valcoach analyze --last 10          # the full review
 valcoach analyze --html review.html # ... and a shareable HTML page
@@ -165,12 +189,14 @@ With the `coach` extra installed and credentials available, `--coach` (or the
 review: verdict, the one thing to fix first, the pattern in how you die, what is
 working, a practice plan, and three in-game cues.
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...     # or: ant auth login
+```powershell
+$env:ANTHROPIC_API_KEY = "sk-ant-..."   # PowerShell; or run: ant auth login
 valcoach coach --last 10
 valcoach coach --focus economy
 valcoach coach --question "should I stop playing Jett?"
 ```
+
+On macOS/Linux that first line is `export ANTHROPIC_API_KEY=sk-ant-...`.
 
 The model is told to use only the data it is given and never to invent a stat —
 it is writing up the analysis, not doing it. The structured report is identical
@@ -195,7 +221,8 @@ Every review is stored. The next one shows what moved:
 
 ## Where your data lives
 
-Everything is local, in `~/.valcoach` (override with `VALCOACH_HOME`):
+Everything is local, in `%USERPROFILE%\.valcoach` on Windows or `~/.valcoach`
+elsewhere (override with `VALCOACH_HOME`):
 
 - `valcoach.db` — SQLite. Stores the **raw provider payload** for every match
   plus normalized tables derived from it. Because the raw payload is kept,
@@ -252,9 +279,9 @@ watcher.py                        poll for new matches, review them as they land
 
 ## Development
 
-```bash
-python3 -m unittest discover -s tests -t .    # 162 tests, no network needed
-python3 tools/make_fixture.py --count 5 --out valcoach/fixtures/demo_matches.json
+```powershell
+python -m unittest discover -s tests -t .     # 167 tests, no network needed
+python tools/make_fixture.py --count 5 --out valcoach/fixtures/demo_matches.json
 ```
 
 Adding a detector: write a function in `valcoach/analysis/detectors.py` that

@@ -8,6 +8,7 @@ import os
 import contextlib
 import tempfile
 import unittest
+import unittest.mock
 
 from valcoach.cli import main
 from valcoach.render.html import render_html
@@ -355,3 +356,40 @@ class TestFindingCopy(unittest.TestCase):
 
     def test_demo_data_now_records_assists(self):
         self.assertGreater(self.report.metrics.assists, 0)
+
+
+class TestWindowsColor(unittest.TestCase):
+    """Windows consoles need VT processing switched on, or colour is garbage."""
+
+    def test_non_windows_is_always_capable(self):
+        from valcoach.render.text import enable_windows_ansi
+
+        self.assertTrue(enable_windows_ansi())
+
+    def test_modern_windows_terminal_is_trusted(self):
+        import valcoach.render.text as text
+
+        with unittest.mock.patch.object(os, "name", "nt"), \
+                unittest.mock.patch.dict(os.environ, {"WT_SESSION": "1"}):
+            self.assertTrue(text.enable_windows_ansi())
+
+    def test_console_that_refuses_vt_falls_back_to_monochrome(self):
+        import valcoach.render.text as text
+
+        with unittest.mock.patch.object(os, "name", "nt"), \
+                unittest.mock.patch.dict(os.environ, {}, clear=True):
+            # No ctypes.windll on this platform, so the probe fails -> no colour.
+            self.assertFalse(text.enable_windows_ansi())
+            self.assertFalse(text.use_color(True))
+            self.assertFalse(text.use_color())
+
+    def test_explicit_false_still_wins(self):
+        from valcoach.render.text import use_color
+
+        self.assertFalse(use_color(False))
+
+    def test_no_color_env_is_respected(self):
+        from valcoach.render.text import use_color
+
+        with unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(use_color())

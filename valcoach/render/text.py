@@ -34,12 +34,42 @@ SEVERITY_LABEL = {
 }
 
 
+def enable_windows_ansi() -> bool:
+    """Switch on VT processing so ANSI colour renders in a Windows console.
+
+    Windows consoles ignore ANSI escapes unless the process asks for them, and
+    Python does not ask. Without this, a classic console window shows the escape
+    codes as literal garbage (``<-[96mTHE NUMBERS``) instead of colour. Returns
+    False when the terminal cannot do it, which is the signal to go monochrome.
+    """
+    if os.name != "nt":
+        return True
+    if os.environ.get("WT_SESSION") or os.environ.get("TERM_PROGRAM"):
+        return True                      # Windows Terminal and friends: already on
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32            # type: ignore[attr-defined]
+        handle = kernel32.GetStdHandle(-11)          # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        enable_vt = 0x0004                           # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if mode.value & enable_vt:
+            return True
+        return bool(kernel32.SetConsoleMode(handle, mode.value | enable_vt))
+    except Exception:  # noqa: BLE001 - any failure means "no colour", not a crash
+        return False
+
+
 def use_color(explicit: Optional[bool] = None) -> bool:
     if explicit is not None:
-        return explicit
+        return explicit and enable_windows_ansi()
     if os.environ.get("NO_COLOR"):
         return False
-    return sys.stdout.isatty()
+    if not sys.stdout.isatty():
+        return False
+    return enable_windows_ansi()
 
 
 class Painter:
