@@ -297,3 +297,65 @@ class TestRunDetectors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLocationClaims(unittest.TestCase):
+    """Never assert "mostly around X" unless X actually repeats in the data."""
+
+    def _sniper_match(self, same_place: bool):
+        match = make_match()
+        for i in range(14):
+            add_round(match, i)
+            # Same spot every time, or scattered.
+            pos = (100.0, 100.0) if same_place else (i * 9_000.0, i * 7_000.0)
+            add_kill(match, i, 12_000, "foe1", ME, weapon="Operator",
+                     victim_pos=pos)
+        return match
+
+    def test_scattered_sniper_deaths_name_no_place(self):
+        from valcoach.analysis.detectors import detect_weapon_matchups
+
+        findings = detect_weapon_matchups(build_input(self._sniper_match(False)))
+        sniper = next(f for f in findings if f.id == "sniper_deaths")
+        self.assertNotIn("mostly around", sniper.summary)
+
+    def test_repeated_sniper_deaths_do_name_the_place(self):
+        from valcoach.analysis.detectors import detect_weapon_matchups
+        from valcoach.maps import MapIndex
+
+        data = build_input(self._sniper_match(True))
+        # With callouts loaded the repeated position resolves to a name.
+        data.map_index = MapIndex({"maps": {"Ascent": {"callouts": [
+            {"region": "Main", "super_region": "A",
+             "location": {"x": 100, "y": 100}}]}}})
+        contexts = build_contexts(
+            [self._sniper_match(True)], ME, 4000, data.map_index
+        )
+        data.deaths = [d for c in contexts for d in c.deaths]
+        sniper = next(
+            f for f in detect_weapon_matchups(data) if f.id == "sniper_deaths"
+        )
+        self.assertIn("mostly around A Main", sniper.summary)
+
+    def test_nemesis_place_claim_needs_a_repeat(self):
+        from valcoach.analysis.detectors import detect_nemesis
+
+        match = make_match()
+        for i in range(14):
+            add_round(match, i)
+            add_kill(match, i, 12_000, "foe1", ME,
+                     victim_pos=(i * 9_000.0, i * 7_000.0))
+        finding = detect_nemesis(build_input(match))[0]
+        self.assertNotIn("keep getting you around", finding.fix)
+
+    def test_repeated_spot_reports_how_tight_the_cluster_is(self):
+        from valcoach.analysis.detectors import detect_repeated_spots
+
+        match = make_match()
+        for i in range(10):
+            add_round(match, i)
+            add_kill(match, i, 12_000, "foe1", ME,
+                     victim_pos=(100.0 + i * 60, 100.0))
+        finding = detect_repeated_spots(build_input(match))[0]
+        self.assertIn("circle at", finding.summary)
+        self.assertRegex(finding.summary, r"inside a \d+m circle")

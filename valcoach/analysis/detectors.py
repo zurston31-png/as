@@ -129,6 +129,20 @@ class DetectorInput:
         return "low"
 
 
+def _repeated_place(deaths: Sequence[DeathContext], minimum: int = 2) -> str:
+    """The place these deaths share, or "" when they do not share one.
+
+    Without downloaded callout data every position is a unique coordinate
+    string, so "mostly around (x, y)" would assert a pattern that is not in the
+    data. Requiring a real repeat keeps the claim honest either way.
+    """
+    places = Counter(d.place for d in deaths if d.place)
+    if not places:
+        return ""
+    place, count = places.most_common(1)[0]
+    return place if count >= minimum else ""
+
+
 def _severity(value: float, benchmark: float, worse_is_higher: bool,
               high_at: float, critical_at: float) -> Optional[str]:
     """Grade how far past the benchmark a value is (as a multiple of the gap)."""
@@ -327,7 +341,12 @@ def detect_repeated_spots(data: DetectorInput) -> List[Finding]:
             if cluster.size < threshold:
                 continue
             members = [deaths[i] for i in cluster.members]
-            place = members[0].place or f"({int(cluster.x)}, {int(cluster.y)})"
+            named = _repeated_place(members, minimum=2)
+            place = (
+                f"around {named}" if named
+                else f"inside a {max(1, round(cluster.radius / 100))}m circle at "
+                     f"({int(cluster.x)}, {int(cluster.y)})"
+            )
             sides = Counter(d.side for d in members)
             side = sides.most_common(1)[0][0]
             severity = "high" if cluster.size >= threshold + 2 else "medium"
@@ -341,8 +360,8 @@ def detect_repeated_spots(data: DetectorInput) -> List[Finding]:
                     benchmark=float(threshold),
                     unit="deaths in one spot",
                     summary=(
-                        f"{cluster.size} deaths clustered around {place} on "
-                        f"{map_name}, mostly on {side}."
+                        f"{cluster.size} deaths on {map_name} {place}, "
+                        f"mostly on {side}."
                     ),
                     why=(
                         "Repeating the same position means the enemy has already "
@@ -372,7 +391,7 @@ def detect_nemesis(data: DetectorInput) -> List[Finding]:
         return []
     theirs = [d for d in data.deaths if d.killer_name == name]
     weapons = Counter(d.weapon for d in theirs).most_common(2)
-    places = Counter(d.place for d in theirs if d.place).most_common(2)
+    place = _repeated_place(theirs)
     return [
         Finding(
             id="nemesis",
@@ -394,8 +413,7 @@ def detect_nemesis(data: DetectorInput) -> List[Finding]:
                 "Change the pattern they are reading: different entry timing, a "
                 "different angle, or make a teammate take that duel while you "
                 "cover the trade."
-                + (f" They got you around {places[0][0]} most often."
-                   if places else "")
+                + (f" They keep getting you around {place}." if place else "")
             ),
             sample=_sample(m.deaths, "death"),
             confidence=data.confidence_for(m.deaths),
@@ -962,7 +980,7 @@ def detect_weapon_matchups(data: DetectorInput) -> List[Finding]:
     findings: List[Finding] = []
     ops = [d for d in data.deaths if d.weapon_kind == "sniper"]
     if len(ops) >= int(data.bench("operator_deaths")):
-        places = Counter(d.place for d in ops if d.place).most_common(2)
+        place = _repeated_place(ops)
         findings.append(
             Finding(
                 id="sniper_deaths",
@@ -974,7 +992,7 @@ def detect_weapon_matchups(data: DetectorInput) -> List[Finding]:
                 unit="deaths to snipers",
                 summary=(
                     f"{len(ops)} deaths to a sniper"
-                    + (f", mostly around {places[0][0]}" if places else "")
+                    + (f", mostly around {place}" if place else "")
                     + "."
                 ),
                 why=(
