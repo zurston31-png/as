@@ -96,7 +96,25 @@
 <div class="card">
   <h2>Results</h2>
   <div class="grid">
-    <div class="stat"><div class="k">Closed trades</div><div class="v">{{ r.stats.trade_count }}</div></div>
+    {# Both units, side by side. trade_count counts EXIT LEGS - a position that
+       took a partial profit writes two of them - while the sample size every
+       statistic below rests on is round trips. Showing only the first was how
+       "100 closed trades" could read as 100 independent bets when it was not.
+       See app/analysis/round_trips.py. #}
+    <div class="stat"><div class="k">Closed exit legs</div><div class="v">{{ r.stats.trade_count }}</div></div>
+    {% if r.round_trips %}
+    <div class="stat">
+      <div class="k">Round trips <span class="muted" style="font-size:11px">(sample size)</span></div>
+      <div class="v">{{ r.round_trips.count }}</div>
+      {% if not r.round_trips.counts_agree %}
+        <div class="muted" style="font-size:12px">
+          {{ r.round_trips.positions_with_partials }} position(s) took a partial exit
+          {%- if r.round_trips.unattributed_leg_count %},
+          {{ r.round_trips.unattributed_leg_count }} leg(s) unattributed{% endif %}
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
     <div class="stat"><div class="k">Win rate</div><div class="v">{{ '%.1f' % r.stats.win_rate }}%
       <span class="muted" style="font-size:12px">({{ r.stats.win_count }}W/{{ r.stats.loss_count }}L)</span></div></div>
     <div class="stat"><div class="k">Net P&amp;L</div>
