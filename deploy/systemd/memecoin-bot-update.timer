@@ -1,0 +1,18 @@
+[Unit]
+Description=Check for memecoin bot updates every 15 minutes
+
+[Timer]
+# First check shortly after boot, then every 15 minutes.
+OnBootSec=5min
+OnUnitActiveSec=15min
+
+# Spread the check so every host running this does not hit GitHub on the
+# same second, and so a restart does not land on a predictable boundary.
+RandomizedDelaySec=120
+
+# If the box was off when a check was due, run once on the next boot
+# rather than skipping silently.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

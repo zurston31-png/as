@@ -1,0 +1,16 @@
+# Extra dependencies needed ONLY for LIVE_TRADING=true.
+#
+# - solders / solana / base58: sign and submit Jupiter swaps on Solana
+# - ccxt: unified client for CEX execution (Binance/Coinbase/Kraken/...)
+# - web3: EVM RPC access for the experimental 1inch execution backend
+#
+# Install with:
+#   pip install -r requirements.txt -r requirements-live.txt
+
+-r requirements.txt
+
+solders==0.21.0
+solana==0.34.3
+base58==2.1.1
+ccxt==4.4.19
+web3==7.2.0

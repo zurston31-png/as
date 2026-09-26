@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="20">
+<title>Memecoin Bot Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: .03em; }
+  .badge.live { background: rgba(255,92,122,.15); color: var(--red); }
+  .badge.paper { background: rgba(91,141,239,.15); color: var(--accent); }
+  .badge.halted { background: rgba(245,195,68,.18); color: var(--amber); }
+  .badge.running { background: rgba(61,220,151,.15); color: var(--green); }
+  main { padding: 24px 28px; max-width: 1200px; margin: 0 auto; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .pos { color: var(--green); } .neg { color: var(--red); } .muted { color: var(--muted); }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 22px; overflow: hidden; }
+  section h2 { font-size: 14px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .empty { padding: 20px 16px; color: var(--muted); font-size: 13px; }
+  .controls { display: flex; gap: 10px; }
+  button { background: var(--border); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer; }
+  button.danger { background: rgba(255,92,122,.12); border-color: rgba(255,92,122,.3); color: var(--red); }
+  button.ok { background: rgba(61,220,151,.12); border-color: rgba(61,220,151,.3); color: var(--green); }
+  .side-buy { color: var(--green); font-weight: 600; }
+  .side-sell { color: var(--red); font-weight: 600; }
+  footer { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; }
+
+  /* --- equity curve, with a marker per closed trade -------------------
+     The markers are HTML on top of the SVG, not circles inside it: the
+     chart is drawn with preserveAspectRatio="none", which stretches
+     anything round in the viewBox into an ellipse. Percent offsets of the
+     same box do not distort, so app/dashboard/charts.py hands the template
+     percentages and the overlay lines up at every screen width. */
+  .eq-chart { position: relative; }
+  .eq-chart svg { display: block; }
+  .eq-hits { position: absolute; inset: 0; }
+  .eq-hit {
+    position: absolute; top: 0; bottom: 0; padding: 0; min-width: 16px;
+    transform: translateX(-50%); background: none; border: 0; border-radius: 0; cursor: pointer;
+  }
+  .eq-hit::before {
+    content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 0;
+    border-left: 1px dashed transparent;
+  }
+  .eq-hit:hover::before, .eq-hit.is-current::before { border-left-color: rgba(91,141,239,.45); }
+  .eq-hit:focus { outline: none; }
+  .eq-hit:focus-visible::before { border-left-color: var(--accent); }
+  .eq-dot {
+    position: absolute; left: 50%; width: 7px; height: 7px; margin: -4px 0 0 -4px;
+    border-radius: 50%; background: var(--muted); border: 1px solid var(--panel);
+    transition: transform .08s ease-out;
+  }
+  .eq-dot.win { background: var(--green); }
+  .eq-dot.loss { background: var(--red); }
+  .eq-hit:hover .eq-dot, .eq-hit:focus-visible .eq-dot { transform: scale(1.8); }
+  .eq-hit.is-current .eq-dot { transform: scale(2.1); box-shadow: 0 0 0 3px rgba(91,141,239,.3); }
+  .eq-detail { border-top: 1px solid var(--border); padding: 14px 16px; font-size: 13px; }
+  .eq-detail .eq-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .eq-detail .eq-head .n { font-weight: 700; font-size: 15px; }
+  .eq-detail .eq-head a { color: var(--accent); text-decoration: none; }
+  .eq-detail .eq-reason { color: var(--text); margin-bottom: 10px; line-height: 1.5; }
+  .eq-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; }
+  .eq-grid .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; display: block; }
+  .eq-grid .v { font-variant-numeric: tabular-nums; }
+  .eq-hint { padding: 0 16px 14px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 Memecoin Trading Bot</h1>
+  <div class="controls">
+    <a href="/pipeline" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">🔭 Pipeline</a>
+    <a href="/rejections" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">🚧 Rejections</a>
+    <a href="/performance" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">📈 Performance</a>
+    <a href="/journal" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">📓 Trade Journal</a>
+    <a href="/research" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">🔬 Research</a>
+    <a href="/dataset" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">📊 Dataset</a>
+    <a href="/early" style="color: var(--accent); text-decoration: none; font-size: 13px; align-self: center;">🌱 Early</a>
+    <span class="badge {{ 'live' if stats.mode == 'LIVE' else 'paper' }}">{{ stats.mode }} · {{ stats.chain }}/{{ stats.execution_backend }}</span>
+    {% if stats.halted %}
+      <span class="badge halted" {% if stats.halt_reason %}title="{{ stats.halt_reason }}"{% endif %}>HALTED</span>
+      <form method="post" action="/api/resume"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="ok">Resume trading</button></form>
+    {% else %}
+      <span class="badge running">RUNNING</span>
+      <form method="post" action="/api/halt"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="danger">Halt trading</button></form>
+    {% endif %}
+  </div>
+</header>
+<main>
+  {% if stats.halted %}
+  <section style="border-color: rgba(245,195,68,.4);">
+    <h2 style="color: var(--amber);">⛔ Trading is halted — no new positions will be opened</h2>
+    <div style="padding: 12px 16px; font-size: 13px; line-height: 1.6;">
+      <div style="color: var(--amber);">{{ stats.halt_reason or "no reason was recorded" }}</div>
+      <div class="muted" style="margin-top: 8px;">
+        Open positions are unaffected and are still managed by the exit monitor.
+        Resume from the button in the header once you know why this happened.
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if config_warnings %}
+  <section style="border-color: rgba(245,195,68,.4);">
+    <h2 style="color: var(--amber);">⚠ Config warnings — these may stop the bot trading</h2>
+    <div style="padding: 12px 16px; font-size: 13px; line-height: 1.6;">
+      {% for w in config_warnings %}
+      <div style="margin-bottom: 8px; color: var(--amber);">• {{ w }}</div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="stats">
+    <div class="stat"><div class="label">Portfolio Value</div><div class="value">${{ "%.2f"|format(stats.portfolio_value) }}</div></div>
+    <div class="stat"><div class="label">Total P&amp;L</div><div class="value {{ 'pos' if stats.total_pnl >= 0 else 'neg' }}">${{ "%.2f"|format(stats.total_pnl) }}</div></div>
+    <div class="stat"><div class="label">Realized Today</div><div class="value {{ 'pos' if stats.realized_today_usd >= 0 else 'neg' }}">${{ "%.2f"|format(stats.realized_today_usd) }}</div></div>
+    <div class="stat"><div class="label">Unrealized P&amp;L</div><div class="value {{ 'pos' if stats.unrealized_pnl_usd >= 0 else 'neg' }}">${{ "%.2f"|format(stats.unrealized_pnl_usd) }}</div></div>
+    <div class="stat"><div class="label">Win Rate</div><div class="value">{{ "%.1f"|format(stats.win_rate) }}%</div></div>
+    <div class="stat"><div class="label">Profit Factor</div><div class="value">{{ stats.profit_factor_display }}</div></div>
+    <div class="stat"><div class="label">Expectancy / Trade</div><div class="value {{ 'pos' if stats.expectancy_usd >= 0 else 'neg' }}">${{ "%.2f"|format(stats.expectancy_usd) }}</div></div>
+    <div class="stat"><div class="label">Max Drawdown</div><div class="value">{{ "%.2f"|format(stats.max_drawdown_pct) }}%</div></div>
+    <div class="stat"><div class="label">Closed Trades</div><div class="value">{{ stats.total_trades }}</div></div>
+    <div class="stat"><div class="label">Current Streak</div><div class="value {{ 'pos' if stats.current_streak > 0 else ('neg' if stats.current_streak < 0 else '') }}">{{ stats.current_streak }}</div></div>
+    <div class="stat"><div class="label">Open Positions</div><div class="value">{{ stats.open_positions }}</div></div>
+    <div class="stat"><div class="label">Current Exposure</div><div class="value">${{ "%.2f"|format(stats.current_exposure_usd) }} <span class="muted" style="font-size:12px">({{ "%.0f"|format(stats.exposure_pct_of_portfolio) }}%)</span></div></div>
+  </div>
+
+  <section id="equity">
+    <h2>Equity Curve</h2>
+    {% if equity_svg %}
+      <div class="eq-chart" style="height: {{ equity_height }}px;">
+        {{ equity_svg | safe }}
+        <div class="eq-hits">
+          {# One band per point, as wide as the gap between points, so the
+             bands tile the chart exactly and every x lands on the nearest
+             marker. Derived from the rendered positions rather than from
+             100/(n-1), which ignores the curve's padding and would leave
+             each band a sliver out of step with the line. #}
+          {% set band = equity_markers[1].x_pct - equity_markers[0].x_pct %}
+          {% for m in equity_markers %}
+          {# A full-height band, not a dot-sized target: on a phone a 7px
+             circle is unhittable, and the reader means "this point in
+             time" rather than "this pixel". #}
+          <button type="button" class="eq-hit" data-eq="{{ loop.index0 }}"
+                  aria-pressed="false" aria-controls="eq-card-{{ loop.index0 }}"
+                  style="left: {{ "%.4f"|format(m.x_pct) }}%; width: {{ "%.4f"|format(band) }}%;"
+                  title="{% if m.is_start %}Start · ${{ "%.2f"|format(m.equity_usd) }}{% else %}#{{ m.trade_number }} {{ m.symbol }} · {{ "%+.2f"|format(m.pnl_usd or 0) }} → ${{ "%.2f"|format(m.equity_usd) }}{% endif %}">
+            <span class="eq-dot {{ '' if m.is_start else ('win' if m.won else 'loss') }}"
+                  style="top: {{ "%.4f"|format(m.y_pct) }}%;"></span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="eq-detail">
+        {% for m in equity_markers %}
+        <div class="eq-card" id="eq-card-{{ loop.index0 }}" {% if not loop.last %}hidden{% endif %}>
+          {% if m.is_start %}
+            <div class="eq-head">
+              <span class="n">Starting balance</span>
+              <span class="muted">before the first closed trade</span>
+            </div>
+            <div class="eq-grid">
+              <div><span class="k">Equity</span><span class="v">${{ "%.2f"|format(m.equity_usd) }}</span></div>
+              <div><span class="k">Closed trades</span><span class="v">{{ m.total_trades }}</span></div>
+            </div>
+          {% else %}
+            <div class="eq-head">
+              <span class="n">Trade {{ m.trade_number }} of {{ m.total_trades }}</span>
+              {% if m.token_address %}
+                <a href="/token/{{ m.token_address }}">{{ m.symbol }}</a>
+              {% else %}
+                <span>{{ m.symbol }}</span>
+              {% endif %}
+              <span class="{{ 'pos' if m.won else 'neg' }}">
+                {{ "%+.2f"|format(m.pnl_usd or 0) }} USD{% if m.pnl_pct is not none %} ({{ "%+.2f"|format(m.pnl_pct) }}%){% endif %}
+              </span>
+              <span class="muted">{{ m.closed_at.strftime("%Y-%m-%d %H:%M:%S") if m.closed_at else "-" }} UTC</span>
+            </div>
+            {% if m.exit_reason %}<div class="eq-reason">Exit: {{ m.exit_reason }}</div>{% endif %}
+            <div class="eq-grid">
+              <div><span class="k">Equity</span><span class="v">${{ "%.2f"|format(m.equity_before_usd) }} → ${{ "%.2f"|format(m.equity_usd) }}</span></div>
+              <div><span class="k">Held for</span><span class="v">{{ m.holding_time or "not recorded" }}</span></div>
+              <div><span class="k">Entry → exit price</span><span class="v">{% if m.entry_price is not none %}{{ "%.6g"|format(m.entry_price) }}{% else %}?{% endif %} → {% if m.exit_price is not none %}{{ "%.6g"|format(m.exit_price) }}{% else %}?{% endif %}</span></div>
+              <div><span class="k">Leg size</span><span class="v">{% if m.size_usd is not none %}${{ "%.2f"|format(m.size_usd) }}{% else %}not recorded{% endif %}</span></div>
+              <div><span class="k">Execution cost</span><span class="v">{% if m.execution_cost_pct is not none %}{{ "%.2f"|format(m.execution_cost_pct) }}%{% else %}not recorded{% endif %}</span></div>
+              <div><span class="k">Fee</span><span class="v">{% if m.fee_usd is not none %}${{ "%.4f"|format(m.fee_usd) }}{% else %}not recorded{% endif %}</span></div>
+              <div><span class="k">Peak equity</span><span class="v">${{ "%.2f"|format(m.peak_usd) }}</span></div>
+              <div><span class="k">Drawdown here</span><span class="v">{{ "%.2f"|format(m.drawdown_pct) }}%</span></div>
+              <div><span class="k">Mode / version</span><span class="v">{{ m.mode or "?" }} · {{ m.strategy_version or "unversioned" }}</span></div>
+            </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="eq-hint">Hover or tap a point to see the trade behind it. Arrow keys step through them once one is focused.</div>
+    {% else %}
+    <div class="empty">Not enough closed trades yet to draw an equity curve.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Open Positions</h2>
+    {% if positions %}
+    <table>
+      <thead><tr><th>Symbol</th><th>Chain</th><th>Qty</th><th>Entry</th><th>Current</th><th>Unrealized P&amp;L</th><th>Stop Loss</th><th>Take Profit</th><th>Signal score</th><th>Rug score</th><th>Age</th></tr></thead>
+      <tbody>
+        {% for e in positions %}
+        {% set p = e.position %}
+        <tr>
+          <td>{{ p.symbol }}</td>
+          <td>{{ p.chain }}</td>
+          <td>{{ "%.6f"|format(p.qty) }}</td>
+          <td>${{ "%.8f"|format(p.entry_price) }}</td>
+          <td>${{ "%.8f"|format(e.current_price) }}</td>
+          <td class="{{ 'pos' if e.unrealized_pnl_usd >= 0 else 'neg' }}">
+            ${{ "%.2f"|format(e.unrealized_pnl_usd) }} ({{ "%.1f"|format(e.unrealized_pnl_pct * 100) }}%)
+          </td>
+          <td>${{ "%.8f"|format(p.stop_loss) }}</td>
+          <td>${{ "%.8f"|format(p.take_profit) }}</td>
+          <td>
+            {% if e.signal_score is not none %}
+              <span class="{{ 'pos' if e.signal_score >= 75 else 'neg' }}">{{ "%.0f"|format(e.signal_score) }}/100</span>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if e.rug_risk_score is not none %}
+              <span class="{{ 'neg' if e.rug_risk_score >= 45 else 'pos' }}">{{ "%.0f"|format(e.rug_risk_score) }}/100</span>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
+          <td>{{ "%.1f"|format(e.age_hours) + "h" if e.age_hours is not none else "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No open positions.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Recent Trades</h2>
+    {% if trades %}
+    <table>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Status</th><th>Mode</th><th>Qty</th><th>Price</th><th>P&amp;L</th></tr></thead>
+      <tbody>
+        {% for t in trades %}
+        <tr>
+          <td>{{ (t.closed_at or t.opened_at or t.created_at).strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ t.symbol }}</td>
+          <td class="side-{{ t.side }}">{{ t.side|upper }}</td>
+          <td>{{ t.status }}</td>
+          <td>{{ t.mode }}</td>
+          <td>{{ "%.6f"|format(t.qty) if t.qty else "-" }}</td>
+          <td>{{ "$%.8f"|format(t.entry_price or t.exit_price) if (t.entry_price or t.exit_price) else "-" }}</td>
+          <td class="{{ 'pos' if (t.pnl_usd or 0) >= 0 else 'neg' }}">{{ "$%.2f"|format(t.pnl_usd) if t.pnl_usd is not none else "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No trades yet.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Signals Received</h2>
+    {% if signals %}
+    <table>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Found by</th><th>Type</th><th>Price</th><th>Chain</th><th>Screened by</th><th>Rug score</th><th>Verdict</th></tr></thead>
+      <tbody>
+        {% for s in signals %}
+        {% set check = checks.get(s.id) %}
+        <tr>
+          <td>{{ s.received_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ s.symbol }}</td>
+          <td class="muted">{{ s.source or "tradingview" }}</td>
+          <td class="side-{{ s.signal_type }}">{{ s.signal_type|upper }}</td>
+          <td>{{ "$%.8f"|format(s.price) if s.price else "-" }}</td>
+          <td>{{ (check.chain_screened if check and check.chain_screened else s.chain) }}</td>
+          <td>{{ check.scanner_source if check and check.scanner_source else "-" }}</td>
+          <td>
+            {% if check and check.rug_risk_score is not none %}
+              <span class="{{ 'neg' if check.rug_risk_score >= 45 else 'pos' }}">
+                {{ "%.0f"|format(check.rug_risk_score) }}/100 ({{ check.rug_risk_level }})
+              </span>
+            {% else %}
+              <span class="muted">-</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if check is none %}
+              <span class="muted">no screening (sell / no action)</span>
+            {% elif check.passed %}
+              <span class="pos">passed</span>
+            {% else %}
+              <span class="neg">blocked</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      No signals received yet. If you've set up TradingView alerts and expect
+      activity, check that the bot's public address is still valid — an ngrok
+      URL changes each restart and alerts then arrive nowhere, silently.
+    </div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Auto Scanner</h2>
+    {% if scanner.blocked_reason %}
+    <div class="empty">Scanner is not running: {{ scanner.blocked_reason }}</div>
+    {% else %}
+    <div style="padding: 10px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border);">
+      Tracking <strong style="color: var(--text)">{{ scanner.tracked }}</strong> discovered token(s) ·
+      <strong style="color: var(--text)">{{ scanner.traded }}</strong> have been traded
+    </div>
+    {% endif %}
+    {% if scanned_tokens %}
+    <table>
+      <thead><tr><th>Last checked</th><th>Symbol</th><th>Source</th><th>Liquidity</th><th>24h Volume</th><th>Stage</th><th>Reason</th></tr></thead>
+      <tbody>
+        {% for s in scanned_tokens %}
+        <tr>
+          <td>{{ s.last_evaluated_at.strftime("%Y-%m-%d %H:%M") if s.last_evaluated_at else "-" }}</td>
+          <td>{{ s.symbol }}</td>
+          <td>{{ s.discovery_source or "-" }}</td>
+          <td>{{ "$%.0f"|format(s.liquidity_usd) if s.liquidity_usd is not none else "-" }}</td>
+          <td>{{ "$%.0f"|format(s.volume_24h_usd) if s.volume_24h_usd is not none else "-" }}</td>
+          <td>
+            {% if s.last_stage == "traded" %}
+              <span class="pos">traded</span>
+            {% else %}
+              <span class="muted">{{ s.last_stage or "-" }}</span>
+            {% endif %}
+          </td>
+          <td class="muted" style="white-space: normal; max-width: 380px;">{{ s.last_reason or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif not scanner.blocked_reason %}
+    <div class="empty">
+      No tokens discovered yet. The scanner runs every
+      {{ stats.scanner_interval_seconds }}s — give it a cycle or two, then check
+      the server log if this stays empty (run <code>python scripts/scan_once.py</code>
+      to see exactly what the discovery APIs are returning).
+    </div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Risk / Rejection Events</h2>
+    {% if events %}
+    <table>
+      <thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td>{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ e.event_type }}</td>
+          <td>{{ e.details }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No risk events recorded.</div>
+    {% endif %}
+  </section>
+</main>
+<footer>Watchlist: {{ stats.watchlist }} · auto-refreshes every 20s</footer>
+<script>
+// Equity-curve inspector: hover or tap a point, read the trade that made
+// that step. Vanilla and inline on purpose - the dashboard loads no JS
+// libraries and has to work on an offline VPS (same reason the chart is
+// hand-rolled SVG in app/dashboard/charts.py).
+//
+// Every point's card is already in the HTML, rendered and escaped by
+// Jinja; this only decides which one is visible. Nothing here fetches,
+// computes or formats a number, so a scripting failure degrades to the
+// last trade's card plus the native title tooltips, not to a blank panel.
+(function () {
+  var chart = document.querySelector('.eq-chart');
+  var hits = chart ? Array.prototype.slice.call(chart.querySelectorAll('.eq-hit')) : [];
+  if (hits.length < 2) return;
+
+  var cards = hits.map(function (h) {
+    return document.getElementById('eq-card-' + h.getAttribute('data-eq'));
+  });
+  var sticky = hits.length - 1;
+
+  function show(i) {
+    for (var n = 0; n < cards.length; n++) {
+      if (cards[n]) cards[n].hidden = n !== i;
+      hits[n].classList.toggle('is-current', n === i);
+      hits[n].setAttribute('aria-pressed', n === sticky ? 'true' : 'false');
+    }
+  }
+
+  function pin(i) {
+    sticky = i;
+    show(i);
+    // The page reloads itself every 20 seconds. The fragment survives a
+    // reload, so the point being studied is still the one on screen
+    // afterwards instead of snapping back to the newest trade.
+    try { history.replaceState(null, '', '#eq=' + i); } catch (e) { /* file:// etc. */ }
+  }
+
+  hits.forEach(function (hit, i) {
+    hit.addEventListener('mouseenter', function () { show(i); });
+    hit.addEventListener('focus', function () { show(i); });
+    hit.addEventListener('click', function () { pin(i); });
+    hit.addEventListener('keydown', function (e) {
+      var step = e.key === 'ArrowRight' ? 1 : (e.key === 'ArrowLeft' ? -1 : 0);
+      if (!step) return;
+      e.preventDefault();
+      var next = Math.max(0, Math.min(hits.length - 1, i + step));
+      hits[next].focus();
+      pin(next);
+    });
+  });
+  chart.addEventListener('mouseleave', function () { show(sticky); });
+
+  var fromHash = /[#&]eq=(\d+)/.exec(location.hash || '');
+  var initial = fromHash
+    ? Math.max(0, Math.min(hits.length - 1, parseInt(fromHash[1], 10)))
+    : hits.length - 1;
+  sticky = initial;
+  show(initial);
+})();
+</script>
+</body>
+</html>

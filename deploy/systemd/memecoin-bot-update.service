@@ -1,0 +1,23 @@
+[Unit]
+Description=Pull and redeploy the memecoin bot if its branch moved
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/memecoin-bot-live
+ExecStart=/root/memecoin-bot-live/deploy/auto_update.sh
+
+# The script is deliberately conservative: it aborts rather than deploying
+# when the strategy version would change, when the paper-only flags are not
+# both false, when the pull is not a fast-forward, or when the new
+# container fails its health check (in which case it rolls itself back).
+# See deploy/auto_update.sh for the reasoning.
+
+# A build on a 1 vCPU box is not fast. Do not let a slow build look like a
+# hang and get killed halfway through swapping containers.
+TimeoutStartSec=1800
+
+StandardOutput=append:/var/log/memecoin-bot-update.log
+StandardError=append:/var/log/memecoin-bot-update.log

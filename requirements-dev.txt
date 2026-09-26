@@ -1,0 +1,14 @@
+# Dev/test-only dependencies. Not needed to run the bot itself.
+-r requirements.txt
+
+pytest>=8.3.3
+
+# Provides the `anyio` pytest plugin used by the async orchestration tests.
+# It already arrives as an httpx/starlette dependency, but the test suite
+# depends on it directly, so declare it.
+anyio>=4.4.0
+
+# Powers `uvicorn --reload` (auto-restart on file save). Only useful while
+# editing the code — the normal launcher doesn't use --reload, which is why
+# this isn't in requirements.txt.
+watchfiles>=0.24.0
