@@ -26,6 +26,7 @@ from app import models  # noqa: E402
 from app.analysis import concentration as conc  # noqa: E402
 from app.analysis import trade_analytics as ta  # noqa: E402
 from app.analysis.backtest_evidence import load as load_backtest_evidence  # noqa: E402
+from app.analysis.cost_sensitivity import TARGET_PROFIT_FACTOR as TARGET_PF
 from app.analysis.report import build_performance_report  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.database import SessionLocal, init_db  # noqa: E402
@@ -125,6 +126,48 @@ def print_report(report, db=None) -> None:
         if audit.mean_cost_pct is not None:
             print(f"  notional-weighted    {audit.mean_cost_pct:+.3f}%")
         print(f"  fill audit           {audit.verdict()}")
+
+    cs = report.cost_sensitivity
+    if cs is not None and cs.positions:
+        print()
+        print(RULE)
+        print(" HOW WRONG WOULD THE COST MODEL HAVE TO BE?")
+        print(RULE)
+        if cs.measured_cost_rate is not None:
+            print(f"  modelled cost        {cs.measured_cost_rate * 100:.3f}% per leg "
+                  f"(${cs.cost_per_position:,.2f} per position, both legs)")
+        print(f"  gross edge           ${cs.gross_edge_per_position:,.2f} per position "
+              f"before any cost")
+        if cs.cost_exceeds_gross_edge:
+            print("  -> the signal earns; execution costs more than it earns.")
+        if cs.breakeven_cost_rate is None:
+            print("  break-even rate      none - the record loses money even at ZERO "
+                  "cost, so this is not an execution problem")
+        else:
+            print(f"  break-even rate      {cs.breakeven_cost_rate * 100:.3f}% per leg "
+                  f"- below this the record turns positive")
+        if cs.target_pf_cost_rate is None:
+            print(f"  rate for PF {TARGET_PF:.2f}      unreachable - even free execution "
+                  "would not clear the gate")
+        else:
+            print(f"  rate for PF {TARGET_PF:.2f}      "
+                  f"{cs.target_pf_cost_rate * 100:.3f}% per leg")
+        if cs.unmeasured_legs:
+            print(f"  legs excluded        {cs.unmeasured_legs} (no cost rate, notional "
+                  "or position - counted as unmeasured, never as free)")
+        print()
+        print("    per-leg cost   net P&L    expectancy   profit factor")
+        for s in cs.scenarios:
+            pf = "-" if s.profit_factor is None else (
+                "inf" if s.profit_factor == float("inf") else f"{s.profit_factor:.2f}")
+            print(f"    {s.cost_rate * 100:>9.3f}%  {s.net_pnl_usd:>9.2f}  "
+                  f"{s.expectancy_usd:>11.2f}  {pf:>14}")
+        print()
+        print("  This is sensitivity to an ASSUMPTION, not a measurement of real")
+        print("  costs - a paper run has no real fills. It says how far the model")
+        print("  would have to be from the truth, to be checked against what a swap")
+        print("  actually costs. It is NOT a dial: lowering PAPER_FEE_PCT to make")
+        print("  this green would be manufacturing a pass.")
 
     c = report.concentration
     if c is not None and c.closed_trades:

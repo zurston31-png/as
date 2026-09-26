@@ -60,6 +60,46 @@ class ExitPolicy:
     break_even_buffer_pct: float
     max_hold_hours: float
 
+    def with_overrides(
+        self,
+        *,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
+        max_hold_hours: float | None = None,
+    ) -> "ExitPolicy":
+        """A copy with some levels replaced, for an EXIT challenger.
+
+        The module docstring says entry-scoring and exit variants must not
+        run at once, because a challenger that beat the champion on both
+        would leave no way to tell which half did it. That still holds -
+        this is not a licence to vary everything. It exists because the
+        precondition that docstring names has now been met: entry scoring
+        was settled by the 97-round-trip record, which found a positive
+        gross edge per position that execution cost more than erased. The
+        exit is the next variable, and this is how it gets varied.
+
+        A challenger that sets none of these is byte-identical to the
+        champion's policy, so adding the capability changes no existing
+        shadow row.
+        """
+        return ExitPolicy(
+            stop_loss_pct=(
+                self.stop_loss_pct if stop_loss_pct is None else stop_loss_pct
+            ),
+            take_profit_pct=(
+                self.take_profit_pct if take_profit_pct is None else take_profit_pct
+            ),
+            trailing_enabled=self.trailing_enabled,
+            trailing_activation_pct=self.trailing_activation_pct,
+            trailing_distance_pct=self.trailing_distance_pct,
+            break_even_enabled=self.break_even_enabled,
+            break_even_trigger_pct=self.break_even_trigger_pct,
+            break_even_buffer_pct=self.break_even_buffer_pct,
+            max_hold_hours=(
+                self.max_hold_hours if max_hold_hours is None else max_hold_hours
+            ),
+        )
+
     @classmethod
     def from_settings(cls) -> "ExitPolicy":
         """Read the same numbers the live paper system uses.

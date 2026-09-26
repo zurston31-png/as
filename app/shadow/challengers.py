@@ -34,8 +34,28 @@ class Challenger:
     # full copy that silently drifts when the champion's weights change.
     weight_overrides: dict[str, float] = field(default_factory=dict)
     min_score_to_enter: float | None = None
+    # Exit levels. Left as None by an entry-scoring challenger, in which
+    # case its exit policy is byte-identical to the champion's and the
+    # paired comparison still isolates entry alone.
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
+    max_hold_hours: float | None = None
+
+    @property
+    def varies_exit(self) -> bool:
+        """True when this challenger changes how a position is CLOSED.
+
+        The shadow system's rule is that entry scoring and exit levels are
+        not varied at once - a challenger that beat the champion on both
+        would leave no way to tell which half did it. This makes that
+        checkable rather than a convention nobody enforces.
+        """
+        return any(v is not None for v in
+                   (self.stop_loss_pct, self.take_profit_pct, self.max_hold_hours))
+
+    @property
+    def varies_entry(self) -> bool:
+        return bool(self.weight_overrides) or self.min_score_to_enter is not None
 
     def weights(self) -> dict[str, float]:
         """The full weight map this challenger scores with.
@@ -122,7 +142,21 @@ def _parse(raw: str) -> list[Challenger]:
                     float(entry["take_profit_pct"])
                     if entry.get("take_profit_pct") is not None else None
                 ),
+                max_hold_hours=(
+                    float(entry["max_hold_hours"])
+                    if entry.get("max_hold_hours") is not None else None
+                ),
             )
+            if challenger.varies_entry and challenger.varies_exit:
+                # Refused rather than run: the result would be
+                # uninterpretable, and an uninterpretable result that looks
+                # like a number is worse than no result.
+                logger.error(
+                    "challenger %s varies BOTH entry scoring and exit levels - "
+                    "skipping. Vary one at a time or the comparison cannot say "
+                    "which half moved the outcome.", strategy_id,
+                )
+                continue
             challenger.weights()       # fail now, not on the first opportunity
         except (KeyError, TypeError, ValueError) as exc:
             logger.error("challenger %s is misconfigured (%s) - skipping", strategy_id, exc)

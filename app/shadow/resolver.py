@@ -362,6 +362,29 @@ def _price_at(series, instant: dt.datetime, tf: Timeframe) -> float | None:
     return best[1]
 
 
+
+def _policies_by_strategy(base: ExitPolicy) -> dict[str, ExitPolicy]:
+    """strategy_id -> the exit policy its rows are resolved under.
+
+    Only challengers that actually name an exit level get their own; every
+    other strategy is left out of the map so the caller falls back to the
+    shared base instance. A challenger that varies nothing about the exit
+    therefore resolves byte-identically to before this existed.
+    """
+    from app.shadow.challengers import enabled
+
+    out: dict[str, ExitPolicy] = {}
+    for challenger in enabled():
+        if not challenger.varies_exit:
+            continue
+        out[challenger.strategy_id] = base.with_overrides(
+            stop_loss_pct=challenger.stop_loss_pct,
+            take_profit_pct=challenger.take_profit_pct,
+            max_hold_hours=challenger.max_hold_hours,
+        )
+    return out
+
+
 async def resolve_once(
     db: Session,
     *,
@@ -386,7 +409,14 @@ async def resolve_once(
     now = _aware(now) or dt.datetime.now(dt.timezone.utc)
     limit = limit or settings.SHADOW_RESOLVE_BATCH
     tf = timeframe()
-    policy = ExitPolicy.from_settings()
+    base_policy = ExitPolicy.from_settings()
+    # One policy per strategy. The champion and every entry-scoring
+    # challenger share the base instance; only an EXIT challenger gets a
+    # different one, and only for the levels it names. Resolving every row
+    # under a single shared policy - as this did while exits were not
+    # varied - would silently measure an exit challenger against the
+    # champion's own exit and report no difference.
+    policies = _policies_by_strategy(base_policy)
 
     still_open = open_positions(db, limit=limit)
     pending_horizons = positions_awaiting_horizons(db, now=now, limit=limit)
@@ -426,6 +456,8 @@ async def resolve_once(
         for row in group:
             opened_at = _aware(row.opened_at)
             visible = _visible(candles, opened_at=opened_at, now=now, tf=tf)
+
+            policy = policies.get(row.strategy_id, base_policy)
 
             if row.closed_at is None:
                 age = now - opened_at

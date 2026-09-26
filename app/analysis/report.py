@@ -23,6 +23,7 @@ from app.analysis import trade_analytics as ta
 from app.analysis.backtest_evidence import BacktestEvidence
 from app.analysis.monte_carlo import MonteCarloResult, run_monte_carlo
 from app.analysis import concentration as conc
+from app.analysis.cost_sensitivity import CostSensitivity, analyse as analyse_costs
 from app.analysis.round_trips import RoundTripSummary, group_round_trips
 from app.analysis.validation import ValidationInputs, ValidationReport, evaluate
 from app.config import settings
@@ -44,6 +45,10 @@ class PerformanceReport:
     #: both are kept because they answer different questions, and the one
     #: that is a SAMPLE SIZE is this one.
     round_trips: RoundTripSummary | None = None
+    #: How far the cost MODEL would have to be from the truth for the
+    #: verdict above to flip. Not a measurement of real costs, and never
+    #: a dial - see app/analysis/cost_sensitivity.py.
+    cost_sensitivity: CostSensitivity | None = None
     validation: ValidationReport | None = None
     version_counts: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -240,6 +245,7 @@ def build_performance_report(
     # independent bets - and the gate would open on a record that had not
     # actually met its own threshold. See app/analysis/round_trips.py.
     round_trips = group_round_trips(trades)
+    cost_sensitivity = analyse_costs(trades)
     note = round_trips.discrepancy_note()
     if note is not None:
         warnings.append(note)
@@ -290,6 +296,7 @@ def build_performance_report(
         monte_carlo=monte_carlo,
         concentration=concentration,
         round_trips=round_trips,
+        cost_sensitivity=cost_sensitivity,
         validation=validation,
         version_counts=version_counts,
         warnings=warnings,
