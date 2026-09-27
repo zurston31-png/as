@@ -77,16 +77,51 @@ async def _get_json(url: str, params: dict | None = None) -> dict | None:
     )
 
 
-async def _find_primary_pool(network: str, token_address: str) -> str | None:
-    """The token's highest-liquidity pool address, for the OHLCV endpoint
-    (which is keyed by pool, not by token)."""
+def _token_side(pool: dict, token_address: str) -> str | None:
+    """Which side of this pool our token is on: "base", "quote", or None.
+
+    WHY THIS EXISTS, AND WHY IT IS NOT COSMETIC
+
+    The OHLCV endpoint is keyed by POOL, and a pool has two tokens. Asked
+    for a pool's candles without being told which one we mean,
+    GeckoTerminal answers for the BASE token. So for any pool where our
+    memecoin is the quote side - a "SOL / MEME" pool rather than a
+    "MEME / SOL" one - the series that comes back is SOL's chart, priced
+    in USD, and nothing downstream can tell: it is well-formed OHLCV of
+    the right length over the right window, just for the wrong asset.
+
+    That is not a hypothetical failure mode. It is what produced shadow
+    exit prices clustering near major-asset price levels (a couple of
+    hundred dollars, or one-and-a-half thousand) against memecoin entries
+    of a small fraction of a cent.
+
+    GeckoTerminal identifies a related token as "<network>_<address>", so
+    the address is the part after the first underscore.
+    """
+    relationships = pool.get("relationships") or {}
+    for key in ("base_token", "quote_token"):
+        ident = ((relationships.get(key) or {}).get("data") or {}).get("id")
+        if isinstance(ident, str) and ident.split("_", 1)[-1].lower() == token_address.lower():
+            return key.split("_", 1)[0]
+    return None
+
+
+async def _find_primary_pool(
+    network: str, token_address: str
+) -> tuple[str | None, str | None]:
+    """The token's highest-liquidity pool, and which side of it we are on.
+
+    Returns (pool_address, side). `side` is None when the payload does not
+    name either token - which is itself worth knowing, because it means we
+    cannot prove the candles are ours.
+    """
     data = await _get_json(f"{settings.GECKOTERMINAL_API_BASE}/networks/{network}/tokens/{token_address}/pools")
     if not data:
-        return None
+        return None, None
 
     pools = data.get("data")
     if not isinstance(pools, list) or not pools:
-        return None
+        return None, None
 
     def reserve_usd(pool: dict) -> float:
         try:
@@ -96,9 +131,9 @@ async def _find_primary_pool(network: str, token_address: str) -> str | None:
 
     best = max(pools, key=reserve_usd)
     try:
-        return best["attributes"]["address"]
+        return best["attributes"]["address"], _token_side(best, token_address)
     except (KeyError, TypeError):
-        return None
+        return None, None
 
 
 def _parse_ohlcv_response(data: dict, symbol: str, timeframe: Timeframe) -> CandleSeries | None:
@@ -143,14 +178,47 @@ async def fetch_candles(
         logger.warning("no GeckoTerminal network mapping for chain %r - live signal score unavailable", chain)
         return None
 
-    pool_address = await _find_primary_pool(network, token_address)
+    pool_address, side = await _find_primary_pool(network, token_address)
     if not pool_address:
         return None
 
     path_segment, aggregate = _TIMEFRAME_MAP[timeframe]
+    params = {"aggregate": aggregate, "limit": min(limit, 1000), "currency": "usd"}
+
+    # WHICH TOKEN'S CANDLES, AND WHY THIS IS BEHIND A FLAG
+    #
+    # Without `token`, the endpoint answers for the pool's BASE token (see
+    # _token_side). Passing our own address pins the series to the token
+    # we actually asked about, on either side of any pool.
+    #
+    # It is off by default because turning it on is not a no-op: for every
+    # quote-side token it replaces the series the live entry gate has been
+    # scoring with a completely different one, which changes which trades
+    # the champion takes from that moment on, mid-collection, without
+    # moving the strategy version hash. That is a dataset boundary and it
+    # is the operator's call to draw, not this module's. With the flag off
+    # the mismatch is still LOGGED, loudly, every time it happens - the
+    # evidence is collected either way.
+    if settings.GECKOTERMINAL_PIN_TOKEN_SIDE:
+        params["token"] = token_address
+    elif side == "quote":
+        logger.error(
+            "GeckoTerminal pool %s has %s (%s) as its QUOTE token, so these candles "
+            "are the BASE token's price, not ours. Any score or exit walked over them "
+            "is measuring the wrong asset. Set GECKOTERMINAL_PIN_TOKEN_SIDE=true to "
+            "correct it - and treat that as a new collection run.",
+            pool_address, symbol, token_address,
+        )
+    elif side is None:
+        logger.warning(
+            "GeckoTerminal pool %s does not name %s (%s) on either side, so it cannot "
+            "be confirmed that these candles are for this token.",
+            pool_address, symbol, token_address,
+        )
+
     data = await _get_json(
         f"{settings.GECKOTERMINAL_API_BASE}/networks/{network}/pools/{pool_address}/ohlcv/{path_segment}",
-        params={"aggregate": aggregate, "limit": min(limit, 1000), "currency": "usd"},
+        params=params,
     )
     if not data:
         return None

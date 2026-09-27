@@ -13,8 +13,10 @@ from app.data.live_provider import (
     CHAIN_TO_GECKOTERMINAL_NETWORK,
     _find_primary_pool,
     _parse_ohlcv_response,
+    _token_side,
     fetch_candles,
 )
+from app.config import settings
 
 pytestmark = pytest.mark.anyio
 
@@ -91,8 +93,13 @@ async def test_find_primary_pool_picks_the_highest_liquidity_pool(monkeypatch):
         })
 
     monkeypatch.setattr(httpx, "AsyncClient", _fake_client(get_impl))
-    pool = await _find_primary_pool("solana", "TokenMint111")
+    pool, side = await _find_primary_pool("solana", "TokenMint111")
     assert pool == "PoolB"
+    # UPDATED, not loosened: _find_primary_pool now also reports which side
+    # of the pool the token is on, because fetching a pool's candles
+    # without knowing that returns the OTHER token's chart. This fixture
+    # carries no relationships, so the side is honestly unknown.
+    assert side is None
 
 
 async def test_find_primary_pool_returns_none_on_empty_data(monkeypatch):
@@ -100,7 +107,7 @@ async def test_find_primary_pool_returns_none_on_empty_data(monkeypatch):
         return _FakeResponse({"data": []})
 
     monkeypatch.setattr(httpx, "AsyncClient", _fake_client(get_impl))
-    assert await _find_primary_pool("solana", "TokenMint111") is None
+    assert await _find_primary_pool("solana", "TokenMint111") == (None, None)
 
 
 async def test_find_primary_pool_returns_none_on_request_failure(monkeypatch):
@@ -108,7 +115,7 @@ async def test_find_primary_pool_returns_none_on_request_failure(monkeypatch):
         return _FakeResponse({}, status_ok=False)
 
     monkeypatch.setattr(httpx, "AsyncClient", _fake_client(get_impl))
-    assert await _find_primary_pool("solana", "TokenMint111") is None
+    assert await _find_primary_pool("solana", "TokenMint111") == (None, None)
 
 
 async def test_find_primary_pool_handles_missing_reserve_field_gracefully(monkeypatch):
@@ -123,7 +130,7 @@ async def test_find_primary_pool_handles_missing_reserve_field_gracefully(monkey
         })
 
     monkeypatch.setattr(httpx, "AsyncClient", _fake_client(get_impl))
-    pool = await _find_primary_pool("solana", "TokenMint111")
+    pool, _side = await _find_primary_pool("solana", "TokenMint111")
     assert pool == "PoolWithReserve"
 
 
@@ -217,3 +224,130 @@ async def test_fetch_candles_full_round_trip(monkeypatch):
 def test_every_mapped_chain_has_a_non_empty_network_slug():
     for chain, network in CHAIN_TO_GECKOTERMINAL_NETWORK.items():
         assert network, chain
+
+
+# ---------------------------------------------------------------------------
+# which token's candles are these? (app/data/live_provider.py:_token_side)
+# ---------------------------------------------------------------------------
+#
+# These exist because of a real defect, not a hypothetical one. The OHLCV
+# endpoint is keyed by POOL and defaults to the pool's BASE token, so for
+# every token that sits on the QUOTE side of its own deepest pool the bot
+# was scoring, and walking exits over, some other asset's chart - a
+# well-formed series of the right length over the right window, for the
+# wrong token. It surfaced as shadow exit prices clustering at major-asset
+# price levels against memecoin entries of a fraction of a cent.
+
+def _pool(address, reserve, *, base=None, quote=None):
+    relationships = {}
+    if base is not None:
+        relationships["base_token"] = {"data": {"id": f"solana_{base}"}}
+    if quote is not None:
+        relationships["quote_token"] = {"data": {"id": f"solana_{quote}"}}
+    return {
+        "attributes": {"address": address, "reserve_in_usd": str(reserve)},
+        "relationships": relationships,
+    }
+
+
+def test_token_side_identifies_the_base_side():
+    pool = _pool("PoolA", 1000, base="MemeMint", quote="SolMint")
+    assert _token_side(pool, "MemeMint") == "base"
+
+
+def test_token_side_identifies_the_quote_side():
+    """The case that was silently wrong: a SOL/MEME pool, where asking for
+    the pool's candles returns SOL's price, not the memecoin's."""
+    pool = _pool("PoolA", 1000, base="SolMint", quote="MemeMint")
+    assert _token_side(pool, "MemeMint") == "quote"
+
+
+def test_token_side_is_case_insensitive_about_the_address():
+    """EVM addresses are routinely checksummed on one side of a system and
+    lowercased on the other; a case mismatch must not read as 'not ours',
+    which would downgrade a known side to an unverifiable one."""
+    pool = _pool("PoolA", 1000, base="0xABCdef", quote="SolMint")
+    assert _token_side(pool, "0xabcdef") == "base"
+
+
+def test_token_side_is_none_when_the_pool_names_neither_token():
+    pool = _pool("PoolA", 1000, base="SolMint", quote="UsdcMint")
+    assert _token_side(pool, "MemeMint") is None
+
+
+def test_token_side_is_none_when_there_are_no_relationships():
+    assert _token_side({"attributes": {"address": "PoolA"}}, "MemeMint") is None
+
+
+async def test_find_primary_pool_reports_the_side_it_found(monkeypatch):
+    def get_impl(url, params, headers):
+        return _FakeResponse({"data": [_pool("PoolB", 50000, base="SolMint", quote="MemeMint")]})
+
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_client(get_impl))
+    assert await _find_primary_pool("solana", "MemeMint") == ("PoolB", "quote")
+
+
+# ---------------------------------------------------------------------------
+# the flag that corrects it (GECKOTERMINAL_PIN_TOKEN_SIDE)
+# ---------------------------------------------------------------------------
+
+def _two_stage(seen):
+    """A fake that answers the pools call, then the OHLCV call, recording
+    the params each was given."""
+    def get_impl(url, params, headers):
+        seen.append((url, dict(params or {})))
+        if "/pools/" in url and "/ohlcv/" in url:
+            return _FakeResponse({
+                "data": {"attributes": {"ohlcv_list": [[1_700_000_000, 1, 2, 0.5, 1.5, 10]]}}
+            })
+        return _FakeResponse({"data": [_pool("PoolB", 50000, base="SolMint", quote="MemeMint")]})
+    return get_impl
+
+
+async def test_fetch_candles_does_not_pin_the_token_by_default(monkeypatch):
+    """Off by default on purpose: switching it on changes which series the
+    live entry gate scores for every quote-side token, and therefore which
+    trades get taken, without moving the strategy version hash. That is a
+    collection boundary for an operator to draw deliberately."""
+    seen = []
+    monkeypatch.setattr(settings, "GECKOTERMINAL_PIN_TOKEN_SIDE", False)
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_client(_two_stage(seen)))
+
+    series = await fetch_candles("solana", "MemeMint", "MEME", Timeframe.M15, 300)
+    assert series is not None
+    ohlcv = [params for url, params in seen if "/ohlcv/" in url][0]
+    assert "token" not in ohlcv
+
+
+async def test_fetch_candles_pins_our_token_when_the_flag_is_on(monkeypatch):
+    seen = []
+    monkeypatch.setattr(settings, "GECKOTERMINAL_PIN_TOKEN_SIDE", True)
+    monkeypatch.setattr(httpx, "AsyncClient", _fake_client(_two_stage(seen)))
+
+    series = await fetch_candles("solana", "MemeMint", "MEME", Timeframe.M15, 300)
+    assert series is not None
+    ohlcv = [params for url, params in seen if "/ohlcv/" in url][0]
+    assert ohlcv["token"] == "MemeMint"
+
+
+async def test_quote_side_token_is_logged_even_when_the_fix_is_off(caplog):
+    """The flag controls the BEHAVIOUR, never the evidence. With it off the
+    bot keeps using the wrong series - but it must say so, every time, or
+    the defect stays invisible exactly as it did before."""
+    import logging
+
+    seen = []
+    from app.data import live_provider
+
+    original = settings.GECKOTERMINAL_PIN_TOKEN_SIDE
+    settings.GECKOTERMINAL_PIN_TOKEN_SIDE = False
+    saved = httpx.AsyncClient
+    httpx.AsyncClient = _fake_client(_two_stage(seen))
+    try:
+        with caplog.at_level(logging.ERROR, logger=live_provider.__name__):
+            await fetch_candles("solana", "MemeMint", "MEME", Timeframe.M15, 300)
+    finally:
+        httpx.AsyncClient = saved
+        settings.GECKOTERMINAL_PIN_TOKEN_SIDE = original
+
+    assert any("QUOTE token" in record.getMessage() for record in caplog.records)

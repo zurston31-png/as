@@ -75,12 +75,31 @@ die() { log "ABORT: $*"; exit 1; }
 cd "$REPO_DIR" || die "no such repo directory: $REPO_DIR"
 
 # --- which deployment is this? -----------------------------------------
+# `ps -a`, not `ps`: a RUNNING container is the wrong thing to require. The
+# updater exists to recover a host, and the moment it is most needed is the
+# moment the bot is down - detection that depends on the service being up
+# refuses to work exactly then, which is what happened on this host.
+#
+# A stopped container still identifies the deployment. Failing that, a
+# compose file plus a docker binary does too: on a docker host with no
+# container yet (a fresh install, or one wiped by a bad build) the answer is
+# still docker, and `docker compose up -d` is still the right move.
+#
+# The venv check is tried in between, so a host that genuinely runs the
+# systemd path is not dragged into docker mode by a compose file it keeps
+# in the repo but does not use.
 if [ -z "${MODE:-}" ]; then
-    if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1 \
-       && docker compose ps --quiet 2>/dev/null | grep -q .; then
+    HAS_COMPOSE=0
+    if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then
+        HAS_COMPOSE=1
+    fi
+    if [ "$HAS_COMPOSE" = 1 ] && docker compose ps -a --quiet 2>/dev/null | grep -q .; then
         MODE=docker
     elif [ -x "$VENV/bin/python" ]; then
         MODE=systemd
+    elif [ "$HAS_COMPOSE" = 1 ]; then
+        log "no container exists yet, but this is a compose checkout - assuming docker"
+        MODE=docker
     else
         die "cannot tell whether this is a docker or systemd deployment - set MODE"
     fi

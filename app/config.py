@@ -273,6 +273,15 @@ class Settings(BaseSettings):
     # trustworthy reading, not a full walk-forward history.
     SIGNAL_SCORE_MIN_CANDLES: int = 60
     GECKOTERMINAL_API_BASE: str = "https://api.geckoterminal.com/api/v2"
+    # Ask GeckoTerminal for OUR token's candles rather than whichever token
+    # happens to be the base side of its pool. See the long comment in
+    # app/data/live_provider.py:fetch_candles. Default false because
+    # switching it on changes what the live entry gate sees for every
+    # quote-side token, and therefore which trades get taken, without
+    # moving the strategy version hash - so it has to be an explicit,
+    # deliberate act that starts a new collection run, not a silent
+    # consequence of deploying a fix.
+    GECKOTERMINAL_PIN_TOKEN_SIDE: bool = False
 
     # --- Market quality score (app/signals/market_quality.py) ---
     # Deliberately separate from BOTH the security score (is this a scam?)
