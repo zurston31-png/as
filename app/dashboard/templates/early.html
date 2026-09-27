@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Early Signals — Memecoin Bot</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131722; --border: #232838; --text: #e6e9ef;
+    --muted: #8b93a7; --green: #3ddc97; --red: #ff5c7a; --amber: #f5c344; --accent: #5b8def;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  h2 { font-size: 13px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  a.navlink { color: var(--accent); text-decoration: none; font-size: 13px; }
+  a.navlink:hover { text-decoration: underline; }
+  main { padding: 24px 28px; max-width: 1500px; margin: 0 auto; }
+  .muted { color: var(--muted); } .pos { color: var(--green); } .neg { color: var(--red); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .03em; white-space: nowrap; }
+  .pill.EARLY { background: rgba(91,141,239,.18); color: var(--accent); }
+  .pill.DEVELOPING { background: rgba(61,220,151,.15); color: var(--green); }
+  .pill.CONFIRMED { background: rgba(61,220,151,.22); color: var(--green); }
+  .pill.LATE { background: rgba(245,195,68,.16); color: var(--amber); }
+  .pill.OVEREXTENDED { background: rgba(255,92,122,.16); color: var(--red); }
+  .pill.WATCH { background: rgba(91,141,239,.15); color: var(--accent); }
+  .pill.FAILED, .pill.EXPIRED, .pill.SKIPPED { background: rgba(139,147,167,.15); color: var(--muted); }
+  .pill.PAPER_BUY { background: rgba(61,220,151,.22); color: var(--green); }
+  .score { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .warn { background: rgba(245,195,68,.08); border: 1px solid rgba(245,195,68,.35); border-radius: 8px; padding: 12px 15px; font-size: 13px; line-height: 1.55; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.55; }
+  .empty { padding: 26px 10px; color: var(--muted); font-size: 13px; text-align: center; }
+  .alert { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+  .alert:last-child { border-bottom: none; }
+  .alert .sym { font-weight: 600; width: 110px; }
+  .alert.good .msg { color: var(--green); }
+  .alert.warn .msg { color: var(--amber); }
+  a.addr { color: var(--accent); text-decoration: none; }
+  a.addr:hover { text-decoration: underline; }
+  .thin { opacity: .55; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌱 Early Signals</h1>
+  <div>
+    <a class="navlink" href="/">&larr; Dashboard</a>
+    &nbsp;&nbsp;<a class="navlink" href="/pipeline">Pipeline</a>
+    &nbsp;&nbsp;<a class="navlink" href="/performance">Performance</a>
+    &nbsp;&nbsp;<a class="navlink" href="/research">Research</a>
+    &nbsp;&nbsp;<a class="navlink" href="/dataset">Dataset</a>
+  </div>
+</header>
+<main>
+
+{% if not enabled %}
+<div class="card"><div class="warn">Early Signal Engine is disabled (EARLY_SIGNAL_ENABLED=false).</div></div>
+{% elif not may_trade %}
+<div class="card">
+  <div class="warn">
+    <strong>Research mode.</strong> The early engine can raise a token to WATCH and
+    <strong>cannot open a position</strong> — the existing technical strategy is still the only
+    thing that trades.
+    <div class="note" style="margin-top:8px">
+      The early-score weights are unvalidated priors: chosen by reasoning about market
+      microstructure, not measured against outcomes. Enabling <code>EARLY_SIGNAL_MAY_TRADE</code>
+      before the calibration table below shows higher scores actually preceding better outcomes
+      would be trading on a guess.
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if alerts %}
+<div class="card">
+  <h2>Alerts</h2>
+  {% for a in alerts %}
+  <div class="alert {{ a.level }}">
+    <span class="sym"><a class="addr" href="/token/{{ a.token }}">{{ a.symbol }}</a></span>
+    <span class="msg">{{ a.message }}</span>
+  </div>
+  {% endfor %}
+  <p class="note">Research signals for a human to look at. Nothing here places or cancels anything.</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Watching — {{ watching|length }} token(s)</h2>
+  {% if watching %}
+  <table>
+    <tr>
+      <th>symbol</th><th>mint</th><th class="num">early</th><th class="num">tech</th>
+      <th class="num">sec</th><th class="num">quality</th><th class="num">late risk</th>
+      <th>stage</th><th>pattern</th><th class="num">evals</th><th>reason</th>
+    </tr>
+    {% for e in watching %}
+    <tr>
+      <td><strong>{{ e.symbol }}</strong></td>
+      <td><a class="addr" href="/token/{{ e.token_address }}"><code>{{ e.token_address[:6] }}..{{ e.token_address[-4:] }}</code></a></td>
+      <td class="num score">{{ '%.0f' % e.early_score if e.early_score is not none else '—' }}</td>
+      <td class="num">{{ '%.0f' % e.technical_score if e.technical_score is not none else '—' }}</td>
+      <td class="num">{{ '%.0f' % e.security_score if e.security_score is not none else '—' }}</td>
+      <td class="num">{{ '%.0f' % e.market_quality_score if e.market_quality_score is not none else '—' }}</td>
+      <td class="num {{ 'neg' if (e.late_entry_risk or 0) >= 45 }}">{{ '%.0f' % e.late_entry_risk if e.late_entry_risk is not none else '—' }}</td>
+      <td>{% if e.stage %}<span class="pill {{ e.stage }}">{{ e.stage }}</span>{% endif %}</td>
+      <td class="muted">{{ e.momentum_class or '—' }}</td>
+      <td class="num muted">{{ e.evaluations }}</td>
+      <td class="muted">{{ (e.reason or '')[:90] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    Re-scored every {{ watch_threshold and '' }}couple of minutes. WATCH exists so a promising but
+    unconfirmed token is neither chased nor discarded — the bot keeps looking, and enters only if
+    confirmation arrives before the token becomes overextended.
+    Thresholds: watch ≥ {{ '%g' % watch_threshold }}, confirm ≥ {{ '%g' % confirm_threshold }}.
+  </p>
+  {% else %}
+  <div class="empty">Nothing on the watchlist. Candidates arrive from the scanner as it runs.</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Score calibration — does a higher early score precede a better outcome?</h2>
+  {% set any_data = calibration | selectattr('measurable') | list %}
+  {% if any_data %}
+    {% for c in calibration %}
+      {% set usable = c.buckets | selectattr('sample_size') | list %}
+      {% if usable %}
+      <h2 style="margin-top:16px">{{ c.horizon_minutes }} minutes</h2>
+      <p class="note" style="margin-top:0">{{ c.verdict() }}</p>
+      <table>
+        <tr>
+          <th>bucket</th><th class="num">n</th><th class="num">mean %</th><th class="num">median %</th>
+          <th class="num">win %</th><th class="num">avg MFE</th><th class="num">avg MAE</th>
+          <th class="num">PF</th><th class="num">expectancy net %</th>
+        </tr>
+        {% for b in usable %}
+        <tr class="{{ '' if b.meaningful else 'thin' }}">
+          <td>{{ b.bucket }}{% if not b.meaningful %} <span class="muted">*</span>{% endif %}</td>
+          <td class="num">{{ b.sample_size }}</td>
+          <td class="num">{{ '%+.2f' % b.mean_return_pct }}</td>
+          <td class="num">{{ '%+.2f' % b.median_return_pct }}</td>
+          <td class="num">{{ '%.0f' % b.win_rate_pct }}</td>
+          <td class="num pos">{{ '%+.1f' % b.mean_favorable_pct if b.mean_favorable_pct is not none else '—' }}</td>
+          <td class="num neg">{{ '%+.1f' % b.mean_adverse_pct if b.mean_adverse_pct is not none else '—' }}</td>
+          <td class="num">{{ '%.2f' % b.profit_factor if b.profit_factor is not none else '—' }}</td>
+          <td class="num {{ 'pos' if b.expectancy_net_pct > 0 else 'neg' }}">{{ '%+.2f' % b.expectancy_net_pct }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    {% endfor %}
+    <p class="note">
+      * fewer than 30 measured outcomes — shown so the table is not misleadingly tidy, and not
+      evidence. <strong>Expectancy net</strong> is the column that decides: a score that ranks raw
+      returns correctly but never clears the cost of trading has found a pattern that is real and
+      unprofitable, which is a different thing from an edge.
+      MAE is the worst drawdown from the signal price — a +5% horizon return that first went −30%
+      is not a +5% trade, it is a stopped-out loss.
+    </p>
+  {% else %}
+    <div class="empty">
+      No resolved forward returns with an early score yet. This accumulates on its own while the
+      bot runs, and it is what turns the early score from a hypothesis into a finding — or refutes it.
+    </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Lead time — how early were the winners found?</h2>
+  <p class="note" style="margin-top:0">{{ lead_time.verdict() }}</p>
+  {% if lead_time.conclusive %}
+  <table>
+    <tr><th>reached</th><th class="num">tokens</th><th class="num">detected first</th><th class="num">share</th></tr>
+    {% for t in lead_time.as_dict()['thresholds'] %}
+    <tr>
+      <td>+{{ '%g' % t.threshold_pct }}%</td>
+      <td class="num">{{ t.reached }}</td>
+      <td class="num">{{ t.detected_before }}</td>
+      <td class="num">{{ '%.0f%%' % t.share_pct if t.share_pct is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <p class="note">
+    Measured from the price when the token FIRST entered the watchlist, not from when a trade was
+    placed — a signal that fired early and was acted on late still counts as early, because
+    detection and action are different systems. Every watchlist entry is included, winners and
+    failures alike; a lead-time figure over survivors would describe a bot that only saw winners.
+  </p>
+</div>
+
+<div class="card">
+  <h2>False positives — why do high scores fail?</h2>
+  <p class="note" style="margin-top:0">{{ false_positives.verdict() }}</p>
+  {% set fp = false_positives.as_dict() %}
+  {% if fp.by_category %}
+  <table>
+    <tr><th>category</th><th class="num">count</th><th>what it means</th></tr>
+    {% for c in fp.by_category %}
+    <tr>
+      <td>{{ c.category }}</td>
+      <td class="num">{{ c.count }}</td>
+      <td class="muted">{{ c.explanation }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if fp.by_score_bucket %}
+  <h2 style="margin-top:18px">Failure rate by score bucket</h2>
+  <table>
+    <tr><th>bucket</th><th class="num">failed</th><th class="num">total</th><th class="num">failure rate</th></tr>
+    {% for b in fp.by_score_bucket %}
+    <tr>
+      <td>{{ b.bucket }}</td><td class="num">{{ b.failed }}</td><td class="num">{{ b.total }}</td>
+      <td class="num">{{ '%.0f%%' % b.failure_rate_pct if b.failure_rate_pct is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    If the failure rate does not fall as the score rises, the score is not separating anything —
+    which is the same finding the calibration table makes, arrived at from the other direction.
+  </p>
+  {% endif %}
+</div>
+
+{% if resolved %}
+<div class="card">
+  <h2>Recently resolved</h2>
+  <table>
+    <tr>
+      <th>symbol</th><th>state</th><th class="num">best early</th><th>failure category</th><th>reason</th>
+    </tr>
+    {% for e in resolved %}
+    <tr>
+      <td><a class="addr" href="/token/{{ e.token_address }}">{{ e.symbol }}</a></td>
+      <td><span class="pill {{ e.state }}">{{ e.state }}</span></td>
+      <td class="num">{{ '%.0f' % e.best_early_score if e.best_early_score is not none else '—' }}</td>
+      <td class="muted">{{ e.failure_category or '—' }}</td>
+      <td class="muted">{{ (e.reason or '')[:80] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">
+    Expired entries count as failures. A token that looked promising and went nowhere IS a false
+    positive, and dropping it would be the easiest way to make a useless signal look useful.
+  </p>
+</div>
+{% endif %}
+
+<p class="note" style="text-align:center; margin: 26px 0">
+  Paper trading only. No real funds, wallet or private key is involved anywhere in this bot.
+</p>
+
+</main>
+</body>
+</html>

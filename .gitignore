@@ -1,0 +1,44 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime data
+# Anchored with a leading slash so this only matches the runtime database
+# directory at the repo root. An unanchored "data/" also matched app/data/,
+# silently excluding the entire market-data package from commits.
+/data/
+# Database snapshots. Anchored for the same reason as /data/ above, and
+# excluded because a snapshot is the entire trade history - committing one
+# would publish it and bloat the repository on every backup.
+/backups/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# diagnostic dumps
+diagnostic_output.json
+
+# handover bundles built by scripts/package.sh. Generated from
+# `git archive HEAD`, so committing one would store a copy of the
+# repository inside itself and add a fresh megabyte on every push.
+/dist/
