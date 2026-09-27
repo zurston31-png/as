@@ -101,4 +101,9 @@ async def evaluate_live_entry_signal(
     # candle, so the recorded regime would not be the one the decision was
     # actually made in.
     score.market_condition = classify_full(series, liquidity_usd=liquidity_usd)
+    # Carried so the shadow recorder can re-score these exact bars under a
+    # challenger's weights. Fetching them again there would be a second
+    # request AND could land on a different candle, making the paired
+    # comparison unpaired in the one way it exists to prevent.
+    score.series = series
     return score

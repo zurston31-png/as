@@ -245,6 +245,22 @@ def _visible(series, *, opened_at: dt.datetime, now: dt.datetime, tf: Timeframe)
     ]
 
 
+#: A shadow return beyond this is treated as a data fault, not a trade.
+#:
+#: `(exit / entry - 1) * 100` has no natural ceiling, and a corrupt or
+#: mis-scaled entry price produces a number that is arithmetically valid
+#: and physically impossible. One such row poisoned the whole paired
+#: comparison: the champion's mean per-opportunity return read
+#: 10,205,008%, and the promotion gate then reported effect sizes and
+#: regime breakdowns off it as though they meant something.
+#:
+#: 10,000% is 100x. A memecoin really can do that, so the bound is set
+#: where it excludes essentially nothing real while catching a scale
+#: error by orders of magnitude. A row beyond it is recorded as
+#: UNMEASURABLE - never as a number, and never silently dropped.
+MAX_PLAUSIBLE_RETURN_PCT = 10_000.0
+
+
 def _close_out(
     row: models.ShadowPosition,
     *,
@@ -253,8 +269,30 @@ def _close_out(
     now: dt.datetime,
 ) -> None:
     """Write a finished outcome. Every field is derived, none accumulated."""
+    if not row.entry_price or row.entry_price <= 0:
+        _abandon(
+            row, now=now,
+            reason=(
+                f"entry price {row.entry_price!r} is not usable - every return "
+                "would divide by it, so the outcome is unmeasurable rather "
+                "than zero"
+            ),
+        )
+        return
+
     cost = _round_trip_cost(row)
     gross = (result.exit_price / row.entry_price - 1) * 100
+
+    if abs(gross) > MAX_PLAUSIBLE_RETURN_PCT:
+        _abandon(
+            row, now=now,
+            reason=(
+                f"implausible return {gross:+,.0f}% from entry "
+                f"{row.entry_price:.10g} to exit {result.exit_price:.10g} - "
+                "recorded as unmeasurable; a price scale fault, not a trade"
+            ),
+        )
+        return
 
     row.exit_price = result.exit_price
     row.closed_at = result.exit_at

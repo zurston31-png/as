@@ -181,6 +181,25 @@ class PairedComparison:
                 f"INSUFFICIENT_DATA: {self.paired} pairs recorded but no resolved outcomes "
                 "on both sides, so no expectancy can be compared."
             )
+        if not self.challenger_trades:
+            # A challenger that never entered has not been measured, it has
+            # been prevented. Reporting its lift as a large negative number
+            # - which is what declining every opportunity arithmetically
+            # produces - dresses a wiring fault up as a finding, and the
+            # gate's regime breakdown then explains in detail why an arm
+            # that never traded underperformed in eight market conditions.
+            #
+            # This is not hypothetical: a missing SignalScore.series meant
+            # every challenger took the recorder's "no candle history to
+            # score" branch for the entire life of the shadow system, and
+            # the comparison reported effect sizes and p-values throughout.
+            return (
+                f"NOT_MEASURED: {self.challenger_id} entered 0 of {self.paired} paired "
+                f"opportunities while the champion entered {self.champion_trades}. A "
+                "challenger that never trades has not been compared - it has been "
+                "silenced. Check that the recorder is receiving a candle series before "
+                "reading anything below as a result."
+            )
         lines = [
             f"{self.challenger_id} differs from the champion by {self.difference:+.2f}% per "
             f"OPPORTUNITY across {self.paired} paired opportunities "

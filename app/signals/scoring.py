@@ -60,6 +60,19 @@ class SignalScore:
     # by app/signals/live_gate.py, which already has the series in hand and
     # would otherwise make the persistence layer fetch it a second time.
     market_condition: object | None = None
+    # The candle series the score was produced from. Set by
+    # app/signals/live_gate.py for the same reason market_condition is:
+    # it already has the series in hand, and the shadow recorder needs it
+    # to re-score the SAME bars under a challenger's weights.
+    #
+    # Its absence was not a missing optimisation, it was a silent
+    # failure. app/services/trading_service.py has always passed
+    # `getattr(score, "series", None)` to the recorder, and because this
+    # field did not exist that was always None - so every challenger took
+    # the recorder's "no candle history to score" branch and declined
+    # every opportunity it was ever offered. The comparison then reported
+    # a confident verdict on an arm that had never traded.
+    series: object | None = None
 
     @property
     def supporting(self) -> list[Factor]:
