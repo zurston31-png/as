@@ -132,3 +132,59 @@ def test_no_exit_challengers_means_an_empty_map(monkeypatch):
 
     monkeypatch.setattr("app.shadow.challengers.enabled", lambda: [])
     assert resolver._policies_by_strategy(_base()) == {}
+
+
+# ---------------------------------------------------------------------------
+# the levels the post-mortems actually implicate
+# ---------------------------------------------------------------------------
+
+def test_a_challenger_can_move_trailing_and_break_even():
+    """The gap the 50 post-mortems exposed is between entry and +10%.
+
+    Trailing activates at +15% and break-even at +10%, but most positions
+    peaked between +2% and +6% - so in the range where nearly all the
+    opportunity lives, the only rule that can close a position is the
+    trend-reversal trigger. A challenger that could only move the stop,
+    the target and the max hold could not test that at all.
+    """
+    base = _base()
+    out = base.with_overrides(
+        trailing_activation_pct=0.02,
+        trailing_distance_pct=0.015,
+        break_even_trigger_pct=0.03,
+    )
+
+    assert out.trailing_activation_pct == 0.02
+    assert out.trailing_distance_pct == 0.015
+    assert out.break_even_trigger_pct == 0.03
+    # everything else untouched
+    assert out.stop_loss_pct == base.stop_loss_pct
+    assert out.take_profit_pct == base.take_profit_pct
+    assert out.max_hold_hours == base.max_hold_hours
+    assert out.break_even_buffer_pct == base.break_even_buffer_pct
+
+
+def test_the_new_levels_count_as_varying_the_exit():
+    """So the both-at-once guard still refuses them alongside entry changes."""
+    c = Challenger(strategy_id="early-trail", trailing_activation_pct=0.02)
+    assert c.varies_exit is True
+    assert c.varies_entry is False
+
+
+def test_an_early_trailing_challenger_loads_and_reaches_the_resolver(monkeypatch):
+    from app.shadow import resolver
+
+    raw = json.dumps([{
+        "strategy_id": "early-trail",
+        "description": "lock in the 2-6% moves the champion gives back",
+        "trailing_activation_pct": 0.02,
+        "trailing_distance_pct": 0.015,
+    }])
+    loaded = load_challengers(raw)
+    assert len(loaded) == 1
+
+    monkeypatch.setattr("app.shadow.challengers.enabled", lambda: loaded)
+    policies = resolver._policies_by_strategy(_base())
+
+    assert policies["early-trail"].trailing_activation_pct == 0.02
+    assert policies["early-trail"].trailing_distance_pct == 0.015

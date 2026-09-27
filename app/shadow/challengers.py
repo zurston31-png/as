@@ -40,6 +40,11 @@ class Challenger:
     stop_loss_pct: float | None = None
     take_profit_pct: float | None = None
     max_hold_hours: float | None = None
+    # The post-mortems put the gap here: trailing activates at +15% and
+    # break-even at +10%, while most positions peak between +2% and +6%.
+    trailing_activation_pct: float | None = None
+    trailing_distance_pct: float | None = None
+    break_even_trigger_pct: float | None = None
 
     @property
     def varies_exit(self) -> bool:
@@ -50,8 +55,11 @@ class Challenger:
         would leave no way to tell which half did it. This makes that
         checkable rather than a convention nobody enforces.
         """
-        return any(v is not None for v in
-                   (self.stop_loss_pct, self.take_profit_pct, self.max_hold_hours))
+        return any(v is not None for v in (
+            self.stop_loss_pct, self.take_profit_pct, self.max_hold_hours,
+            self.trailing_activation_pct, self.trailing_distance_pct,
+            self.break_even_trigger_pct,
+        ))
 
     @property
     def varies_entry(self) -> bool:
@@ -145,6 +153,18 @@ def _parse(raw: str) -> list[Challenger]:
                 max_hold_hours=(
                     float(entry["max_hold_hours"])
                     if entry.get("max_hold_hours") is not None else None
+                ),
+                trailing_activation_pct=(
+                    float(entry["trailing_activation_pct"])
+                    if entry.get("trailing_activation_pct") is not None else None
+                ),
+                trailing_distance_pct=(
+                    float(entry["trailing_distance_pct"])
+                    if entry.get("trailing_distance_pct") is not None else None
+                ),
+                break_even_trigger_pct=(
+                    float(entry["break_even_trigger_pct"])
+                    if entry.get("break_even_trigger_pct") is not None else None
                 ),
             )
             if challenger.varies_entry and challenger.varies_exit:

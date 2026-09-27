@@ -66,6 +66,9 @@ class ExitPolicy:
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,
         max_hold_hours: float | None = None,
+        trailing_activation_pct: float | None = None,
+        trailing_distance_pct: float | None = None,
+        break_even_trigger_pct: float | None = None,
     ) -> "ExitPolicy":
         """A copy with some levels replaced, for an EXIT challenger.
 
@@ -77,6 +80,14 @@ class ExitPolicy:
         was settled by the 97-round-trip record, which found a positive
         gross edge per position that execution cost more than erased. The
         exit is the next variable, and this is how it gets varied.
+
+        Trailing and break-even levels are overridable too, because the
+        post-mortems showed the gap is exactly there: trailing activates
+        at +15% and break-even at +10%, while most positions peak between
+        +2% and +6%. Between entry and +10% the only thing that can close
+        a position is the trend-reversal rule, which fires on two lower
+        highs in five samples. A challenger that cannot move those two
+        levels cannot test the hypothesis the data actually points at.
 
         A challenger that sets none of these is byte-identical to the
         champion's policy, so adding the capability changes no existing
@@ -90,10 +101,19 @@ class ExitPolicy:
                 self.take_profit_pct if take_profit_pct is None else take_profit_pct
             ),
             trailing_enabled=self.trailing_enabled,
-            trailing_activation_pct=self.trailing_activation_pct,
-            trailing_distance_pct=self.trailing_distance_pct,
+            trailing_activation_pct=(
+                self.trailing_activation_pct if trailing_activation_pct is None
+                else trailing_activation_pct
+            ),
+            trailing_distance_pct=(
+                self.trailing_distance_pct if trailing_distance_pct is None
+                else trailing_distance_pct
+            ),
             break_even_enabled=self.break_even_enabled,
-            break_even_trigger_pct=self.break_even_trigger_pct,
+            break_even_trigger_pct=(
+                self.break_even_trigger_pct if break_even_trigger_pct is None
+                else break_even_trigger_pct
+            ),
             break_even_buffer_pct=self.break_even_buffer_pct,
             max_hold_hours=(
                 self.max_hold_hours if max_hold_hours is None else max_hold_hours

@@ -419,6 +419,9 @@ def _policies_by_strategy(base: ExitPolicy) -> dict[str, ExitPolicy]:
             stop_loss_pct=challenger.stop_loss_pct,
             take_profit_pct=challenger.take_profit_pct,
             max_hold_hours=challenger.max_hold_hours,
+            trailing_activation_pct=challenger.trailing_activation_pct,
+            trailing_distance_pct=challenger.trailing_distance_pct,
+            break_even_trigger_pct=challenger.break_even_trigger_pct,
         )
     return out
 
