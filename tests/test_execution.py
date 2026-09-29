@@ -19,15 +19,7 @@ def bar(high, low, close, offset=1):
     return Candle(BASE + timedelta(minutes=5 * offset), low, high, low, close, 100)
 
 
-def test_entry_takes_slippage_against_you(config):
-    config.execution.slippage_ticks = 2.0          # 2 x 0.25 = 0.5
-    broker = PaperBroker(config)
-    pos = broker.open(signal(), qty=10)
-    assert pos.entry_price == pytest.approx(100.5)
-
-    short = broker.open(signal(side=Side.SHORT, stop=102, tp1=96, tp2=92), qty=10)
-    assert short.entry_price == pytest.approx(99.5)
-
+# ------------------------------------------------------------- fill logic
 
 def test_stop_closes_the_position_at_a_loss(config):
     broker = PaperBroker(config)
@@ -43,8 +35,7 @@ def test_stop_closes_the_position_at_a_loss(config):
 def test_a_bar_that_spans_stop_and_target_is_treated_as_a_stop(config):
     broker = PaperBroker(config)
     broker.open(signal(), qty=10)
-    closed = broker.on_candle(bar(high=105, low=97, close=104))
-    assert closed[0].exit_reason == "stop"
+    assert broker.on_candle(bar(high=105, low=97, close=104))[0].exit_reason == "stop"
 
 
 def test_tp1_scales_out_and_moves_the_stop_to_breakeven(config):
@@ -80,16 +71,7 @@ def test_no_partial_when_scaling_is_disabled(config):
     config.execution.partial_at_tp1 = 0.0
     broker = PaperBroker(config)
     broker.open(signal(), qty=10)
-    closed = broker.on_candle(bar(high=104.5, low=100.5, close=104))
-    assert closed and closed[0].exit_reason == "tp1"
-
-
-def test_closed_trades_are_appended_to_the_log(config, tmp_path):
-    broker = PaperBroker(config)
-    broker.open(signal(), qty=10)
-    broker.on_candle(bar(high=101, low=97, close=97.5))
-    lines = open(config.execution.trades_path).read().strip().splitlines()
-    assert len(lines) == 1 and '"exit_reason": "stop"' in lines[0]
+    assert broker.on_candle(bar(high=104.5, low=100.5, close=104))[0].exit_reason == "tp1"
 
 
 def test_flatten_closes_everything(config):
@@ -98,6 +80,86 @@ def test_flatten_closes_everything(config):
     closed = broker.close_all(101.0, bar(high=101, low=100, close=101), "flatten")
     assert closed and closed[0].exit_reason == "flatten" and not broker.positions
 
+
+def test_closed_trades_are_appended_to_the_log(config):
+    broker = PaperBroker(config)
+    broker.open(signal(), qty=10)
+    broker.on_candle(bar(high=101, low=97, close=97.5))
+    lines = open(config.execution.trades_path).read().strip().splitlines()
+    assert len(lines) == 1 and '"exit_reason": "stop"' in lines[0]
+
+
+# ------------------------------------------------------------------ costs
+
+def test_entry_takes_slippage_against_you(config):
+    config.execution.slippage_ticks = 2.0          # 2 x 0.25 = 0.5
+    broker = PaperBroker(config)
+    assert broker.open(signal(), qty=10).entry_price == pytest.approx(100.5)
+    short = broker.open(signal(side=Side.SHORT, stop=102, tp1=96, tp2=92), qty=10)
+    assert short.entry_price == pytest.approx(99.5)
+
+
+def test_stops_slip_further_than_the_stop_price(config):
+    """A stop is a market order into the move that triggered it."""
+    config.execution.stop_slippage_ticks = 4.0     # 1.0 point
+    broker = PaperBroker(config)
+    broker.open(signal(), qty=10)
+    closed = broker.on_candle(bar(high=101, low=96, close=96.5))
+    assert closed[0].exit_price == pytest.approx(97.0)     # stop 98 minus 1.0
+    assert closed[0].pnl == pytest.approx(-30.0)
+
+
+def test_a_short_stop_slips_upwards(config):
+    config.execution.stop_slippage_ticks = 4.0
+    broker = PaperBroker(config)
+    broker.open(signal(side=Side.SHORT, entry=100, stop=102, tp1=96, tp2=92), qty=10)
+    closed = broker.on_candle(bar(high=103, low=99, close=102.5))
+    assert closed[0].exit_price == pytest.approx(103.0)    # stop 102 plus 1.0
+
+
+def test_targets_fill_at_their_limit_price_by_default(config):
+    broker = PaperBroker(config)
+    config.execution.partial_at_tp1 = 0.0
+    broker.open(signal(), qty=10)
+    closed = broker.on_candle(bar(high=106, low=100, close=105))
+    assert closed[0].exit_price == pytest.approx(104.0)
+
+
+def test_commission_is_charged_on_both_sides(config):
+    config.execution.commission_per_unit = 1.0
+    broker = PaperBroker(config)
+    broker.open(signal(), qty=10)
+    closed = broker.on_candle(bar(high=101, low=97, close=97.5))
+    # -20 of price movement, minus 10 entry commission and 10 exit commission.
+    assert closed[0].pnl == pytest.approx(-40.0)
+
+
+def test_commission_on_a_scaled_exit_is_charged_per_unit(config):
+    config.execution.commission_per_unit = 1.0
+    config.execution.partial_at_tp1 = 0.5
+    broker = PaperBroker(config)
+    broker.open(signal(), qty=10)
+    broker.on_candle(bar(high=104.5, low=100.5, close=104, offset=1))
+    closed = broker.on_candle(bar(high=108.5, low=104, close=108.2, offset=2))
+    # +20 and +40 of movement, less 10 entry + 5 + 5 exit commissions.
+    assert closed[0].pnl == pytest.approx(60.0 - 20.0)
+
+
+def test_costs_make_the_same_trade_worse_not_better(config):
+    """Sanity: turning costs on can only reduce the result."""
+    def run(costs: bool) -> float:
+        config.execution.slippage_ticks = 1.0 if costs else 0.0
+        config.execution.stop_slippage_ticks = 1.0 if costs else 0.0
+        config.execution.commission_per_unit = 0.75 if costs else 0.0
+        broker = PaperBroker(config)
+        broker.open(signal(), qty=10)
+        return broker.on_candle(bar(high=104.5, low=100.5, close=104))[0].pnl
+
+    config.execution.partial_at_tp1 = 0.0
+    assert run(costs=True) < run(costs=False)
+
+
+# ------------------------------------------------------------------ live
 
 def test_live_broker_refuses_to_pretend(config):
     with pytest.raises(LiveBrokerNotConfigured):

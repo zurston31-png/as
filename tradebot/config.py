@@ -34,35 +34,7 @@ class MarketConfig:
     trade_session_only: bool = True
 
 
-@dataclass
-class StrategyConfig:
-    name: str = "ema_vwap_rsi"
-    ema_fast: int = 9
-    ema_slow: int = 21
-    ema_cross_lookback: int = 5       # bars the cross stays "fresh"
-    rsi_period: int = 14
-    rsi_long_min: float = 50.0
-    rsi_long_max: float = 72.0
-    rsi_short_max: float = 50.0
-    rsi_short_min: float = 28.0
-    atr_period: int = 14
-    volume_ma_period: int = 20
-    volume_multiple: float = 1.1      # bar volume must beat this x the average
-    swing_width: int = 2
-    sweep_lookback: int = 5
-    structure_lookback: int = 60
-    min_score: float = 0.75           # weighted share of rules that must pass
-    # Optional rules: these contribute to the score but never block on their own.
-    optional_rules: list[str] = field(
-        default_factory=lambda: ["liquidity_sweep", "structure_break"]
-    )
-    # Trade construction
-    stop_atr_multiple: float = 1.2    # fallback stop when no swing is available
-    stop_buffer_atr: float = 0.25     # padding beyond the swing
-    tp1_r: float = 2.0
-    tp2_r: float = 4.0
-    min_rr: float = 1.5
-    min_stop_ticks: float = 4.0
+DEFAULT_STRATEGY: dict[str, Any] = {"preset": "ema_vwap_rsi"}
 
 
 @dataclass
@@ -71,7 +43,10 @@ class AIConfig:
     model: str = "claude-opus-5-5"
     effort: str = "medium"            # low | medium | high | xhigh | max
     max_tokens: int = 4000
-    required: bool = False            # True = no AI verdict means NO TRADE
+    # What an unavailable / malformed / timed-out verdict means. "wait" is the
+    # safe default: a confirmation layer you cannot reach has not confirmed
+    # anything. "rules_only" trades the rules alone when the API is down.
+    on_failure: str = "wait"          # wait | rules_only
     confirm_min_confidence: float = 0.55
     candles_in_prompt: int = 40
     timeout_seconds: float = 45.0
@@ -115,6 +90,7 @@ class RiskConfig:
     min_rr: float = 1.5
     kill_switch: bool = False
     state_path: str = "data/risk_state.json"
+    audit_path: str = "data/audit.jsonl"
     # Flatten everything and stop for the day when equity drops this far.
     daily_drawdown_kill_pct: float = 3.0
 
@@ -122,8 +98,10 @@ class RiskConfig:
 @dataclass
 class ExecutionConfig:
     mode: str = "paper"               # paper | alerts_only | live (live is a stub)
-    slippage_ticks: float = 1.0
-    commission_per_unit: float = 0.0
+    slippage_ticks: float = 1.0        # entry, against you
+    stop_slippage_ticks: float = 1.0   # stops slip further than limits do
+    target_slippage_ticks: float = 0.0 # a resting limit usually fills at its price
+    commission_per_unit: float = 0.75  # per contract PER SIDE - charged twice per trade
     partial_at_tp1: float = 0.5       # scale out half at TP1
     move_stop_to_breakeven_after_tp1: bool = True
     trades_path: str = "data/trades.jsonl"
@@ -138,6 +116,10 @@ class FeedConfig:
     poll_interval_seconds: float = 15.0
     webhook_secret: str = ""
     warmup_csv: str = ""              # history preloaded before live bars arrive
+    # Continuous freshness: a decision bar older than this many *bar intervals*
+    # blocks every signal, long before the screen-capture backup gets involved.
+    max_stale_bars: float = 2.5
+    max_stale_seconds: float = 0.0    # absolute override; 0 = derive from the timeframe
 
 
 @dataclass
@@ -158,7 +140,8 @@ class ServerConfig:
 @dataclass
 class Config:
     market: MarketConfig = field(default_factory=MarketConfig)
-    strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    # Free-form: validated into a StrategySpec at startup. See strategy/spec.py.
+    strategy: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_STRATEGY))
     ai: AIConfig = field(default_factory=AIConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)

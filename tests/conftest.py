@@ -12,7 +12,11 @@ BASE = datetime(2026, 3, 10, 14, 0, tzinfo=timezone.utc)  # 10:00 New York
 
 @pytest.fixture
 def config(tmp_path) -> Config:
-    """A config that writes its state into a throwaway directory."""
+    """A config that writes its state into a throwaway directory.
+
+    Costs are zeroed so geometry tests assert on clean numbers; the cost model
+    has its own tests in test_execution.py.
+    """
     cfg = Config()
     cfg.market.symbol = "TEST"
     cfg.market.point_value = 1.0
@@ -21,11 +25,34 @@ def config(tmp_path) -> Config:
     cfg.market.min_qty = 1.0
     cfg.risk.starting_equity = 100_000.0
     cfg.risk.state_path = str(tmp_path / "risk.json")
+    cfg.risk.audit_path = str(tmp_path / "audit.jsonl")
     cfg.execution.trades_path = str(tmp_path / "trades.jsonl")
     cfg.execution.slippage_ticks = 0.0
+    cfg.execution.stop_slippage_ticks = 0.0
+    cfg.execution.target_slippage_ticks = 0.0
+    cfg.execution.commission_per_unit = 0.0
     cfg.ai.enabled = False
     cfg.vision.enabled = False
+    cfg.notify.sound = cfg.notify.desktop = cfg.notify.console = False
     return cfg
+
+
+@pytest.fixture
+def loose_config(config) -> Config:
+    """The same, with a permissive strategy so tests can produce signals easily."""
+    config.market.trade_session_only = False
+    config.strategy = {
+        "name": "test_strategy",
+        "min_score": 0.5,
+        "rules": [
+            {"rule": "ema_stack", "mode": "required", "params": {"fast": 9, "slow": 21}},
+            {"rule": "rsi_window", "mode": "required",
+             "params": {"period": 14, "long_min": 40, "long_max": 80,
+                        "short_min": 20, "short_max": 60}},
+            {"rule": "volume_confirmation", "mode": "advisory"},
+        ],
+    }
+    return config
 
 
 def make_candles(closes, start=BASE, minutes=5, volume=1000.0, spread=1.0):
@@ -47,3 +74,13 @@ def uptrend():
     closes += [124 - i * 0.2 for i in range(6)]      # small pullback
     closes += [122.8 + i * 0.8 for i in range(14)]   # resumption
     return make_candles(closes)
+
+
+def build_context(config, candles, **kwargs):
+    """Helper: a MarketContext over these candles."""
+    from tradebot.models import Series
+    from tradebot.strategy.context import ContextBuilder
+
+    series = Series(config.market.symbol, config.market.timeframe)
+    series.extend(candles)
+    return ContextBuilder(config).build(series, **kwargs)

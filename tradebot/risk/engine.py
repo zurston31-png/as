@@ -1,23 +1,47 @@
 """The last gate before anything reaches your screen as actionable.
 
-Order matters: the kill switch is checked first and short-circuits everything,
-because that's the whole point of a kill switch.
+Order matters. The kill switch is checked first and short-circuits everything;
+position-state reconciliation is checked next, because sizing a new trade
+against a position book that disagrees with the broker is worse than not
+trading at all.
+
+Every refusal carries a stable `reason_code` so rejections can be counted and
+compared across runs rather than string-matched.
 """
 
 from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..config import Config
+from ..execution.book import PositionState
 from ..models import ClosedTrade, RiskDecision, TradeSignal, utcnow
 from .state import RiskStore
 
 
+class RejectCode:
+    """Stable identifiers for every way a signal can be refused."""
+
+    KILL_SWITCH = "kill_switch_active"
+    RECONCILIATION = "position_state_unreconciled"
+    NO_STOP = "stop_loss_required"
+    ZERO_STOP = "stop_distance_zero"
+    MIN_RR = "reward_to_risk_below_minimum"
+    SAME_DIRECTION = "already_in_this_direction"
+    OPPOSITE_DIRECTION = "opposite_position_open"
+    MAX_OPEN = "max_open_positions"
+    MAX_TRADES = "max_trades_per_day"
+    DAILY_LOSS = "daily_loss_limit"
+    COOLDOWN = "cooldown_after_losses"
+    SIZE_BELOW_MIN = "position_size_below_minimum"
+    RISK_CEILING = "risk_per_trade_above_ceiling"
+    OK = "ok"
+
+
 class RiskEngine:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config) -> None:
         self.cfg = config
         self.store = RiskStore(config.risk.state_path, config.risk.starting_equity)
         if config.risk.kill_switch:
@@ -46,92 +70,136 @@ class RiskEngine:
         now = now or utcnow()
         self.store.roll_day(now.astimezone(self.tz).date())
 
+    # -------------------------------------------------------------- sizing
+
+    def position_size(self, signal: TradeSignal) -> dict[str, Any]:
+        """The sizing formula, written out so the audit log can re-derive it.
+
+            risk_dollars           = equity x risk_percent
+            stop_risk_per_contract = |entry - stop| x point_value
+            contracts              = floor(risk_dollars / stop_risk_per_contract)
+
+        Rounding is always *down*. If that reaches zero the trade is refused -
+        risk is never increased to make a position fit.
+        """
+        m, r = self.cfg.market, self.cfg.risk
+        equity = self.store.state.equity or r.starting_equity
+        risk_percent = r.risk_per_trade_pct / 100.0
+        risk_dollars = equity * risk_percent
+        stop_distance = abs(signal.entry - signal.stop)
+        stop_risk_per_contract = stop_distance * m.point_value
+
+        record: dict[str, Any] = {
+            "equity": round(equity, 2),
+            "risk_percent": risk_percent,
+            "risk_dollars": round(risk_dollars, 4),
+            "entry": signal.entry,
+            "stop": signal.stop,
+            "stop_distance": round(stop_distance, 10),
+            "point_value": m.point_value,
+            "stop_risk_per_contract": round(stop_risk_per_contract, 6),
+            "qty_step": m.qty_step,
+            "min_qty": m.min_qty,
+        }
+        if stop_risk_per_contract <= 0:
+            record.update({"raw_contracts": 0.0, "contracts": 0.0,
+                           "risk_amount": 0.0, "risk_pct": 0.0})
+            return record
+
+        raw = risk_dollars / stop_risk_per_contract
+        step = m.qty_step or 1.0
+        contracts = round(math.floor(raw / step) * step, 10)
+        if contracts < m.min_qty:
+            contracts = 0.0
+        risk_amount = contracts * stop_risk_per_contract
+        record.update({
+            "raw_contracts": round(raw, 6),
+            "contracts": contracts,
+            "risk_amount": round(risk_amount, 4),
+            "risk_pct": risk_amount / equity if equity else 0.0,
+        })
+        return record
+
     # -------------------------------------------------------------- gating
 
     def evaluate(
-        self, signal: TradeSignal, open_positions: int, now: Optional[datetime] = None
+        self,
+        signal: TradeSignal,
+        position: Optional[PositionState] = None,
+        now: Optional[datetime] = None,
+        reconciled: bool = True,
+        reconciliation_message: str = "",
     ) -> RiskDecision:
         now = now or utcnow()
         self.tick(now)
         r = self.cfg.risk
         st = self.store.state
-        violations: list[str] = []
+        position = position or PositionState()
+
+        def refuse(code: str, reason: str, sizing: Optional[dict] = None) -> RiskDecision:
+            return RiskDecision(False, reason, reason_code=code, violations=[code],
+                                sizing=sizing or {})
 
         if st.kill_switch:
-            return RiskDecision(False, f"kill switch active ({st.kill_reason})", violations=["kill_switch"])
+            return refuse(RejectCode.KILL_SWITCH, f"kill switch active ({st.kill_reason})")
+
+        if not reconciled:
+            return refuse(RejectCode.RECONCILIATION,
+                          reconciliation_message or "position state could not be reconciled")
 
         if r.require_stop and not signal.stop:
-            violations.append("missing_stop")
-        if signal.stop_distance <= 0:
-            violations.append("zero_stop_distance")
-        if violations:
-            return RiskDecision(False, "a stop loss is required on every signal", violations=violations)
+            return refuse(RejectCode.NO_STOP, "a stop loss is required on every signal")
+        if abs(signal.entry - signal.stop) <= 0:
+            return refuse(RejectCode.ZERO_STOP, "entry and stop are the same price")
 
-        rr = abs(signal.tp1 - signal.entry) / signal.stop_distance
+        rr = abs(signal.tp1 - signal.entry) / abs(signal.entry - signal.stop)
         if rr < r.min_rr:
-            violations.append("min_rr")
-            return RiskDecision(False, f"R:R to TP1 is {rr:.2f}, below the {r.min_rr:g} minimum",
-                                violations=violations)
+            return refuse(RejectCode.MIN_RR,
+                          f"R:R to TP1 is {rr:.2f}, below the {r.min_rr:g} minimum")
 
-        if open_positions >= r.max_open_positions:
-            violations.append("max_open_positions")
-            return RiskDecision(False, f"already holding {open_positions} position(s)",
-                                violations=violations)
+        if position.side is signal.side and not position.flat:
+            return refuse(RejectCode.SAME_DIRECTION,
+                          f"already {position.side.value} - not adding to the same direction")
+        if not position.flat and position.side is not signal.side:
+            return refuse(RejectCode.OPPOSITE_DIRECTION,
+                          f"holding a {position.state} position; flatten before reversing")
+        if position.count >= r.max_open_positions:
+            return refuse(RejectCode.MAX_OPEN, f"already holding {position.count} position(s)")
 
         if st.trades_today >= r.max_trades_per_day:
-            violations.append("max_trades_per_day")
-            return RiskDecision(False, f"daily trade cap reached ({st.trades_today}/{r.max_trades_per_day})",
-                                violations=violations)
+            return refuse(RejectCode.MAX_TRADES,
+                          f"daily trade cap reached ({st.trades_today}/{r.max_trades_per_day})")
 
         if st.daily_pnl_pct <= -abs(r.max_daily_loss_pct):
             self.trip_kill_switch(f"auto: daily loss limit hit ({st.daily_pnl_pct:.2f}%)")
-            violations.append("max_daily_loss")
-            return RiskDecision(False, f"daily loss limit hit ({st.daily_pnl_pct:.2f}%)",
-                                violations=violations)
+            return refuse(RejectCode.DAILY_LOSS,
+                          f"daily loss limit hit ({st.daily_pnl_pct:.2f}%)")
 
         if self.store.cooldown_active(now):
-            violations.append("cooldown")
-            return RiskDecision(
-                False,
-                f"cooling down after {st.consecutive_losses} loss(es) until {st.cooldown_until}",
-                violations=violations,
-            )
+            return refuse(RejectCode.COOLDOWN,
+                          f"cooling down after {st.consecutive_losses} loss(es) "
+                          f"until {st.cooldown_until}")
 
-        qty, risk_amount, risk_pct = self.position_size(signal)
-        if qty <= 0:
-            violations.append("size_zero")
-            return RiskDecision(
-                False,
-                "position size rounds to zero - stop is too wide for the configured risk",
-                violations=violations,
+        sizing = self.position_size(signal)
+        if sizing["contracts"] <= 0:
+            return refuse(
+                RejectCode.SIZE_BELOW_MIN,
+                f"position size below minimum: {sizing['risk_dollars']:.2f} of risk budget "
+                f"buys {sizing.get('raw_contracts', 0):.4f} contracts at "
+                f"{sizing['stop_risk_per_contract']:.2f} each (minimum {sizing['min_qty']:g})",
+                sizing,
             )
-        if risk_pct > r.max_risk_per_trade_pct / 100.0:
-            violations.append("max_risk_per_trade")
-            return RiskDecision(
-                False,
-                f"sized risk {risk_pct * 100:.2f}% exceeds the {r.max_risk_per_trade_pct:g}% ceiling",
-                violations=violations,
-            )
+        if sizing["risk_pct"] > r.max_risk_per_trade_pct / 100.0:
+            return refuse(
+                RejectCode.RISK_CEILING,
+                f"sized risk {sizing['risk_pct'] * 100:.2f}% exceeds the "
+                f"{r.max_risk_per_trade_pct:g}% ceiling", sizing)
 
-        return RiskDecision(True, "within all limits", qty=qty, risk_amount=risk_amount, risk_pct=risk_pct)
-
-    def position_size(self, signal: TradeSignal) -> tuple[float, float, float]:
-        """Risk-based sizing: qty = (equity * risk%) / (stop distance * point value)."""
-        m, r = self.cfg.market, self.cfg.risk
-        equity = self.store.state.equity or r.starting_equity
-        budget = equity * (r.risk_per_trade_pct / 100.0)
-        per_unit_risk = signal.stop_distance * m.point_value
-        if per_unit_risk <= 0:
-            return 0.0, 0.0, 0.0
-        raw = budget / per_unit_risk
-        step = m.qty_step or 1.0
-        qty = math.floor(raw / step) * step
-        qty = round(qty, 10)
-        if qty < m.min_qty:
-            qty = 0.0
-        risk_amount = qty * per_unit_risk
-        risk_pct = risk_amount / equity if equity else 0.0
-        return qty, risk_amount, risk_pct
+        return RiskDecision(
+            True, "within all limits", reason_code=RejectCode.OK,
+            qty=sizing["contracts"], risk_amount=sizing["risk_amount"],
+            risk_pct=sizing["risk_pct"], sizing=sizing,
+        )
 
     # ------------------------------------------------------------ mutation
 
@@ -154,8 +222,9 @@ class RiskEngine:
                 # historical replay cools down for 30 bars' worth of minutes
                 # rather than for the whole backtest.
                 base = trade.closed_at or utcnow()
-                until = base + timedelta(minutes=r.cooldown_minutes_after_loss)
-                st.cooldown_until = until.isoformat()
+                st.cooldown_until = (
+                    base + timedelta(minutes=r.cooldown_minutes_after_loss)
+                ).isoformat()
         else:
             st.consecutive_losses = 0
             st.cooldown_until = None
@@ -181,7 +250,7 @@ class RiskEngine:
         self.store.state.consecutive_losses = 0
         self.store.save()
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         r = self.cfg.risk
         st = self.store.state
         return {
@@ -193,6 +262,7 @@ class RiskEngine:
                 "max_open_positions": r.max_open_positions,
                 "max_consecutive_losses": r.max_consecutive_losses,
                 "cooldown_minutes_after_loss": r.cooldown_minutes_after_loss,
+                "min_rr": r.min_rr,
             },
             "trades_remaining": max(0, r.max_trades_per_day - st.trades_today),
             "cooldown_active": self.store.cooldown_active(utcnow()),

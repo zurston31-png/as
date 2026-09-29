@@ -30,6 +30,12 @@ class Metrics:
     longest_loss_streak: int = 0
     final_equity: float = 0.0
     return_pct: float = 0.0
+    # Share of trades that reached each target. TP1 is `entry.tp1_r` (2R by
+    # default) and TP2 is `entry.tp2_r` (4R), so these are the "2R hit rate" and
+    # "4R hit rate" - the numbers that say whether the targets are reachable at
+    # all, which expectancy alone hides.
+    tp1_hit_rate: float = 0.0
+    tp2_hit_rate: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in self.__dict__.items()}
@@ -47,6 +53,8 @@ class Metrics:
             ("Avg win / loss", f"{self.avg_win_r:+.2f}R / {self.avg_loss_r:+.2f}R"),
             ("Max drawdown", f"{self.max_drawdown:,.2f}  ({self.max_drawdown_pct:.2f}%)"),
             ("Worst streak", f"{self.longest_loss_streak} losses in a row"),
+            ("Target hit rate", f"TP1 {self.tp1_hit_rate * 100:.0f}% · "
+                                f"TP2 {self.tp2_hit_rate * 100:.0f}%"),
             ("Final equity", f"{self.final_equity:,.2f}"),
         ]
         width = max(len(k) for k, _ in rows)
@@ -70,6 +78,13 @@ def compute(trades: Sequence[ClosedTrade], starting_equity: float) -> Metrics:
     m.expectancy_r = sum(t.r_multiple for t in trades) / m.trades
     m.avg_win_r = sum(t.r_multiple for t in wins) / len(wins) if wins else 0.0
     m.avg_loss_r = sum(t.r_multiple for t in losses) / len(losses) if losses else 0.0
+
+    # A trade "reached TP1" if it exited there, ran on to TP2, or was stopped
+    # out only after taking its partial - all three printed the first target.
+    reached_tp1 = [t for t in trades if t.exit_reason in ("tp1", "tp2", "stop_after_tp1")]
+    reached_tp2 = [t for t in trades if t.exit_reason == "tp2"]
+    m.tp1_hit_rate = len(reached_tp1) / m.trades
+    m.tp2_hit_rate = len(reached_tp2) / m.trades
 
     equity = starting_equity
     peak = starting_equity

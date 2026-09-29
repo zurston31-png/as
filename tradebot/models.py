@@ -223,16 +223,22 @@ class AIVerdict:
 class RiskDecision:
     allowed: bool
     reason: str = ""
+    reason_code: str = ""             # stable machine-readable code, e.g. position_size_below_minimum
     qty: float = 0.0
     risk_amount: float = 0.0
     risk_pct: float = 0.0
     violations: list[str] = field(default_factory=list)
+    # Every input and intermediate of the sizing formula, so a position size can
+    # always be re-derived from the audit log without rerunning anything.
+    sizing: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "allowed": self.allowed,
             "reason": self.reason,
+            "reason_code": self.reason_code,
             "qty": self.qty,
+            "sizing": self.sizing,
             "risk_amount": round(self.risk_amount, 2),
             "risk_pct": round(self.risk_pct, 4),
             "violations": self.violations,
@@ -251,13 +257,20 @@ class TradeSignal:
     tp1: float
     tp2: float
     ts: datetime = field(default_factory=utcnow)
+    # The bar close this decision was made on. Every input to the decision comes
+    # from at or before this instant - see strategy/context.py.
+    decision_ts: Optional[datetime] = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    sequence: int = 0                 # monotonic position in the audit log
     qty: float = 0.0
     risk_pct: float = 0.0
     risk_amount: float = 0.0
     rr1: float = 0.0
     rr2: float = 0.0
     strategy: str = ""
+    # The exact bar the decision fired on, kept on the signal so the audit
+    # record is self-contained - it never has to go looking for the series.
+    trigger_candle: dict[str, Any] = field(default_factory=dict)
     strategy_verdict: Optional[StrategyVerdict] = None
     ai: Optional[AIVerdict] = None
     risk: Optional[RiskDecision] = None
@@ -272,7 +285,9 @@ class TradeSignal:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "sequence": self.sequence,
             "ts": _iso(self.ts),
+            "decision_ts": _iso(self.decision_ts or self.ts),
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "side": self.side.value,
@@ -287,6 +302,7 @@ class TradeSignal:
             "rr1": round(self.rr1, 2),
             "rr2": round(self.rr2, 2),
             "strategy": self.strategy,
+            "trigger_candle": self.trigger_candle,
             "actionable": self.actionable,
             "blocked_by": self.blocked_by,
             "reasons": self.reasons,

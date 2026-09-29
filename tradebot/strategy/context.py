@@ -1,18 +1,29 @@
-"""Turns a raw candle series into the structured feature set the rules read.
+"""The decision-time view of the market.
 
-This is the layer that makes the AI's job easy: by the time anything reaches a
-model, "is price above VWAP" is a boolean, not something to squint at on a
-screenshot.
+Two guarantees this module exists to provide:
+
+1. **No lookahead.** A context is built from closed candles at or before a
+   stated `decision_ts`, and it keeps no reference to anything later. Every
+   indicator here is causal (a prefix function of the series), so a value at
+   bar *i* can only ever depend on bars <= *i*. `build()` refuses a series that
+   would violate this rather than silently trimming.
+
+2. **Config-driven features.** Rules ask for what they need - `ctx.ema(9)`,
+   `ctx.rsi(14, )`, `ctx.sweep(width=2)` - and the answer is computed once and
+   cached. That's what lets rule parameters live in YAML: nothing here has to
+   know in advance which periods a strategy wants.
+
+The cache doubles as an audit record: `used_features()` reports exactly which
+indicator values the decision actually consulted.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..config import Config
 from ..indicators import atr, crossed_above, crossed_below, ema, rsi, session_vwap, sma
 from ..models import Candle, Series
 from ..structure import (
@@ -23,6 +34,10 @@ from ..structure import (
     detect_liquidity_sweep,
     recent_swings,
 )
+
+
+class LookaheadError(AssertionError):
+    """Raised when a context would be built over data from the future."""
 
 
 def _tz(name: str) -> ZoneInfo:
@@ -37,115 +52,176 @@ def _parse_hm(value: str) -> time:
     return time(int(hh), int(mm))
 
 
-@dataclass
-class MarketContext:
-    """Everything the rules, the AI layer and the dashboard need about *now*."""
+@dataclass(slots=True)
+class FeedHealth:
+    """How current the data behind this decision is."""
 
-    symbol: str
-    timeframe: str
-    candle: Candle
-    price: float
-    ema_fast: Optional[float] = None
-    ema_slow: Optional[float] = None
-    ema_fast_prev: Optional[float] = None
-    ema_slow_prev: Optional[float] = None
-    bars_since_bull_cross: Optional[int] = None
-    bars_since_bear_cross: Optional[int] = None
-    vwap: Optional[float] = None
-    vwap_distance_pct: Optional[float] = None
-    rsi: Optional[float] = None
-    atr: Optional[float] = None
-    atr_pct: Optional[float] = None
-    volume: float = 0.0
-    volume_ma: Optional[float] = None
-    volume_ratio: Optional[float] = None
-    trend: str = "range"
-    structure: StructureBreak = field(default_factory=lambda: StructureBreak("none", "none"))
-    sweep: LiquiditySweep = field(default_factory=lambda: LiquiditySweep(False))
-    swing_high: Optional[float] = None
-    swing_low: Optional[float] = None
-    prev_swing_high: Optional[float] = None
-    prev_swing_low: Optional[float] = None
-    in_session: bool = True
-    bars: int = 0
-    warm: bool = False               # enough history for every indicator
-    local_time: str = ""
+    bar_age_seconds: float = 0.0        # decision bar's close vs. wall clock
+    expected_bar_seconds: int = 0
+    received_at: Optional[datetime] = None
+    stale: bool = False
+    reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        def r(v: Optional[float], nd: int = 4) -> Optional[float]:
-            return round(v, nd) if isinstance(v, (int, float)) else None
-
         return {
-            "symbol": self.symbol,
-            "timeframe": self.timeframe,
-            "ts": self.candle.ts.isoformat(),
-            "local_time": self.local_time,
-            "price": r(self.price),
-            "ema_fast": r(self.ema_fast),
-            "ema_slow": r(self.ema_slow),
-            "ema_stack": self.ema_stack,
-            "bars_since_bull_cross": self.bars_since_bull_cross,
-            "bars_since_bear_cross": self.bars_since_bear_cross,
-            "vwap": r(self.vwap),
-            "vwap_side": self.vwap_side,
-            "vwap_distance_pct": r(self.vwap_distance_pct, 3),
-            "rsi": r(self.rsi, 2),
-            "atr": r(self.atr),
-            "atr_pct": r(self.atr_pct, 3),
-            "volume": self.volume,
-            "volume_ma": r(self.volume_ma, 2),
-            "volume_ratio": r(self.volume_ratio, 2),
-            "trend": self.trend,
-            "structure": {
-                "kind": self.structure.kind,
-                "direction": self.structure.direction,
-                "level": r(self.structure.level),
-                "bars_ago": self.structure.bars_ago,
-            },
-            "liquidity_sweep": {
-                "happened": self.sweep.happened,
-                "direction": self.sweep.direction,
-                "level": r(self.sweep.level),
-                "bars_ago": self.sweep.bars_ago,
-            },
-            "swing_high": r(self.swing_high),
-            "swing_low": r(self.swing_low),
-            "in_session": self.in_session,
-            "bars": self.bars,
-            "warm": self.warm,
+            "bar_age_seconds": round(self.bar_age_seconds, 1),
+            "expected_bar_seconds": self.expected_bar_seconds,
+            "received_at": self.received_at.isoformat() if self.received_at else None,
+            "stale": self.stale,
+            "reason": self.reason,
         }
 
-    @property
-    def ema_stack(self) -> str:
-        if self.ema_fast is None or self.ema_slow is None:
-            return "unknown"
-        return "bullish" if self.ema_fast > self.ema_slow else "bearish"
+
+class MarketContext:
+    """Everything a rule, the AI layer or the dashboard can ask about *now*."""
+
+    def __init__(
+        self,
+        symbol: str,
+        timeframe: str,
+        candles: list[Candle],
+        decision_ts: datetime,
+        tz: ZoneInfo,
+        session_start: time,
+        in_session: bool,
+        structure_window: int = 60,
+        feed: Optional[FeedHealth] = None,
+    ) -> None:
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self._candles = candles
+        self.decision_ts = decision_ts
+        self.tz = tz
+        self.session_start = session_start
+        self.in_session = in_session
+        self.structure_window = structure_window
+        self.feed = feed or FeedHealth()
+        self._cache: dict[str, Any] = {}
+        self._used: dict[str, Any] = {}
+
+    # ------------------------------------------------------------ the bar
 
     @property
-    def vwap_side(self) -> str:
-        if self.vwap is None:
-            return "unknown"
-        return "above" if self.price > self.vwap else "below"
+    def candle(self) -> Candle:
+        return self._candles[-1]
 
+    @property
+    def price(self) -> float:
+        """The decision price: the close of the last *closed* bar."""
+        return self._candles[-1].close
 
-class ContextBuilder:
-    """Computes a `MarketContext` from a series. Stateless and cheap to re-run."""
+    @property
+    def bars(self) -> int:
+        return len(self._candles)
 
-    def __init__(self, config: Config) -> None:
-        self.cfg = config
-        self.tz = _tz(config.market.session_tz)
-        self.session_start = _parse_hm(config.market.session_start)
-        self.session_end = _parse_hm(config.market.session_end)
+    @property
+    def candles(self) -> Sequence[Candle]:
+        return tuple(self._candles)
 
-    def min_bars(self) -> int:
-        s = self.cfg.strategy
-        return max(s.ema_slow, s.rsi_period, s.atr_period, s.volume_ma_period) + 5
+    @property
+    def local_time(self) -> str:
+        return self.decision_ts.astimezone(self.tz).strftime("%Y-%m-%d %H:%M %Z")
 
-    def session_flags(self, candles: list[Candle]) -> list[bool]:
-        """True on the first bar of each trading session (the VWAP anchor)."""
+    def warm(self, need: int) -> bool:
+        return len(self._candles) >= need
+
+    # ------------------------------------------------------------ features
+
+    def _memo(self, key: str, compute, record=None) -> Any:
+        if key not in self._cache:
+            self._cache[key] = compute()
+            self._used[key] = record(self._cache[key]) if record else _scalar(self._cache[key])
+        return self._cache[key]
+
+    def _closes(self) -> list[float]:
+        return self._memo("_closes", lambda: [c.close for c in self._candles])
+
+    def _series_window(self) -> list[Candle]:
+        return self._candles[-self.structure_window:]
+
+    def ema(self, period: int) -> Optional[float]:
+        return _last(self.ema_series(period))
+
+    def ema_series(self, period: int) -> list[Optional[float]]:
+        return self._memo(f"ema_{period}", lambda: ema(self._closes(), period))
+
+    def rsi(self, period: int = 14) -> Optional[float]:
+        return _last(self._memo(f"rsi_{period}", lambda: rsi(self._closes(), period)))
+
+    def atr(self, period: int = 14) -> Optional[float]:
+        def compute():
+            return atr(
+                [c.high for c in self._candles],
+                [c.low for c in self._candles],
+                self._closes(),
+                period,
+            )
+        return _last(self._memo(f"atr_{period}", compute))
+
+    def vwap(self) -> Optional[float]:
+        def compute():
+            return session_vwap(
+                [c.high for c in self._candles],
+                [c.low for c in self._candles],
+                self._closes(),
+                [c.volume for c in self._candles],
+                self._session_flags(),
+            )
+        return _last(self._memo("vwap", compute))
+
+    def volume_ma(self, period: int = 20) -> Optional[float]:
+        return _last(self._memo(
+            f"volume_ma_{period}",
+            lambda: sma([c.volume for c in self._candles], period),
+        ))
+
+    def volume_ratio(self, period: int = 20) -> Optional[float]:
+        average = self.volume_ma(period)
+        if not average:
+            return None
+        return self.candle.volume / average
+
+    def bars_since_cross(self, fast: int, slow: int, direction: str, lookback: int) -> Optional[int]:
+        key = f"cross_{direction}_{fast}_{slow}_{lookback}"
+        fn = crossed_above if direction == "up" else crossed_below
+        return self._memo(
+            key, lambda: fn(self.ema_series(fast), self.ema_series(slow), lookback + 1)
+        )
+
+    def trend(self, width: int = 2, lookback: int = 60) -> str:
+        return self._memo(
+            f"trend_{width}_{lookback}",
+            lambda: classify_trend(self._series_window(), width, lookback),
+        )
+
+    def structure(self, width: int = 2, lookback: int = 5) -> StructureBreak:
+        return self._memo(
+            f"structure_{width}_{lookback}",
+            lambda: detect_break(self._series_window(), width, lookback),
+            record=lambda sb: {"kind": sb.kind, "direction": sb.direction, "level": sb.level},
+        )
+
+    def sweep(self, width: int = 2, lookback: int = 5, min_wick_ratio: float = 0.5) -> LiquiditySweep:
+        return self._memo(
+            f"sweep_{width}_{lookback}_{min_wick_ratio}",
+            lambda: detect_liquidity_sweep(self._series_window(), width, lookback, min_wick_ratio),
+            record=lambda sw: {"happened": sw.happened, "direction": sw.direction, "level": sw.level},
+        )
+
+    def swing(self, kind: str, width: int = 2, back: int = 0) -> Optional[float]:
+        """`back=0` is the most recent confirmed swing of that kind."""
+        swings = self._memo(
+            f"swings_{kind}_{width}",
+            lambda: [s.price for s in recent_swings(self._series_window(), kind, 4, width)],
+        )
+        if len(swings) <= back:
+            return None
+        return swings[-(back + 1)]
+
+    def _session_flags(self) -> list[bool]:
         flags: list[bool] = []
         prev_day = None
-        for c in candles:
+        for c in self._candles:
             local = c.ts.astimezone(self.tz)
             day = local.date()
             started = day != prev_day and local.time() >= self.session_start
@@ -153,6 +229,51 @@ class ContextBuilder:
                 prev_day = day
             flags.append(started or not flags)
         return flags
+
+    # -------------------------------------------------------------- output
+
+    def used_features(self) -> dict[str, Any]:
+        """Exactly the indicator values this decision consulted - for the audit log."""
+        return {k: v for k, v in self._used.items() if not k.startswith("_")}
+
+    def to_dict(self, display: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "timeframe": self.timeframe,
+            "decision_ts": self.decision_ts.isoformat(),
+            "ts": self.candle.ts.isoformat(),
+            "local_time": self.local_time,
+            "price": self.price,
+            "volume": self.candle.volume,
+            "in_session": self.in_session,
+            "bars": self.bars,
+            "feed": self.feed.to_dict(),
+            "features": self.used_features(),
+            "display": display or [],
+        }
+
+
+def _last(values: Sequence[Optional[float]]) -> Optional[float]:
+    return values[-1] if values else None
+
+
+def _scalar(value: Any) -> Any:
+    if isinstance(value, list):
+        tail = value[-1] if value else None
+        return round(tail, 6) if isinstance(tail, float) else tail
+    if isinstance(value, float):
+        return round(value, 6)
+    return value
+
+
+class ContextBuilder:
+    """Builds a `MarketContext`, enforcing the no-lookahead contract."""
+
+    def __init__(self, config) -> None:
+        self.cfg = config
+        self.tz = _tz(config.market.session_tz)
+        self.session_start = _parse_hm(config.market.session_start)
+        self.session_end = _parse_hm(config.market.session_end)
 
     def in_session(self, ts: datetime) -> bool:
         if not self.cfg.market.trade_session_only:
@@ -162,66 +283,56 @@ class ContextBuilder:
             return self.session_start <= local <= self.session_end
         return local >= self.session_start or local <= self.session_end  # overnight
 
-    def build(self, series: Series) -> Optional[MarketContext]:
-        candles = list(series.candles)
-        if not candles:
+    def build(
+        self,
+        series: Series,
+        decision_ts: Optional[datetime] = None,
+        feed: Optional[FeedHealth] = None,
+        structure_window: int = 60,
+    ) -> Optional[MarketContext]:
+        """Build the view as of `decision_ts` (default: the last closed bar).
+
+        Only *closed* candles at or before `decision_ts` are included. A forming
+        bar is never visible to a rule - its high, low and close are all still
+        moving, and letting a rule see them is the single easiest way to build a
+        backtest that cannot be reproduced live.
+        """
+        closed = [c for c in series.candles if c.closed]
+        if not closed:
             return None
-        s = self.cfg.strategy
-        closes = [c.close for c in candles]
-        highs = [c.high for c in candles]
-        lows = [c.low for c in candles]
-        vols = [c.volume for c in candles]
-        last = candles[-1]
 
-        fast = ema(closes, s.ema_fast)
-        slow = ema(closes, s.ema_slow)
-        rsi_vals = rsi(closes, s.rsi_period)
-        atr_vals = atr(highs, lows, closes, s.atr_period)
-        vwap_vals = session_vwap(highs, lows, closes, vols, self.session_flags(candles))
-        vol_ma = sma(vols, s.volume_ma_period)
+        if decision_ts is None:
+            decision_ts = closed[-1].ts
+        visible = [c for c in closed if c.ts <= decision_ts]
+        if not visible:
+            return None
 
-        # Swing/structure detection is O(window); feeding it the whole series
-        # would make every bar cost more as the session went on, for no benefit -
-        # structure older than `structure_lookback` bars is not what these rules
-        # are about.
-        window = candles[-s.structure_lookback:]
+        # Two integrity checks rather than trusting the filter above. The first
+        # is belt-and-braces against a future refactor. The second catches a real
+        # condition: a feed that replays an old bar late leaves the series out of
+        # order, and every indicator here assumes time order - a silently
+        # mis-ordered window produces values that cannot be reproduced.
+        latest = visible[-1].ts
+        if latest > decision_ts:
+            raise LookaheadError(
+                f"context for {decision_ts.isoformat()} would include a bar from "
+                f"{latest.isoformat()}"
+            )
+        for earlier, later in zip(visible, visible[1:]):
+            if later.ts < earlier.ts:
+                raise LookaheadError(
+                    f"bars are out of order: {later.ts.isoformat()} follows "
+                    f"{earlier.ts.isoformat()}; indicators would read the future"
+                )
 
-        ctx = MarketContext(
+        return MarketContext(
             symbol=series.symbol,
             timeframe=series.timeframe,
-            candle=last,
-            price=last.close,
-            ema_fast=fast[-1],
-            ema_slow=slow[-1],
-            ema_fast_prev=fast[-2] if len(fast) > 1 else None,
-            ema_slow_prev=slow[-2] if len(slow) > 1 else None,
-            bars_since_bull_cross=crossed_above(fast, slow, s.ema_cross_lookback + 1),
-            bars_since_bear_cross=crossed_below(fast, slow, s.ema_cross_lookback + 1),
-            vwap=vwap_vals[-1],
-            rsi=rsi_vals[-1],
-            atr=atr_vals[-1],
-            volume=last.volume,
-            volume_ma=vol_ma[-1],
-            trend=classify_trend(window, s.swing_width, s.structure_lookback),
-            structure=detect_break(window, s.swing_width, s.sweep_lookback),
-            sweep=detect_liquidity_sweep(window, s.swing_width, s.sweep_lookback),
-            in_session=self.in_session(last.ts),
-            bars=len(candles),
-            warm=len(candles) >= self.min_bars(),
-            local_time=last.ts.astimezone(self.tz).strftime("%Y-%m-%d %H:%M %Z"),
+            candles=visible,
+            decision_ts=decision_ts,
+            tz=self.tz,
+            session_start=self.session_start,
+            in_session=self.in_session(decision_ts),
+            structure_window=structure_window,
+            feed=feed,
         )
-
-        if ctx.vwap:
-            ctx.vwap_distance_pct = (ctx.price - ctx.vwap) / ctx.vwap * 100.0
-        if ctx.atr and ctx.price:
-            ctx.atr_pct = ctx.atr / ctx.price * 100.0
-        if ctx.volume_ma:
-            ctx.volume_ratio = ctx.volume / ctx.volume_ma if ctx.volume_ma else None
-
-        sh = recent_swings(window, "high", 2, s.swing_width)
-        sl = recent_swings(window, "low", 2, s.swing_width)
-        ctx.swing_high = sh[-1].price if sh else None
-        ctx.prev_swing_high = sh[0].price if len(sh) > 1 else None
-        ctx.swing_low = sl[-1].price if sl else None
-        ctx.prev_swing_low = sl[0].price if len(sl) > 1 else None
-        return ctx

@@ -1,12 +1,15 @@
 # Trading bot configuration.
-# Everything here is reloadable; see tradebot/config.py for the full field list.
+#
+# The strategy below is data, not code: periods, thresholds, which rules are
+# required vs. advisory, and the target geometry are all editable here without
+# touching Python. `python -m tradebot doctor` prints the parsed result.
 
 market:
-  symbol: "MNQ1!"          # micro NQ - sized for a small account; see README on point_value
+  symbol: "MNQ1!"          # micro NQ - sized for a small account
   timeframe: "5m"
-  point_value: 2.0        # MNQ: $2 per index point per contract
+  point_value: 2.0         # MNQ: $2 per index point per contract. SET THIS.
   tick_size: 0.25
-  qty_step: 1.0
+  qty_step: 1.0            # 1.0 = whole contracts; 0.0001 for fractional crypto
   min_qty: 1.0
   session_tz: "America/New_York"
   session_start: "09:30"
@@ -15,32 +18,75 @@ market:
 
 strategy:
   name: "ema_vwap_rsi"
-  ema_fast: 9
-  ema_slow: 21
-  ema_cross_lookback: 5
-  rsi_period: 14
-  rsi_long_min: 50.0
-  rsi_long_max: 72.0
-  rsi_short_max: 50.0
-  rsi_short_min: 28.0
-  volume_multiple: 1.1
-  min_score: 0.75
-  optional_rules: ["liquidity_sweep", "structure_break"]
-  stop_buffer_atr: 0.25
-  tp1_r: 2.0
-  tp2_r: 4.0
-  min_rr: 1.5
+  min_score: 0.75          # weighted share of rules that must pass
+  structure_window: 60     # bars of history the structure rules consider
+
+  # mode: required | advisory | disabled
+  #   required -> must pass, or there is no setup
+  #   advisory -> only moves the score
+  rules:
+    - rule: ema_stack
+      mode: required
+      params: {fast: 9, slow: 21}
+
+    - rule: ema_cross_fresh
+      mode: required
+      params: {fast: 9, slow: 21, max_bars: 5}
+
+    - rule: vwap_position
+      mode: required
+      # params: {max_distance_pct: 0.5}   # also refuse when extended from VWAP
+
+    - rule: rsi_window
+      mode: required
+      params: {period: 14, long_min: 45, long_max: 65, short_min: 35, short_max: 55}
+
+    - rule: market_structure
+      mode: required
+      params: {width: 2, lookback: 60, allow_range: true}
+
+    - rule: liquidity_sweep
+      mode: required
+      params: {width: 2, lookback: 5, min_wick_ratio: 0.5}
+
+    - rule: volume_confirmation
+      mode: advisory
+      params: {period: 20, multiple: 1.1}
+
+    - rule: candle_direction
+      mode: required
+      weight: 0.5
+
+  entry:
+    stop:
+      method: swing_or_atr      # swing_or_atr | atr | fixed_ticks
+      atr_period: 14
+      atr_multiple: 1.2         # used when no swing is available
+      swing_buffer_atr: 0.25    # padding beyond the protecting swing
+      swing_width: 2
+      min_ticks: 4
+    tp1_r: 2.0
+    tp2_r: 4.0
+    min_rr: 1.5
+
+  # Duplicate-signal protection: one setup produces one signal.
+  signal:
+    rearm_on_invalidation: true   # re-arm a side once its setup stops qualifying
+    rearm_bars: 0                 # 0 = only invalidation re-arms
+    require_flat: true            # no new signal while a position is open
+    allow_reversal: false
 
 ai:
   enabled: true
   model: "claude-opus-5-5"
   effort: "medium"
-  required: false         # true => an unavailable AI layer means NO TRADE
+  # A confirmation layer you cannot reach has not confirmed anything.
+  on_failure: "wait"            # wait | rules_only
   confirm_min_confidence: 0.55
 
 vision:
-  enabled: false          # turn on once you've set the region below
-  mode: "backup"          # only consulted when the data feed is stale/disagrees
+  enabled: false                # turn on once you've set the region below
+  mode: "backup"                # only consulted when the feed is lagging
   monitor: 1
   # region: {left: 0, top: 0, width: 1920, height: 1080}
   min_interval_seconds: 20.0
@@ -55,18 +101,26 @@ risk:
   max_consecutive_losses: 2
   cooldown_minutes_after_loss: 30
   require_stop: true
+  min_rr: 1.5
   kill_switch: false
+  state_path: "data/risk_state.json"
+  audit_path: "data/audit.jsonl"
 
 execution:
-  mode: "paper"           # paper | alerts_only | live (live is a deliberate stub)
-  slippage_ticks: 1.0
+  mode: "paper"                 # paper | alerts_only | live (live is a stub)
+  slippage_ticks: 1.0           # entry
+  stop_slippage_ticks: 1.0      # stops slip further than limits do
+  target_slippage_ticks: 0.0
+  commission_per_unit: 0.75     # per contract PER SIDE - charged twice per trade
   partial_at_tp1: 0.5
   move_stop_to_breakeven_after_tp1: true
 
 feed:
-  source: "synthetic"     # synthetic | replay | webhook | poll
+  source: "synthetic"           # synthetic | replay | webhook | poll
   # csv_path: "data/NQ_5m.csv"
-  # webhook_secret: "set-me"   # or export TRADEBOT_WEBHOOK_SECRET
+  # webhook_secret: "set-me"    # or export TRADEBOT_WEBHOOK_SECRET
+  max_stale_bars: 2.5           # a decision bar older than this blocks all signals
+  max_stale_seconds: 0.0        # absolute override; 0 = derive from the timeframe
 
 notify:
   sound: true

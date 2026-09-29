@@ -125,6 +125,14 @@ class ConfirmationLayer:
             return AIVerdict(Decision.UNAVAILABLE, 0.0, self.last_error, source="none",
                              latency_ms=latency, model=self.cfg.ai.model)
 
+        # Structured outputs make a schema violation unlikely, not impossible -
+        # and an out-of-format response must never be read optimistically.
+        problem = _schema_violation(data)
+        if problem:
+            self.last_error = f"verdict failed validation: {problem}"
+            return AIVerdict(Decision.UNAVAILABLE, 0.0, self.last_error, source="none",
+                             latency_ms=latency, model=self.cfg.ai.model)
+
         self.last_error = ""
         return AIVerdict(
             decision=Decision(data["decision"]),
@@ -137,14 +145,22 @@ class ConfirmationLayer:
         )
 
     def accepts(self, verdict: AIVerdict) -> tuple[bool, str]:
-        """Apply the configured policy to a verdict. Returns (allow, reason)."""
+        """Apply the configured policy to a verdict. Returns (allow, reason).
+
+        A layer that could not answer has not confirmed anything. Under the
+        default policy (`ai.on_failure: wait`) a timeout, a malformed response,
+        a refusal or a response that does not satisfy the required schema all
+        resolve the same way a "wait" does: no trade. `rules_only` is the
+        explicit opt-out for people who would rather keep trading the rules when
+        the API is down - it is a real choice, so it has to be made in config.
+        """
         ai = self.cfg.ai
         if verdict.decision is Decision.SKIPPED:
             return True, "AI layer disabled"
         if verdict.decision is Decision.UNAVAILABLE:
-            if ai.required:
-                return False, f"AI confirmation required but unavailable ({verdict.rationale})"
-            return True, "AI unavailable - falling back to rules only"
+            if ai.on_failure == "rules_only":
+                return True, f"AI unavailable ({verdict.rationale}) - rules-only policy"
+            return False, f"AI unavailable, treating as WAIT: {verdict.rationale}"
         if verdict.decision is Decision.REJECT:
             return False, f"AI rejected: {verdict.rationale}"
         if verdict.decision is Decision.WAIT:
@@ -216,3 +232,23 @@ class ConfirmationLayer:
                 f"{vision_note}"
             )
         return text
+
+
+def _schema_violation(data: Any) -> str:
+    """Return a description of the first problem with a verdict payload, or ""."""
+    if not isinstance(data, dict):
+        return "response was not an object"
+    decision = data.get("decision")
+    if decision not in ("confirm", "wait", "reject"):
+        return f"decision was {decision!r}"
+    confidence = data.get("confidence")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        return "confidence was not a number"
+    if not 0.0 <= float(confidence) <= 1.0:
+        return f"confidence {confidence} is outside 0..1"
+    if not isinstance(data.get("rationale", ""), str):
+        return "rationale was not a string"
+    flags = data.get("risk_flags", [])
+    if not isinstance(flags, list) or any(not isinstance(f, str) for f in flags):
+        return "risk_flags was not a list of strings"
+    return ""

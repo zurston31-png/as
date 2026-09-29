@@ -83,6 +83,16 @@ def create_app(config: Config, orchestrator: Optional[Orchestrator] = None) -> F
     async def flatten() -> dict[str, Any]:
         return {"ok": True, "closed": bot.flatten()}
 
+    @app.get("/api/audit")
+    async def audit(limit: int = 50) -> dict[str, Any]:
+        """The decision log, newest last, plus the hash-chain check."""
+        records = list(bot.audit.records())[-max(1, min(limit, 500)):]
+        return {"verify": bot.audit.verify().to_dict(), "records": records}
+
+    @app.post("/api/reconcile")
+    async def reconcile() -> dict[str, Any]:
+        return {"ok": True, "reconciliation": bot.reconcile()}
+
     @app.post("/api/evaluate")
     async def evaluate() -> dict[str, Any]:
         """Force a re-evaluation of the current bar - useful while tuning rules."""
@@ -195,6 +205,9 @@ async def _handle_client_message(
         closed = bot.flatten()
         _offer(outbox, {"type": "flattened", "data": {"closed": closed}})
         _offer(outbox, {"type": "state", "data": bot.state()})
+
+    elif action == "reconcile":
+        _offer(outbox, {"type": "reconciliation", "data": bot.reconcile()})
 
     elif action == "reset_chat":
         bot.chat.reset()

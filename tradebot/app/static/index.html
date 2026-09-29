@@ -164,6 +164,11 @@
     </section>
 
     <section class="card">
+      <h2>System health</h2>
+      <dl class="kv" id="health"></dl>
+    </section>
+
+    <section class="card">
       <h2>Open positions</h2>
       <div id="positions"><div class="empty">Flat.</div></div>
     </section>
@@ -243,6 +248,10 @@ function handle(type, data) {
     case "chat_reset": $("log").innerHTML = ""; break;
     case "flattened":
       logSystem(`Flattened ${data.closed.length} position(s).`); break;
+    case "reconciliation":
+      if (state?.status) state.status.reconciliation = data;
+      logSystem(data.ok ? `Reconciled: ${data.message}` : `Reconciliation FAILED: ${data.message}`);
+      renderHeader(); renderHealth(); break;
     case "error":
       logSystem(data.message || "error"); break;
   }
@@ -288,7 +297,12 @@ function renderHeader() {
   $("price").textContent = fmt(s.last_price);
 
   setPill("mode", s.execution_mode.replace("_", " "), s.execution_mode === "paper" ? "" : "warn");
-  setPill("feed", `feed: ${s.feed}`, s.feed_stale_seconds > 180 ? "warn" : "");
+  const feed = s.feed || {};
+  setPill("feed", feed.stale ? `FEED STALE (${Math.round(feed.bar_age_seconds)}s)` : `feed: ${s.feed_source}`,
+          feed.stale ? "bad" : "");
+  const rec = s.reconciliation || {};
+  if (rec.ok === false) setPill("rec", "POSITION MISMATCH", "bad");
+  else { const el = $("pills").querySelector('[data-k="rec"]'); if (el) el.remove(); }
   const ai = s.ai || {};
   setPill("ai", ai.enabled ? (ai.ready ? "AI ready" : "AI: no key") : "AI off",
           ai.enabled ? (ai.ready ? "ok" : "warn") : "");
@@ -319,8 +333,14 @@ function renderSignal(sig, recent) {
     card.className = "card signal none";
     $("sig-dir").textContent = latest ? "No trade" : "Waiting for a setup";
     $("sig-time").textContent = latest ? new Date(latest.ts).toLocaleTimeString() : "";
-    $("sig-body").innerHTML = latest?.blocked_by
-      ? `<div class="blocked">${esc(latest.blocked_by)}</div>` : `<div class="muted">The rules haven't lined up yet.</div>`;
+    const sizing = latest?.risk?.sizing;
+    $("sig-body").innerHTML = (latest?.blocked_by
+      ? `<div class="blocked">${esc(latest.blocked_by)}</div>`
+      : `<div class="muted">The rules haven't lined up yet.</div>`)
+      + (sizing && sizing.stop_risk_per_contract
+        ? `<div class="muted" style="margin-top:8px">risk budget ${fmt(sizing.risk_dollars)}
+           ÷ ${fmt(sizing.stop_risk_per_contract)} per contract
+           = ${fmt(sizing.raw_contracts, 3)} → ${fmt(sizing.contracts, 2)}</div>` : "");
     return;
   }
 
@@ -337,6 +357,8 @@ function renderSignal(sig, recent) {
       <div class="level"><div class="k">Size</div><div class="v">${fmt(show.qty, 2)}</div></div>
       <div class="level"><div class="k">Risk</div><div class="v">${pct(show.risk_pct * 100)}</div></div>
     </div>
+    <div class="muted" style="margin-top:8px">#${show.sequence} · decided on the
+      ${new Date(show.decision_ts).toLocaleTimeString()} bar close</div>
     ${ai && ai.rationale ? `<div class="ai-note"><b>AI ${esc(ai.decision)} (${fmt(ai.confidence, 2)})</b> — ${esc(ai.rationale)}
       ${ai.risk_flags?.length ? `<br><span style="color:var(--warn)">flags: ${ai.risk_flags.map(esc).join(", ")}</span>` : ""}</div>` : ""}`;
 }
@@ -376,10 +398,28 @@ function renderRisk() {
     <dt>Loss streak</dt><dd>${r.consecutive_losses} / ${limits.max_consecutive_losses}</dd>
     ${r.cooldown_active ? `<dt>Cooldown</dt><dd class="neg">until ${new Date(r.cooldown_until).toLocaleTimeString()}</dd>` : ""}
     ${r.kill_switch ? `<dt>Halted</dt><dd class="neg">${esc(r.kill_reason)}</dd>` : ""}`;
+  renderHealth();
   const used = limits.max_trades_per_day ? Math.min(1, r.trades_today / limits.max_trades_per_day) : 0;
   const bar = $("risk-bar");
   bar.style.width = `${used * 100}%`;
   bar.style.background = used >= 1 ? "var(--short)" : used > 0.6 ? "var(--warn)" : "var(--accent)";
+}
+
+function renderHealth() {
+  const s = state?.status; if (!s) return;
+  const feed = s.feed || {}, gate = s.gate || {}, rec = s.reconciliation || {};
+  const ps = state?.position_state || {};
+  const armed = Object.entries(gate.armed || {}).filter(([, v]) => v).map(([k]) => k);
+  $("health").innerHTML = `
+    <dt>Feed</dt><dd class="${feed.stale ? "neg" : ""}">${feed.stale ? "stale" : "live"} ·
+      ${Math.round(feed.bar_age_seconds || 0)}s / ${Math.round(feed.threshold_seconds || 0)}s</dd>
+    <dt>Bars received</dt><dd>${feed.bars_seen ?? 0}</dd>
+    <dt>Position</dt><dd>${esc(ps.state || "flat")}${ps.awaiting_exit ? " (runner)" : ""}</dd>
+    <dt>Signals armed</dt><dd>${armed.length ? armed.join(", ") : "none"}</dd>
+    <dt>Duplicates blocked</dt><dd>${gate.suppressed ?? 0}</dd>
+    <dt>Reconciled</dt><dd class="${rec.ok === false ? "neg" : ""}">${
+      rec.ok === false ? esc(rec.message) : "yes"}</dd>
+    <dt>Audit records</dt><dd>${s.audit?.records ?? 0}</dd>`;
 }
 
 function renderPositions() {
@@ -408,6 +448,9 @@ function renderHistory() {
 }
 
 /* ---------------------------------------------------------------- chart */
+
+const EMA_COLORS = ["#5b9dff", "#e0a33e", "#f472b6"];
+const OVERLAY_COLORS = { VWAP: "#a78bfa" };
 
 function ema(values, period) {
   const out = new Array(values.length).fill(null);
@@ -463,7 +506,9 @@ function drawChart() {
   });
 
   const closes = view.map((c) => c.close);
-  const overlays = [[ema(closes, 9), "#5b9dff"], [ema(closes, 21), "#e0a33e"]];
+  const specs = (state?.status?.overlays || []).filter((o) => o.type === "ema");
+  const overlays = specs.map((o, i) => [ema(closes, o.period), EMA_COLORS[i % EMA_COLORS.length], o.label]);
+  overlays.forEach(([, color, label]) => { OVERLAY_COLORS[label] = color; });
   for (const [seriesVals, color] of overlays) {
     ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath();
     let started = false;
@@ -483,14 +528,16 @@ function drawChart() {
     hline(ctx, y(sig.tp2), padL, w - padR, "#16a34a", [6, 3], "tp2");
   }
 
-  const c = state?.context;
-  $("chart-legend").innerHTML = c ? [
-    `<span style="color:#5b9dff">EMA9 ${fmt(c.ema_fast)}</span>`,
-    `<span style="color:#e0a33e">EMA21 ${fmt(c.ema_slow)}</span>`,
-    `<span style="color:#a78bfa">VWAP ${fmt(c.vwap)}</span>`,
-    `RSI ${fmt(c.rsi, 1)}`, `ATR ${fmt(c.atr)}`,
-    `vol ${fmt(c.volume_ratio, 2)}×`, `structure: ${esc(c.trend)}`,
-  ].join(" &nbsp;·&nbsp; ") : "";
+  const items = state?.context?.display || [];
+  $("chart-legend").innerHTML = items.map((item) => {
+    const color = OVERLAY_COLORS[item.label];
+    const value = typeof item.value === "number"
+      ? fmt(item.value, item.digits ?? 2) + (item.suffix || "")
+      : esc(item.value ?? "—");
+    return color
+      ? `<span style="color:${color}">${esc(item.label)} ${value}</span>`
+      : `${esc(item.label)} ${value}`;
+  }).join(" &nbsp;·&nbsp; ");
 }
 
 function hline(ctx, py, x0, x1, color, dash, label) {
@@ -538,7 +585,7 @@ const SUGGESTIONS = [
   "Why no trade on the last bar?",
   "What would need to change for a long?",
   "How much risk budget is left today?",
-  "Summarise today's signals.",
+  "Walk me through the sizing on the last signal.",
 ];
 
 /* ----------------------------------------------------------------- init */

@@ -1,12 +1,16 @@
 """Paper execution.
 
-Fills are deliberately pessimistic:
+Fills are deliberately pessimistic, because a paper curve that flatters you is
+worse than no paper curve at all:
 
-* entry takes configured slippage against you;
+* entry takes slippage against you;
+* stops take their own (usually larger) slippage - a stop is a market order
+  into the move that triggered it, and modelling it as a clean fill at your
+  price is the most common way a backtest lies;
+* targets fill at their limit price by default;
+* commission is charged **per side**, so every round turn pays twice;
 * when a candle's range contains both the stop and a target, the stop is
   assumed to have been hit first.
-
-A paper curve that flatters you is worse than no paper curve at all.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ class PaperBroker:
     def open(self, signal: TradeSignal, qty: float) -> Position:
         slip = self.cfg.execution.slippage_ticks * self.cfg.market.tick_size
         fill_price = signal.entry + slip * signal.side.sign
+        entry_cost = qty * self.cfg.execution.commission_per_unit
         pos = Position(
             signal=signal,
             qty=qty,
@@ -50,6 +55,7 @@ class PaperBroker:
             tp2=signal.tp2,
             remaining=qty,
         )
+        pos.realized -= entry_cost        # commission is charged on entry too
         pos.fills.append(Fill(pos.opened_at, fill_price, qty, "entry"))
         self._positions.append(pos)
         return pos
@@ -74,24 +80,34 @@ class PaperBroker:
 
         # Pessimistic ordering: stop wins any bar where both could have printed.
         if hit_stop:
-            closed.append(self._close(pos, pos.stop, candle, "stop" if not pos.tp1_hit else "stop_after_tp1"))
+            price = self._exit_price(pos, pos.stop, "stop")
+            closed.append(self._close(
+                pos, price, candle, "stop" if not pos.tp1_hit else "stop_after_tp1"))
             return closed
 
         if hit_tp1:
             scale = max(0.0, min(1.0, ex.partial_at_tp1))
             qty_out = _round_qty(pos.remaining * scale, self.cfg.market.qty_step)
             if qty_out > 0 and qty_out < pos.remaining:
-                self._partial(pos, pos.tp1, qty_out, candle, "tp1")
+                self._partial(pos, self._exit_price(pos, pos.tp1, "target"), qty_out, candle, "tp1")
                 pos.tp1_hit = True
                 if ex.move_stop_to_breakeven_after_tp1:
                     pos.stop = pos.entry_price
             else:
-                closed.append(self._close(pos, pos.tp1, candle, "tp1"))
+                closed.append(self._close(
+                    pos, self._exit_price(pos, pos.tp1, "target"), candle, "tp1"))
                 return closed
 
         if hit_tp2 and pos.remaining > 0:
-            closed.append(self._close(pos, pos.tp2, candle, "tp2"))
+            closed.append(self._close(
+                pos, self._exit_price(pos, pos.tp2, "target"), candle, "tp2"))
         return closed
+
+    def _exit_price(self, pos: Position, level: float, kind: str) -> float:
+        """Slippage always moves the fill against the position."""
+        ex = self.cfg.execution
+        ticks = ex.stop_slippage_ticks if kind == "stop" else ex.target_slippage_ticks
+        return level - ticks * self.cfg.market.tick_size * pos.side.sign
 
     # -------------------------------------------------------------- closes
 
