@@ -1,0 +1,79 @@
+# Trading bot configuration.
+# Everything here is reloadable; see tradebot/config.py for the full field list.
+
+market:
+  symbol: "MNQ1!"          # micro NQ - sized for a small account; see README on point_value
+  timeframe: "5m"
+  point_value: 2.0        # MNQ: $2 per index point per contract
+  tick_size: 0.25
+  qty_step: 1.0
+  min_qty: 1.0
+  session_tz: "America/New_York"
+  session_start: "09:30"
+  session_end: "16:00"
+  trade_session_only: true
+
+strategy:
+  name: "ema_vwap_rsi"
+  ema_fast: 9
+  ema_slow: 21
+  ema_cross_lookback: 5
+  rsi_period: 14
+  rsi_long_min: 50.0
+  rsi_long_max: 72.0
+  rsi_short_max: 50.0
+  rsi_short_min: 28.0
+  volume_multiple: 1.1
+  min_score: 0.75
+  optional_rules: ["liquidity_sweep", "structure_break"]
+  stop_buffer_atr: 0.25
+  tp1_r: 2.0
+  tp2_r: 4.0
+  min_rr: 1.5
+
+ai:
+  enabled: true
+  model: "claude-opus-5-5"
+  effort: "medium"
+  required: false         # true => an unavailable AI layer means NO TRADE
+  confirm_min_confidence: 0.55
+
+vision:
+  enabled: false          # turn on once you've set the region below
+  mode: "backup"          # only consulted when the data feed is stale/disagrees
+  monitor: 1
+  # region: {left: 0, top: 0, width: 1920, height: 1080}
+  min_interval_seconds: 20.0
+  price_tolerance_pct: 0.5
+
+risk:
+  starting_equity: 50000.0
+  risk_per_trade_pct: 0.5
+  max_trades_per_day: 5
+  max_daily_loss_pct: 2.0
+  max_open_positions: 1
+  max_consecutive_losses: 2
+  cooldown_minutes_after_loss: 30
+  require_stop: true
+  kill_switch: false
+
+execution:
+  mode: "paper"           # paper | alerts_only | live (live is a deliberate stub)
+  slippage_ticks: 1.0
+  partial_at_tp1: 0.5
+  move_stop_to_breakeven_after_tp1: true
+
+feed:
+  source: "synthetic"     # synthetic | replay | webhook | poll
+  # csv_path: "data/NQ_5m.csv"
+  # webhook_secret: "set-me"   # or export TRADEBOT_WEBHOOK_SECRET
+
+notify:
+  sound: true
+  desktop: true
+  console: true
+  only_actionable: true
+
+server:
+  host: "127.0.0.1"
+  port: 8787

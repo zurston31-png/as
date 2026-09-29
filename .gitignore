@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Runtime state - risk counters, trade logs, screenshots, generated data.
+data/*
+!data/.gitkeep
+
+# Local overrides of the committed config.
+config/local.yaml
+config/*.local.yaml
+.env
