@@ -1,0 +1,349 @@
+# Flow Model -- default configuration.
+#
+# Everything here is a declared prior, not a finding. Weights, thresholds and
+# score cutoffs are hypotheses to be tested in Phases 6-8.
+#
+# Percentages are FRACTIONS: 0.5% is 0.005.
+
+name: flow_model_default
+description: >
+  Baseline Flow Model research configuration. Component weights follow the
+  research brief's starting prior (20/25/20/15/20) and have not been
+  validated.
+seed: 20240101
+
+# ---------------------------------------------------------------------------
+# Instruments -- real contract economics. Commissions are retail-typical
+# all-in (broker + exchange + NFA); override for your own fee schedule.
+# ---------------------------------------------------------------------------
+instruments:
+  NQ:
+    symbol: NQ
+    instrument_type: FUTURE
+    description: E-mini Nasdaq-100 futures
+    exchange: CME
+    timezone: America/New_York
+    tick_size: 0.25
+    tick_value: 5.00          # -> point_value 20.00
+    commission_per_side: 2.25
+    exchange_fee_per_side: 0.37
+    typical_spread_ticks: 1.0
+    min_spread_ticks: 1.0
+    min_size: 1
+    max_size: 50
+    rth: {name: RTH, start: "09:30", end: "16:00"}
+    eth: {name: ETH, start: "18:00", end: "17:00"}
+
+  ES:
+    symbol: ES
+    instrument_type: FUTURE
+    description: E-mini S&P 500 futures
+    exchange: CME
+    timezone: America/New_York
+    tick_size: 0.25
+    tick_value: 12.50         # -> point_value 50.00
+    commission_per_side: 2.25
+    exchange_fee_per_side: 0.37
+    typical_spread_ticks: 1.0
+    min_spread_ticks: 1.0
+    min_size: 1
+    max_size: 50
+    rth: {name: RTH, start: "09:30", end: "16:00"}
+    eth: {name: ETH, start: "18:00", end: "17:00"}
+
+  GC:
+    symbol: GC
+    instrument_type: FUTURE
+    description: COMEX Gold futures
+    exchange: COMEX
+    timezone: America/New_York
+    tick_size: 0.10
+    tick_value: 10.00         # -> point_value 100.00
+    commission_per_side: 2.50
+    exchange_fee_per_side: 0.40
+    typical_spread_ticks: 2.0
+    min_spread_ticks: 1.0
+    min_size: 1
+    max_size: 20
+    rth: {name: RTH, start: "08:20", end: "13:30"}
+    eth: {name: ETH, start: "18:00", end: "17:00"}
+
+  QQQ:
+    symbol: QQQ
+    instrument_type: ETF
+    description: Invesco QQQ Trust (shares)
+    exchange: NASDAQ
+    timezone: America/New_York
+    tick_size: 0.01
+    tick_value: 0.01          # -> point_value 1.00 per share
+    commission_per_side: 0.005
+    commission_per_unit: true # per-share pricing
+    exchange_fee_per_side: 0.0
+    typical_spread_ticks: 1.0
+    min_spread_ticks: 1.0
+    min_size: 1
+    max_size: 20000
+    rth: {name: RTH, start: "09:30", end: "16:00"}
+
+  # SPX is a cash index: it cannot be traded directly, so modelling fills on
+  # it would produce fictional costs. It ships as a REFERENCE instrument --
+  # its options flow is a feature source for ES/NQ. To trade it, set
+  # `tradable: true` and `execution_proxy: ES` (or add SPY), which makes the
+  # cost model charge the proxy's real spread and commissions.
+  SPX:
+    symbol: SPX
+    instrument_type: INDEX
+    description: S&P 500 cash index (reference / options-flow source)
+    exchange: CBOE
+    timezone: America/New_York
+    tick_size: 0.01
+    tick_value: 0.01
+    typical_spread_ticks: 1.0
+    min_spread_ticks: 1.0
+    tradable: false
+
+# ---------------------------------------------------------------------------
+data:
+  provider: csv
+  root_path: data_cache
+  primary_interval_seconds: 300        # 5-minute primary
+  higher_intervals_seconds: [900, 3600, 86400]
+  intrabar_interval_seconds: 60        # resolves stop-vs-target ordering
+  timezone: America/New_York
+  data_latency_seconds: 0.0
+  max_staleness_seconds: 120.0
+  min_quality_to_trade: DEGRADED
+  drop_partial_bars: true
+  max_gap_bars_tolerated: 3
+  outlier_sigma: 10.0
+
+features:
+  atr_period: 14
+  atr_percentile_lookback: 252
+  realized_vol_period: 20
+  vol_of_vol_period: 20
+  swing_lookback: 5
+  swing_atr_multiple: 0.5
+  structure_lookback_bars: 50
+  vwap_anchor: session
+  momentum_period: 10
+  efficiency_period: 20
+  volume_percentile_lookback: 60
+  spread_percentile_lookback: 60
+  time_of_day_buckets: 26
+  cvd_period: 20
+  absorption_lookback: 10
+  options_lookback_days: 20
+
+regime:
+  high_vol_percentile: 0.80
+  low_vol_percentile: 0.20
+  trend_efficiency_threshold: 0.40
+  trend_strength_threshold: 0.25
+  cusum_threshold: 4.0
+  cusum_drift: 0.5
+  min_regime_bars: 3
+  shift_decay_bars: 10
+
+flow_score:
+  weights:
+    options_flow: 20.0
+    order_flow: 25.0
+    structure: 20.0
+    liquidity: 15.0
+    vol_momentum: 20.0
+  total_points: 100.0
+  # Off by default: redistributing a missing component's weight inflates
+  # scores and hides the fact that 45 of 100 points are unavailable.
+  strict_component_availability: true
+  redistribute_disabled_weight: false
+  enabled_components:
+    options_flow: true
+    order_flow: true
+    structure: true
+    liquidity: true
+    vol_momentum: true
+  max_opposing_points: 12.0
+  options_contradiction_points: 14.0
+  feed_requirements:
+    order_flow:
+      - {feed: tick_aggregate, minimum_quality: DEGRADED, required: true}
+    options_flow:
+      - {feed: options_snapshot, minimum_quality: DEGRADED, required: true}
+    structure:
+      - {feed: bars, minimum_quality: GOOD, required: true}
+    liquidity:
+      - {feed: bars, minimum_quality: GOOD, required: true}
+      - {feed: quotes, minimum_quality: DEGRADED, required: false}
+    vol_momentum:
+      - {feed: bars, minimum_quality: GOOD, required: true}
+
+setups:
+  SCALP_1R:
+    setup: SCALP_1R
+    enabled: true
+    reward_risk: 1.0
+    min_flow_score: 70.0
+    allowed_regimes: [LOW_VOL, HIGH_VOL, TRENDING_UP, TRENDING_DOWN]
+    min_vol_percentile: 0.10
+    max_vol_percentile: 0.95
+    stop_atr_multiple: 1.0
+    max_stop_atr_multiple: 2.0
+    min_stop_ticks: 4
+    max_hold_bars: 12
+    min_reward_risk: 0.95
+    require_orderflow_confirmation: true
+    require_structure_confirmation: true
+
+  SETUP_2R:
+    setup: SETUP_2R
+    enabled: true
+    reward_risk: 2.0
+    min_flow_score: 75.0
+    allowed_regimes: [TRENDING_UP, TRENDING_DOWN, HIGH_VOL, DIRECTIONAL_SHIFT]
+    min_vol_percentile: 0.20
+    max_vol_percentile: 0.98
+    stop_atr_multiple: 1.25
+    max_stop_atr_multiple: 2.5
+    min_stop_ticks: 6
+    max_hold_bars: 24
+    min_reward_risk: 1.8
+    require_orderflow_confirmation: true
+    require_structure_confirmation: true
+
+  DIRECTIONAL_3R:
+    setup: DIRECTIONAL_3R
+    enabled: true
+    reward_risk: 3.0
+    min_flow_score: 80.0
+    allowed_regimes: [TRENDING_UP, TRENDING_DOWN, DIRECTIONAL_SHIFT]
+    min_vol_percentile: 0.25
+    max_vol_percentile: 1.0
+    stop_atr_multiple: 1.5
+    max_stop_atr_multiple: 3.0
+    min_stop_ticks: 8
+    max_hold_bars: 60
+    min_reward_risk: 2.7
+    require_orderflow_confirmation: true
+    require_structure_confirmation: true
+
+risk:
+  starting_equity: 100000.0
+  risk_per_trade_pct: 0.005        # 0.5%
+  max_risk_per_trade_pct: 0.01     # 1% hard cap
+  daily_loss_limit_pct: 0.02
+  weekly_loss_limit_pct: 0.05
+  max_consecutive_losses: 4
+  cooldown_minutes_after_loss: 0.0
+  cooldown_minutes_after_limit: 1440.0
+  max_open_positions: 1
+  max_portfolio_heat_pct: 0.02
+  max_positions_per_symbol: 1
+  kill_switch_drawdown_pct: 0.15
+  kill_switch_is_terminal: true
+  compound_equity: true
+  allow_fractional_contracts: false
+
+execution:
+  use_quotes_when_available: true
+  base_slippage_ticks: 1.0
+  vol_slippage_coefficient: 0.5
+  stop_order_extra_slippage_ticks: 1.0
+  size_impact_ticks_per_unit: 0.0
+  latency_ms: 250.0
+  random_latency_ms: 0.0
+  max_participation_rate: 0.05
+  allow_partial_fills: true
+  min_partial_fraction: 0.5
+  entry_order_type: market
+  max_entry_wait_bars: 1
+  random_miss_probability: 0.0
+  entry_delay_bars: 0
+  fill_gaps_at_open: true
+  pessimistic_same_bar: true
+
+session:
+  trade_rth_only: true
+  skip_first_minutes: 5.0
+  skip_last_minutes: 10.0
+  flatten_at_session_close: true
+  skip_holidays: true
+  skip_half_days: true
+  blackout_minutes_around_events: 0.0
+
+backtest:
+  symbols: [NQ, ES]
+  start: 2015-01-01
+  end: 2025-01-01
+  seed: 20240101
+  record_wait_signals: true
+  record_equity_every_bar: true
+  fail_on_lookahead_assertion: true
+
+walk_forward:
+  train_months: 36
+  validation_months: 12
+  test_months: 12
+  step_months: 12
+  anchored: false
+  embargo_days: 5
+  purge_days: 1
+  min_trades_per_fold: 30
+
+seal:
+  enabled: true
+  sealed_start: 2023-01-01     # final untouched out-of-sample window
+  sealed_end: 2025-01-01
+  max_opens: 1
+  audit_path: reports/seal_audit.jsonl
+
+monte_carlo:
+  n_simulations: 10000
+  method: block
+  block_length: 20
+  seed: 20240101
+  compound: true
+  drawdown_thresholds: [0.10, 0.20, 0.30]
+  streak_thresholds: [5, 10, 20]
+  percentiles: [5.0, 10.0, 25.0, 50.0, 75.0, 90.0, 95.0]
+  n_curves_to_store: 200
+
+robustness:
+  flow_score_thresholds: [60.0, 65.0, 70.0, 75.0, 80.0, 85.0]
+  risk_pcts: [0.0025, 0.005, 0.0075, 0.01]
+  slippage_multipliers: [1.0, 1.5, 2.0, 3.0]
+  spread_multipliers: [1.0, 1.5, 2.0]
+  entry_delay_bars: [0, 1, 2]
+  miss_probabilities: [0.0, 0.05, 0.10]
+  win_rate_haircuts: [0.0, 0.05, 0.10]
+  fragility_profit_factor_floor: 1.1
+  fragility_max_relative_drop: 0.40
+
+analytics:
+  risk_free_rate_annual: 0.04
+  trading_days_per_year: 252
+  min_sample_n: 30
+  flow_score_buckets: [0.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 100.0]
+  allow_mixed_split_aggregation: false
+
+consistency:
+  weight_oos_win_rate_stability: 0.20
+  weight_profit_factor_stability: 0.20
+  weight_drawdown_stability: 0.15
+  weight_expectancy_stability: 0.20
+  weight_regime_stability: 0.15
+  weight_year_stability: 0.10
+
+paths:
+  reports_dir: reports
+  database_path: reports/flow_model.db
+  experiment_db_path: reports/experiments.db
+  log_dir: reports/logs
+  cache_dir: data_cache
+
+logging:
+  level: INFO
+  json_format: false
+  log_to_file: true
+  console: true
+  include_run_id: true

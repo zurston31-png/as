@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flow-model"
+version = "0.1.0"
+description = "Rules-based trading research and backtesting system (Flow Model)"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "plotly>=5.18",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=4.1"]
+api = ["fastapi>=0.110", "uvicorn>=0.27"]
+
+[project.scripts]
+flow-model = "flow_model.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["flow_model*"]
+
+[tool.setuptools.package-data]
+flow_model = ["config/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: long-running tests (large Monte Carlo runs, full backtests)",
+    "lookahead: automated lookahead-bias audits",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
