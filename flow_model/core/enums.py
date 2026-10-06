@@ -101,6 +101,21 @@ class SplitPhase(StrEnum):
     SEALED_OOS = "SEALED_OOS"
 
 
+class Feed(StrEnum):
+    """The four physical data feeds the five Flow Score components draw on.
+
+    Lives in core (not the data layer) because `config.schema.FeedRequirement`
+    must reference it and config may not import from data. Declared as an
+    enum rather than loose strings so a typo in a feed requirement is a
+    validation error instead of a silently unsatisfiable requirement.
+    """
+
+    BARS = "bars"
+    QUOTES = "quotes"
+    TICK_AGGREGATE = "tick_aggregate"
+    OPTIONS_SNAPSHOT = "options_snapshot"
+
+
 class InstrumentType(StrEnum):
     FUTURE = "FUTURE"
     ETF = "ETF"

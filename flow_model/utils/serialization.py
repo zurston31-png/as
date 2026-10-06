@@ -49,9 +49,13 @@ def jsonable(obj: Any) -> Any:
         return [jsonable(v) for v in sorted(obj, key=repr)]
     if isinstance(obj, (list, tuple)):
         return [jsonable(v) for v in obj]
-    if hasattr(obj, "to_init_dict"):
-        return jsonable(obj.to_init_dict())
     if hasattr(obj, "model_dump"):
+        # model_dump INCLUDES computed fields, which is what a report wants:
+        # a CleanReport's `retention` or a TradeRecord's `r_multiple` is the
+        # part a reader looks at. Round-tripping still works, because
+        # FrozenModel.from_mapping drops keys that are not constructor
+        # inputs. Using to_init_dict here would silently omit every derived
+        # value from stored reports.
         return jsonable(obj.model_dump(mode="python"))
     return str(obj)
 

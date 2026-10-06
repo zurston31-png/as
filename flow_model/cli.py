@@ -22,7 +22,7 @@ PHASE_STATUS: dict[str, tuple[int, str]] = {
     "config": (1, "done"),
     "splits": (1, "done"),
     "experiments": (1, "done"),
-    "data": (2, "not built"),
+    "data": (2, "done"),
     "features": (3, "not built"),
     "orderflow": (4, "not built"),
     "optionsflow": (5, "not built"),
@@ -159,6 +159,96 @@ def cmd_experiments(args: argparse.Namespace) -> int:
         return 0
 
 
+
+def cmd_data(args: argparse.Namespace) -> int:
+    """Load a dataset and report which Flow Score components are computable.
+
+    Run before any backtest. With bar-only data this states plainly that 45
+    of the 100 nominal points have no feed, which is the difference between
+    a Flow Score and a number that merely resembles one.
+    """
+    from flow_model.data import (
+        BarCleaner,
+        DataStore,
+        Feed,
+        QualityGrader,
+        SyntheticAdapter,
+        SyntheticConfig,
+        TradingCalendar,
+    )
+    from flow_model.validation.splits import guard_from_config
+
+    config = _load(args)
+    feeds = None
+    if args.feeds:
+        try:
+            feeds = frozenset(Feed(name) for name in args.feeds)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    if args.provider != "synthetic":
+        print(
+            f"only the synthetic provider is wired into this command so far "
+            f"(asked for {args.provider!r}). Real adapters exist "
+            f"(CsvAdapter, ParquetAdapter) but need a data directory; point "
+            f"data.root_path at one and load them from a script.",
+            file=sys.stderr,
+        )
+        return 2
+
+    calendar = TradingCalendar()
+    adapter = SyntheticAdapter(
+        config=SyntheticConfig(
+            include_ticks=Feed.TICK_AGGREGATE in (feeds or {Feed.TICK_AGGREGATE}),
+            include_quotes=Feed.QUOTES in (feeds or {Feed.QUOTES}),
+            include_options=Feed.OPTIONS_SNAPSHOT in (feeds or {Feed.OPTIONS_SNAPSHOT}),
+        ),
+        seed=config.seed,
+        spec_by_symbol=dict(config.instruments),
+        feeds=feeds,
+        interval_seconds=config.data.primary_interval_seconds,
+        calendar=calendar,
+    )
+
+    store = DataStore(
+        latency_seconds=config.data.data_latency_seconds,
+        guard=guard_from_config(config),
+    )
+    grader = QualityGrader(config.data, config.flow_score)
+    cleaner = BarCleaner(config.data)
+
+    print("!! SYNTHETIC DATA. Nothing measured on it says anything about real edge. !!\n")
+
+    for symbol in config.backtest.symbols:
+        data = store.load(
+            adapter,
+            symbol,
+            config.backtest.start,
+            config.backtest.end,
+            primary_interval=config.data.primary_interval_seconds,
+            clip_to_allowed=True,
+        )
+        _, clean_report = cleaner.clean(
+            data.primary_bars, spec=config.spec(symbol), calendar=calendar
+        )
+        print("=" * 66)
+        print("\n".join(grader.availability(data).summary_lines()))
+        print(
+            f"\n  rows: {clean_report.rows_in} in -> {clean_report.rows_out} out "
+            f"(retention {clean_report.retention:.4f}); "
+            f"gaps={clean_report.gaps_detected} "
+            f"outliers_quarantined={clean_report.outliers_quarantined} "
+            f"zero_volume={clean_report.zero_volume_flagged}"
+        )
+        print(f"  range: {data.primary_bars.first_ts} -> {data.primary_bars.last_ts}")
+        print(f"  data_hash: {data.fingerprint.data_hash if data.fingerprint else '-'}")
+        print()
+
+    print(f"combined data_hash: {store.combined_data_hash()}")
+    return 0
+
+
 def cmd_phases(args: argparse.Namespace) -> int:
     titles = {
         1: "architecture, config, core contracts, logging, experiment log, OOS seal",
@@ -222,7 +312,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("phases", help="Show which build phases are complete.")
     p.set_defaults(func=cmd_phases)
 
-    for name in ("data", "features", "backtest", "walkforward", "montecarlo", "dashboard", "paper"):
+    p = sub.add_parser("data", help="Load a dataset and report feed availability.")
+    p.add_argument("--provider", default="synthetic",
+                   help="Data provider. Only 'synthetic' is wired into the CLI so far.")
+    p.add_argument("--feeds", nargs="*", default=None,
+                   help="Restrict feeds, e.g. --feeds bars. Omit for everything the provider has.")
+    _add_config_args(p)
+    p.set_defaults(func=cmd_data)
+
+    for name in ("features", "backtest", "walkforward", "montecarlo", "dashboard", "paper"):
         phase, _ = PHASE_STATUS[name]
         p = sub.add_parser(name, help=f"(Phase {phase} -- not built yet)")
         _add_config_args(p)

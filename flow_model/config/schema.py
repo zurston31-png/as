@@ -26,6 +26,7 @@ from flow_model.core.determinism import DEFAULT_SEED, stable_hash
 from flow_model.core.enums import (
     Component,
     DataQuality,
+    Feed,
     MonteCarloMethod,
     Regime,
     SetupType,
@@ -50,7 +51,7 @@ class FeedRequirement(FrozenModel):
     proxy.
     """
 
-    feed: str
+    feed: Feed
     minimum_quality: DataQuality = DataQuality.DEGRADED
     required: bool = True
 
@@ -325,6 +326,197 @@ class SetupConfig(FrozenModel):
 # ---------------------------------------------------------------------------
 # Risk
 # ---------------------------------------------------------------------------
+
+
+class LevelSignificanceWeights(FrozenModel):
+    """Weights for the level significance score S (ARCHITECTURE.md 14.3).
+
+    "Major" is not a judgement in this system: it is `S >= s_major`.
+    """
+
+    touch_count: float = Field(ge=0.0, default=0.30)
+    rejection_magnitude: float = Field(ge=0.0, default=0.20)
+    volume_at_level: float = Field(ge=0.0, default=0.20)
+    htf_confluence: float = Field(ge=0.0, default=0.15)
+    age_decay: float = Field(ge=0.0, default=0.05)
+    anchor_bonus: float = Field(ge=0.0, default=0.10)
+
+    @model_validator(mode="after")
+    def _check(self) -> "LevelSignificanceWeights":
+        total = (
+            self.touch_count + self.rejection_magnitude + self.volume_at_level
+            + self.htf_confluence + self.age_decay + self.anchor_bonus
+        )
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"significance weights sum to {total}, expected 1.0")
+        return self
+
+
+class LevelCleanlinessWeights(FrozenModel):
+    """Weights for the approach cleanliness score C (ARCHITECTURE.md 14.4).
+
+    "Clean" is not a judgement either: it is `C >= c_min`.
+    """
+
+    approach_efficiency: float = Field(ge=0.0, default=0.30)
+    recent_touch_density: float = Field(ge=0.0, default=0.25)
+    bar_overlap: float = Field(ge=0.0, default=0.20)
+    level_integrity: float = Field(ge=0.0, default=0.15)
+    volatility_regularity: float = Field(ge=0.0, default=0.10)
+
+    @model_validator(mode="after")
+    def _check(self) -> "LevelCleanlinessWeights":
+        total = (
+            self.approach_efficiency + self.recent_touch_density + self.bar_overlap
+            + self.level_integrity + self.volatility_regularity
+        )
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"cleanliness weights sum to {total}, expected 1.0")
+        return self
+
+
+class RejectionWeights(FrozenModel):
+    """Weights for the rejection confirmation score R (ARCHITECTURE.md 14.5).
+
+    `order_flow` is dropped WITHOUT redistribution when no tick feed exists,
+    so these need not sum to 1 after that drop -- the lost weight is lost,
+    which is the honest degradation path.
+    """
+
+    close_position: float = Field(ge=0.0, default=0.40)
+    displacement: float = Field(ge=0.0, default=0.35)
+    order_flow: float = Field(ge=0.0, default=0.25)
+
+    @model_validator(mode="after")
+    def _check(self) -> "RejectionWeights":
+        total = self.close_position + self.displacement + self.order_flow
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"rejection weights sum to {total}, expected 1.0")
+        return self
+
+
+class StructureLevelConfig(FrozenModel):
+    """Support/resistance zone detection, scoring and gating.
+
+    Every constant here is a hypothesis. This is the largest parameter
+    surface in the project and therefore the largest overfitting risk, which
+    is why `robustness.py` sweeps it against training folds only.
+    """
+
+    # --- pivot detection ---
+    pivot_confirm_bars: int = Field(
+        gt=0,
+        default=3,
+        description=(
+            "Right-side bars required before a pivot is CONFIRMED. A swing "
+            "high is not known until this many bars after it forms; a centred "
+            "argmax window evaluated at t would read bars after t."
+        ),
+    )
+    pivot_prominence_atr: float = Field(gt=0.0, default=0.40)
+
+    # --- clustering ---
+    zone_band_atr: float = Field(
+        gt=0.0, default=0.25, description="Cluster merge distance, in ATR units."
+    )
+    min_zone_width_ticks: int = Field(gt=0, default=2)
+    max_zones_tracked: int = Field(gt=0, default=24)
+    lookback_bars: int = Field(gt=10, default=500)
+
+    # --- anchors ---
+    use_prior_session_levels: bool = True
+    use_overnight_levels: bool = True
+    use_opening_range: bool = True
+    opening_range_minutes: float = Field(gt=0.0, default=30.0)
+    use_vwap_levels: bool = True
+    use_round_numbers: bool = True
+    round_increment_points: dict[str, float] = Field(
+        default_factory=lambda: {"NQ": 100.0, "ES": 25.0, "GC": 10.0, "QQQ": 5.0, "SPX": 25.0}
+    )
+
+    # --- significance ---
+    significance_weights: LevelSignificanceWeights = Field(
+        default_factory=LevelSignificanceWeights
+    )
+    touch_cap: int = Field(gt=0, default=4)
+    touch_separation_atr: float = Field(gt=0.0, default=0.75)
+    touch_separation_bars: int = Field(gt=0, default=5)
+    rejection_horizon_bars: int = Field(gt=0, default=8)
+    rejection_reference_atr: float = Field(gt=0.0, default=1.5)
+    age_decay_lambda_bars: float = Field(gt=0.0, default=500.0)
+    min_significance: float = Field(
+        ge=0.0, le=1.0, default=0.60, description="The gate that defines 'major'."
+    )
+
+    # --- cleanliness ---
+    cleanliness_weights: LevelCleanlinessWeights = Field(
+        default_factory=LevelCleanlinessWeights
+    )
+    approach_bars: int = Field(gt=1, default=10)
+    efficiency_reference: float = Field(gt=0.0, le=1.0, default=0.45)
+    recent_window_bars: int = Field(gt=1, default=30)
+    max_recent_touches: int = Field(gt=0, default=3)
+    overlap_reference: float = Field(gt=0.0, le=1.0, default=0.70)
+    failed_break_horizon_bars: int = Field(gt=0, default=4)
+    min_cleanliness: float = Field(
+        ge=0.0, le=1.0, default=0.55, description="The gate that defines 'clean'."
+    )
+
+    # --- rejection ---
+    rejection_weights: RejectionWeights = Field(default_factory=RejectionWeights)
+    displacement_reference_atr: float = Field(gt=0.0, default=0.50)
+    require_close_back_outside: bool = Field(
+        default=True,
+        description=(
+            "The binary rejection requirement: the bar's extreme entered the "
+            "zone and the close returned outside it. Disabling this removes "
+            "the only non-negotiable part of the trigger."
+        ),
+    )
+
+    # --- entry / stop / target ---
+    entry_atr_window: float = Field(
+        gt=0.0,
+        default=0.75,
+        description="Price must be within this many ATR of the zone to consider entry.",
+    )
+    stop_buffer_atr: float = Field(
+        gt=0.0,
+        default=0.25,
+        description="Stop placed beyond the zone edge AND beyond the rejection bar extreme.",
+    )
+    target_requires_major_zone: bool = Field(
+        default=True,
+        description=(
+            "Target the next opposing zone with S >= min_significance. This is "
+            "what makes setup selection a measurement rather than a parameter: "
+            "achievable R:R is read off the structure, and a trade whose next "
+            "level is too close is declined rather than retargeted."
+        ),
+    )
+    fallback_target_atr: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "ATR-multiple target used when no opposing major zone exists. None "
+            "means decline the trade instead, which is the default: inventing a "
+            "target is how a structure-based setup silently becomes an "
+            "arbitrary-R setup."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> "StructureLevelConfig":
+        if self.approach_bars > self.recent_window_bars:
+            raise ValueError(
+                "approach_bars exceeds recent_window_bars: the approach window "
+                "would extend beyond the window used to judge recent activity"
+            )
+        if self.recent_window_bars > self.lookback_bars:
+            raise ValueError("recent_window_bars exceeds lookback_bars")
+        if self.touch_cap > self.lookback_bars:
+            raise ValueError("touch_cap exceeds lookback_bars")
+        return self
 
 
 class RiskConfig(FrozenModel):
@@ -720,6 +912,7 @@ class FlowModelConfig(FrozenModel):
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     flow_score: FlowScoreConfig = Field(default_factory=FlowScoreConfig)
+    levels: StructureLevelConfig = Field(default_factory=StructureLevelConfig)
     setups: dict[SetupType, SetupConfig] = Field(default_factory=dict)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

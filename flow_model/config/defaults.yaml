@@ -178,6 +178,68 @@ flow_score:
     vol_momentum:
       - {feed: bars, minimum_quality: GOOD, required: true}
 
+# ---------------------------------------------------------------------------
+# Support/resistance structure (ARCHITECTURE.md section 14).
+# "Major" is the gate min_significance; "clean" is the gate min_cleanliness.
+# Every constant below is a hypothesis, swept in Phase 8 on training folds only.
+levels:
+  pivot_confirm_bars: 3          # a pivot is not KNOWN until this many bars later
+  pivot_prominence_atr: 0.40
+  zone_band_atr: 0.25
+  min_zone_width_ticks: 2
+  max_zones_tracked: 24
+  lookback_bars: 500
+
+  use_prior_session_levels: true
+  use_overnight_levels: true
+  use_opening_range: true
+  opening_range_minutes: 30.0
+  use_vwap_levels: true
+  use_round_numbers: true
+  round_increment_points: {NQ: 100.0, ES: 25.0, GC: 10.0, QQQ: 5.0, SPX: 25.0}
+
+  significance_weights:
+    touch_count: 0.30
+    rejection_magnitude: 0.20
+    volume_at_level: 0.20
+    htf_confluence: 0.15
+    age_decay: 0.05
+    anchor_bonus: 0.10
+  touch_cap: 4
+  touch_separation_atr: 0.75
+  touch_separation_bars: 5
+  rejection_horizon_bars: 8
+  rejection_reference_atr: 1.5
+  age_decay_lambda_bars: 500.0
+  min_significance: 0.60         # <- defines "major"
+
+  cleanliness_weights:
+    approach_efficiency: 0.30
+    recent_touch_density: 0.25
+    bar_overlap: 0.20
+    level_integrity: 0.15
+    volatility_regularity: 0.10
+  approach_bars: 10
+  efficiency_reference: 0.45
+  recent_window_bars: 30
+  max_recent_touches: 3
+  overlap_reference: 0.70
+  failed_break_horizon_bars: 4
+  min_cleanliness: 0.55          # <- defines "clean"
+
+  rejection_weights:
+    close_position: 0.40
+    displacement: 0.35
+    order_flow: 0.25             # dropped WITHOUT redistribution if no tick feed
+  displacement_reference_atr: 0.50
+  require_close_back_outside: true
+
+  entry_atr_window: 0.75
+  stop_buffer_atr: 0.25
+  target_requires_major_zone: true
+  fallback_target_atr: null      # null = decline rather than invent a target
+
+
 setups:
   SCALP_1R:
     setup: SCALP_1R

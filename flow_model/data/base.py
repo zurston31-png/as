@@ -1,5 +1,9 @@
 """Data-layer interfaces.
 
+`Feed` is re-exported from `core.enums` for convenience; it lives there
+because `config.schema.FeedRequirement` references it and config must not
+import from the data layer.
+
 This module freezes the contract between the data layer and everything
 above it. Adapters, cleaners, calendars and quality graders are written
 against these types; nothing above the data layer imports an adapter
@@ -14,22 +18,9 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import Field, computed_field
 
-from flow_model.core.enums import DataQuality, Session, StrEnum
+from flow_model.core.enums import DataQuality, Feed, Session
 from flow_model.core.instruments import InstrumentSpec
 from flow_model.core.model import FrozenModel
-
-
-class Feed(StrEnum):
-    """The four physical data feeds the five Flow Score components draw on.
-
-    Named here rather than as loose strings so a typo in a feed requirement
-    is a NameError instead of a silently-unsatisfiable requirement.
-    """
-
-    BARS = "bars"
-    QUOTES = "quotes"
-    TICK_AGGREGATE = "tick_aggregate"
-    OPTIONS_SNAPSHOT = "options_snapshot"
 
 
 class FeedStatus(FrozenModel):

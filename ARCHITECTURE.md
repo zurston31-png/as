@@ -406,3 +406,185 @@ risk, not *model* risk.
 | 11 | Paper trading | Backtest/live parity test passes |
 
 No phase advances on a failing critical test.
+
+---
+
+## 14. Support/resistance structure: formalizing "clean price action at major levels"
+
+Added after Phase 2 at the researcher's direction. The instruction was
+"use clean price action at major support and resistance levels". Per
+principle 3, that phrase cannot enter the codebase as written — "clean" and
+"major" are judgments, not measurements. This section is the translation.
+It defines three bounded scalars and the gates built on them.
+
+Honest framing before the math: support/resistance is among the most widely
+known and most arbitraged retail concepts in existence. Formalizing it makes
+it **testable**, not profitable. This section also introduces roughly a dozen
+new tunable constants, which makes it the single largest overfitting surface
+in the project — every one is swept in Phase 8 against training folds only,
+and the sealed window stays shut.
+
+### 14.1 Level identification
+
+Two sources. **Anchor levels** are objectively defined and carry zero
+detection risk:
+
+| Anchor | Definition |
+|---|---|
+| prior session high / low / close | from the calendar's `session_date` |
+| overnight high / low | ETH range before the RTH open |
+| opening range high / low | extremes of the first `or_minutes` of RTH |
+| session VWAP, ±1σ | volume-weighted, anchored per `features.vwap_anchor` |
+| round numbers | multiples of `round_increment` per instrument |
+
+**Swing pivots** require detection, and this is where most retail
+implementations silently acquire lookahead. Bar `i` is a confirmed swing
+high *at evaluation time t* only when:
+
+```
+i <= t - k_confirm                                   (right-side confirmation)
+high[i] == max(high[i-k_confirm : i+k_confirm+1])
+high[i] - max(neighbours) >= m_prom * ATR[i]         (ATR-scaled prominence)
+```
+
+The `i <= t - k_confirm` condition is load-bearing. A swing high is not
+*known* until `k_confirm` bars after it forms; a centred `argmax` window
+evaluated at `t` reads bars after `t`. Every pivot therefore carries a
+`confirmed_at_ts` and the level does not exist before it. This is checked by
+the Phase 3 lookahead audit, not asserted here.
+
+### 14.2 Clustering into zones
+
+18245.00 and 18248.25 are one level. Pivots and anchors are merged by
+single-linkage agglomeration while the price gap is below
+`w = c_band * ATR_t` (default 0.25), giving a **zone** with:
+
+```
+zone_price = volume-weighted mean of members (median when no volume profile)
+zone_width = max(member spread, min_width_ticks * tick_size)
+```
+
+Zone width is ATR-scaled rather than fixed in points, so the same rule works
+on NQ at 50-point daily ranges and on NQ at 500-point daily ranges.
+
+### 14.3 Significance `S ∈ [0,1]` — what "major" means
+
+Six bounded terms, weights configurable and summing to 1:
+
+| Term | Formula | Rationale |
+|---|---|---|
+| `s_touch` | `min(τ, τ_cap) / τ_cap`, `τ_cap=4` | τ = **distinct** prior touches. Distinct requires a departure of `d_sep * ATR` or `n_sep` bars between touches, so one long consolidation is not counted as twenty touches. |
+| `s_reject` | `clip(median(r_j) / r_ref, 0, 1)` | `r_j` = displacement away from the zone within `h` bars of touch *j*, in ATR. A level that produced real moves matters more than one merely grazed. |
+| `s_volume` | percentile rank of in-zone volume | Volume-at-price from bars: each bar's volume spread across its range. High-volume nodes are real levels. |
+| `s_htf` | confirming higher intervals / available | `MarketView` already serves 15m/60m/daily. Confluence across timeframes, measured. |
+| `s_age` | `exp(-a / λ)` **only when τ = 0** | An *untested* level decays with age. A level with touches is confirmed, not stale, so no decay applies. |
+| `s_anchor` | 1 if the zone contains an anchor, else 0 | Anchors are referenced by many participants and are objectively defined. |
+
+`S = Σ wᵢ sᵢ`. **"Major" is the gate `S >= s_major`** (default 0.60).
+
+### 14.4 Cleanliness `C ∈ [0,1]` — what "clean" means
+
+Five bounded terms, weights configurable and summing to 1:
+
+| Term | Formula | Rationale |
+|---|---|---|
+| `s_eff` | `clip(E / E_ref, 0, 1)` where `E` = Kaufman efficiency ratio over `k_app` bars | A clean approach is directional. A grind into the level is not clean. |
+| `s_density` | `clip(1 - ρ / ρ_max, 0, 1)` | ρ = distinct touches **within the last `k_recent` bars**. A level tested five times in thirty bars is being chewed through. |
+| `s_overlap` | `clip(1 - O / O_ref, 0, 1)` | `O` = mean adjacent-bar range overlap over `k_app` bars. High overlap is churn. |
+| `s_integrity` | decays with φ = failed breaks in `k_recent` | A failed break is a close beyond the zone followed by a close back inside within `h_fail` bars. Repeated pokes mean the level is not clean. |
+| `s_vol` | `1 - clip(|log(ATR_t / median ATR₅₀)| / log 2, 0, 1)` | Penalizes both a panic flush and a dead tape. A clean test happens in ordinary volatility. |
+
+`C = Σ vᵢ sᵢ`. Gate: `C >= c_min` (default 0.55).
+
+**The deliberate tension between S and C.** Historical touches *raise*
+significance; recent touches *lower* cleanliness. That is not an
+inconsistency — it is the whole distinction between a well-established level
+and a level under active attack, and it is why these are two scores rather
+than one. A level with τ=6 spread over 400 bars and ρ=0 in the last 30 is
+both major and clean. The same τ=6 packed into the last 30 bars is major and
+filthy, and the system declines it.
+
+### 14.5 Rejection confirmation `R ∈ [0,1]` — the trigger
+
+One hard requirement plus three scored terms:
+
+```
+REQUIRED (binary gate, not scored):
+    the bar's extreme entered the zone        (low <= z_hi for support)
+    AND the bar closed back outside it        (close > z_hi for support)
+
+s_close : clip((p - 0.5) / 0.5, 0, 1),  p = (close - low) / (high - low)
+s_disp  : clip(|close - zone_price| / (disp_ref * ATR), 0, 1)
+s_flow  : delta sign agrees with the trade direction
+```
+
+`s_flow` is **dropped, with its weight not redistributed**, when no tick feed
+exists — consistent with `strict_component_availability`. `MarketView.deltas()`
+returns empty rather than estimating, so this degrades honestly.
+
+### 14.6 Wiring: gates, score, stop, and target
+
+Gates run before scoring, in the existing pipeline position (§3,
+`StructureGate`):
+
+```
+zone exists within entry_atr_window * ATR of price   else WAIT("no_structure")
+S >= s_major                                          else WAIT("no_structure")
+C >= c_min                                            else WAIT("no_structure")
+rejection binary requirement met                      else WAIT("no_structure")
+```
+
+The STRUCTURE component's 20 points then come from
+`magnitude = w_S·S + w_C·C + w_R·R`, with `direction = +1` at support and
+`-1` at resistance. Gates express "must have"; the score expresses "how
+good". Using a product instead would let one weak term zero an otherwise
+strong setup, which is a gate's job, not a score's.
+
+**Stop placement becomes determined rather than chosen:**
+
+```
+long at support:  stop = min(z_lo, rejection_bar.low) - b_stop * ATR
+short at resistance: stop = max(z_hi, rejection_bar.high) + b_stop * ATR
+```
+
+This is the point of the whole section. R is defined as `|entry - stop|`, and
+the stop now sits where the trade thesis is actually falsified — beyond the
+level — rather than at an arbitrary ATR multiple.
+
+**Target is the next opposing zone with `S >= s_major`.** This has a
+consequence worth stating plainly: **setup selection becomes a measurement,
+not a parameter.** The distance to the next significant level, divided by the
+stop distance, *is* the achievable R:R:
+
+```
+achievable_rr = |next_opposing_zone_price - entry| / |entry - stop|
+
+achievable_rr < min_reward_risk        -> WAIT("rr_too_low")
+1.0 <= achievable_rr < 1.8             -> SCALP_1R
+1.8 <= achievable_rr < 2.7             -> SETUP_2R
+achievable_rr >= 2.7                   -> DIRECTIONAL_3R
+```
+
+A setup is no longer assigned by configuration; it is read off the structure.
+When the next level is 0.8R away the trade is simply declined, which is the
+mechanism that stops a "1R scalp" from quietly becoming a 0.4R target against
+a full-width stop — the exact failure mode §0.2 and
+`TradeRecord.r_label_is_honest()` exist to catch.
+
+### 14.7 What would falsify this
+
+Recorded now, before any result exists, so the test is not chosen after
+seeing the data:
+
+1. If win rate does not increase monotonically with `S` across its buckets,
+   "major" is not measuring significance.
+2. If win rate does not increase with `C`, "clean" is not measuring
+   anything — the approach-quality terms are noise and should be removed
+   rather than reweighted.
+3. If `s_density` and `s_touch` have the same sign of association with
+   outcome, the S/C split is unjustified and collapses to one score.
+4. If performance requires `s_major > 0.75`, the level population is too
+   small to trade and the result is a small-sample artifact.
+5. If the zone-width constant `c_band` changes expectancy by more than
+   `fragility_max_relative_drop` across ±1 step, the whole construction is
+   fragile and should be reported as such.
