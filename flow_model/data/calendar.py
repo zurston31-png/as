@@ -180,10 +180,19 @@ def last_weekday(year: int, month: int, weekday: int) -> date:
     return last - timedelta(days=(last.weekday() - weekday) % 7)
 
 
-def observed(day: date) -> date:
+def observed(day: date, shift_saturday: bool = True) -> date:
     """Weekend observance: Saturday shifts back to Friday, Sunday forward
-    to Monday."""
-    if day.weekday() == 5:
+    to Monday.
+
+    `shift_saturday=False` suppresses the backward shift, which is needed
+    for New Year's Day. The US exchanges apply uniform weekend observance
+    with exactly one exception: when 1 January falls on a Saturday they stay
+    OPEN the preceding Friday rather than closing it, because that Friday is
+    the last session of the prior year. Applying the uniform rule there
+    wrongly closes four Fridays in the 2010-2035 span (31 Dec 2010, 2021,
+    2027 and 2032), and a backtest would skip four real trading days.
+    """
+    if day.weekday() == 5 and shift_saturday:
         return day - timedelta(days=1)
     if day.weekday() == 6:
         return day + timedelta(days=1)
@@ -194,15 +203,19 @@ def observed(day: date) -> date:
 def us_market_holidays(year: int) -> frozenset[date]:
     """Observed US equity/futures market holidays for the given year.
 
-    The dates returned are *observed* dates, so a New Year's Day falling on
-    a Saturday yields 31 December of the preceding year -- the returned set
-    is keyed on the holiday's nominal year, not on the year of every date
-    in it. `TradingCalendar` therefore consults both `year` and `year + 1`
-    when classifying a day, and a caller doing its own membership test must
-    do the same.
+    The dates returned are *observed* dates, and the set is keyed on the
+    holiday's nominal year rather than on the year of every date in it.
+    `TradingCalendar` therefore consults both `year` and `year + 1` when
+    classifying a day, and a caller doing its own membership test must do
+    the same.
+
+    New Year's Day is the one holiday that does not shift back from a
+    Saturday; see `observed` for why.
     """
     days = [
-        observed(date(year, 1, 1)),  # New Year's Day
+        # New Year's Day: no Saturday shift -- see `observed`. A Saturday
+        # 1 January is simply a weekend, and the Friday before stays open.
+        observed(date(year, 1, 1), shift_saturday=False),
         nth_weekday(year, 1, MONDAY, 3),  # Martin Luther King Jr. Day
         nth_weekday(year, 2, MONDAY, 3),  # Washington's Birthday
         good_friday(year),

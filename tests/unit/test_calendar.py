@@ -21,6 +21,7 @@ from flow_model.config.schema import SessionFilterConfig
 from flow_model.core.enums import InstrumentType, Session
 from flow_model.core.instruments import InstrumentSpec, SessionWindow
 from flow_model.data.base import SchemaError, SessionCalendarProtocol
+from flow_model.config.loader import default_config
 from flow_model.data.calendar import (
     HALF_DAY_CLOSE_MINUTES,
     JUNETEENTH_FIRST_YEAR,
@@ -257,12 +258,35 @@ def test_weekend_observance_shifts_the_observed_date(year, day):
     assert day in us_market_holidays(year)
 
 
-def test_new_year_on_a_saturday_is_observed_in_the_previous_year():
-    # 2022-01-01 was a Saturday, so the observance lands on 2021-12-31 --
-    # a date outside the nominal year. A caller testing membership only
-    # against `day.year` would miss it; the calendar checks year + 1.
-    assert date(2021, 12, 31) in us_market_holidays(2022)
-    assert date(2022, 1, 1) not in us_market_holidays(2022)
+@pytest.mark.parametrize("year", [2011, 2022, 2028, 2033])
+def test_saturday_new_year_does_not_close_the_preceding_friday(year):
+    """The one exception to uniform weekend observance.
+
+    When 1 January falls on a Saturday the US exchanges stay OPEN the
+    preceding Friday, because that Friday is the last session of the prior
+    year. Applying the uniform Saturday-shifts-back rule would wrongly
+    close four real trading days in the 2010-2035 span.
+    """
+    assert date(year, 1, 1).weekday() == 5          # precondition: a Saturday
+    friday = date(year - 1, 12, 31)
+    assert friday not in us_market_holidays(year)
+    assert friday not in us_market_holidays(year - 1)
+    spec = default_config().spec("NQ")
+    assert TradingCalendar().is_trading_day(friday, spec)
+
+
+def test_sunday_new_year_still_shifts_forward():
+    """Only the Saturday case is exceptional; Sunday observance is normal."""
+    assert date(2023, 1, 1).weekday() == 6
+    assert date(2023, 1, 2) in us_market_holidays(2023)
+
+
+def test_other_saturday_holidays_still_shift_back():
+    """The exception is specific to New Year's Day, not to Saturdays."""
+    assert date(2020, 7, 4).weekday() == 5
+    assert date(2020, 7, 3) in us_market_holidays(2020)
+    assert date(2021, 12, 25).weekday() == 5
+    assert date(2021, 12, 24) in us_market_holidays(2021)
 
 
 @pytest.mark.parametrize("year", [2010, 2015, 2021])
@@ -290,10 +314,19 @@ def test_holiday_count_is_stable_per_era(year):
     assert len(us_market_holidays(year)) == expected
 
 
-def test_no_observed_holiday_falls_on_a_weekend():
+def test_observed_holidays_are_weekdays_except_a_saturday_new_year():
+    """A Saturday 1 January stays on 1 January rather than shifting back.
+
+    It lands on a weekend, which is harmless -- the market is closed anyway
+    -- and it is what keeps the preceding Friday open.
+    """
     for year in SPAN_YEARS:
         for day in us_market_holidays(year):
-            assert day.weekday() < 5, f"{day} is a weekend"
+            if day.weekday() >= 5:
+                assert (day.month, day.day) == (1, 1), f"{day} is an unexpected weekend holiday"
+                assert day.weekday() == 5, f"{day} should only ever be a Saturday"
+            else:
+                assert day.weekday() < 5
 
 
 # --- half days -------------------------------------------------------------
