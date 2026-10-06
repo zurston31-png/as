@@ -24,7 +24,7 @@ Two grading rules are worth stating up front because they are not obvious:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 from pydantic import Field, computed_field
@@ -34,11 +34,31 @@ from flow_model.core.enums import Component, DataQuality
 from flow_model.core.model import FrozenModel
 from flow_model.data.base import Feed, FeedStatus
 from flow_model.data.market_view import MarketView
-from flow_model.data.series import NS_PER_SECOND
+from flow_model.data.series import NS_PER_SECOND, from_ns
 from flow_model.data.store import DataStore, SymbolData
 from flow_model.utils.logging import get_logger
 
 logger = get_logger("data.quality")
+
+
+def _median_cadence_seconds(series) -> float | None:
+    """Median interval between a series' observations, or None below 2 rows."""
+    if series is None or len(series) < 2:
+        return None
+    return float(np.median(np.diff(series.ts_ns))) / NS_PER_SECOND
+
+
+def _worst_gap_seconds(series) -> float | None:
+    """Longest interval this series ever goes between observations.
+
+    The agreement check between `availability()` and `grade()` uses the WORST
+    gap, not the median. A once-per-session feed's median gap is one day but
+    its worst is a long weekend, and it is the weekend that decides whether
+    the configured staleness limit will start blocking bars every Monday.
+    """
+    if series is None or len(series) < 2:
+        return None
+    return float(np.max(np.diff(series.ts_ns))) / NS_PER_SECOND
 
 
 class QualityThresholds(FrozenModel):
@@ -99,6 +119,16 @@ class QualityReport(FrozenModel):
             return FeedStatus(feed=feed, quality=DataQuality.MISSING, note="not graded")
 
     def is_tradable(self, minimum: DataQuality) -> bool:
+        """Whether trading may proceed on this data.
+
+        A non-empty `blocking_feeds` always means no, independently of
+        `overall`. The two can disagree: a feed graded DEGRADED clears a
+        DEGRADED dataset-wide minimum while still failing the GOOD floor its
+        own component declared, and reporting that as tradable would make
+        the per-component floors decorative again.
+        """
+        if self.blocking_feeds:
+            return False
         return self.overall.is_tradable(minimum)
 
     def summary_lines(self) -> tuple[str, ...]:
@@ -108,9 +138,12 @@ class QualityReport(FrozenModel):
             if status is None:
                 continue
             age = "n/a" if status.age_seconds is None else f"{status.age_seconds:.0f}s"
+            coverage = (
+                "not measured" if status.coverage is None else f"{status.coverage:.3f}"
+            )
             lines.append(
                 f"  {feed.value:<18} {status.quality.value:<9} "
-                f"rows={status.rows:<7} coverage={status.coverage:.3f} age={age}"
+                f"rows={status.rows:<7} coverage={coverage} age={age}"
                 + (f"  {status.note}" if status.note else "")
             )
         if self.blocking_feeds:
@@ -259,7 +292,7 @@ class QualityGrader:
 
     # --- coverage ------------------------------------------------------
 
-    def _bar_coverage(self, view: MarketView) -> float:
+    def _bar_coverage(self, view: MarketView) -> float | None:
         """Fraction of contiguous inter-bar steps in a trailing window.
 
         Precise definition, because an undocumented "coverage" number is
@@ -269,34 +302,71 @@ class QualityGrader:
         (those are session breaks, not missing data). Coverage is the share
         of the remaining differences that equal exactly one interval.
 
-        Limitation: a gap longer than the session-break multiple is
-        indistinguishable from a session break and is not counted. The
-        dataset-level `CleanReport.gaps_detected`, which has the calendar
-        available, is the authority on gaps.
+        Returns None when NOTHING is measurable -- every step in the window
+        exceeded the break threshold. That case previously returned 1.0, so a
+        feed missing 99% of its bars graded GOOD with an empty note, and the
+        grade was not even monotonic: going from 8.3% of bars present to 7.7%
+        flipped MISSING to GOOD as the steps crossed the threshold. "No
+        information" and "perfect coverage" are now different answers.
+
+        At daily granularity and coarser, ANY step longer than one interval is
+        a non-session span (a weekend is three daily steps), so the break
+        threshold tightens to just above one interval. Otherwise a complete
+        daily series graded DEGRADED purely from its weekends.
+
+        Limitation: a gap longer than the break threshold is indistinguishable
+        from a session break and is not counted. The dataset-level
+        `CleanReport.gaps_detected`, which has the calendar, is the authority
+        on gaps.
         """
         stamps = view.bar_timestamps(self.thresholds.coverage_window_bars)
         if stamps.size < 2:
-            return 0.0
+            return None
         interval_ns = view.primary_interval * NS_PER_SECOND
         if interval_ns <= 0:
-            return 0.0
+            return None
+        multiple = (
+            1.5
+            if view.primary_interval >= 86_400
+            else self.thresholds.session_break_multiple
+        )
         deltas = np.diff(np.asarray(stamps, dtype=np.int64))
-        intraday = deltas[deltas <= interval_ns * self.thresholds.session_break_multiple]
+        intraday = deltas[deltas <= interval_ns * multiple]
         if intraday.size == 0:
-            return 1.0  # every step was a session break; nothing to judge
+            return None
         contiguous = int(np.count_nonzero(intraday == interval_ns))
         return round(contiguous / intraday.size, 6)
 
-    def _tick_classification(self, view: MarketView) -> float:
+    def _tick_classification(self, view: MarketView) -> tuple[float, str]:
+        """Share of traded volume with a known aggressor, and how it was measured.
+
+        Reconciled against BAR volume when a bar feed is available, rather
+        than trusting the tick feed's own denominator. `unclassified_volume`
+        is an optional column, so a feed that classified half the tape and
+        simply omitted the column reported 1.0 and graded GOOD, while the
+        same feed honestly declaring its unclassified half graded MISSING.
+        Bar volume is the independent quantity the split must reconcile to,
+        and it was loaded alongside and never consulted.
+        """
         window = self.thresholds.coverage_window_bars
         buys = view.tick_column("buy_volume", window)
         sells = view.tick_column("sell_volume", window)
-        unclassified = view.tick_column("unclassified_volume", window)
         classified = float(buys.sum() + sells.sum())
+
+        bar_volume = view.volumes(window)
+        if bar_volume.size and buys.size:
+            traded = float(bar_volume[-buys.size:].sum()) if buys.size <= bar_volume.size else 0.0
+            if traded > 0:
+                return round(min(classified / traded, 1.0), 6), "reconciled against bar volume"
+
+        unclassified = view.tick_column("unclassified_volume", window)
         total = classified + float(unclassified.sum())
         if total <= 0:
-            return 0.0
-        return round(classified / total, 6)
+            return 0.0, "no volume"
+        return (
+            round(classified / total, 6),
+            "self-reported by the feed; no bar volume available to reconcile against",
+        )
 
     def _crossed_quote_rate(self, view: MarketView) -> float:
         window = self.thresholds.coverage_window_bars
@@ -308,52 +378,85 @@ class QualityGrader:
 
     # --- per-feed grading ----------------------------------------------
 
+    def staleness_limit(self, view: MarketView, feed: Feed) -> float:
+        """How old this feed's newest observation may be before it is STALE.
+
+        The configured limit is a floor; a feed is additionally allowed
+        `stale_cadence_multiple` of its OWN observed interval. "Stale" should
+        mean missed observations, not elapsed wall-clock. One global bound
+        made the documented end-of-day options path unreachable: an EOD chain
+        is a session old by construction, so a 120s limit graded it STALE on
+        98.7% of bars while `availability()` reported all 100 points real.
+        """
+        configured = float(
+            self.data.max_staleness_seconds_by_feed.get(feed, self.data.max_staleness_seconds)
+        )
+        cadence = view.feed_cadence_seconds(feed)
+        if cadence is None or cadence <= 0:
+            return configured
+        return max(configured, cadence * self.data.stale_cadence_multiple)
+
     def grade_feed(self, view: MarketView, feed: Feed) -> FeedStatus:
         if not view.has_feed(feed):
             return FeedStatus(
-                feed=feed, quality=DataQuality.MISSING, rows=0, coverage=0.0,
+                feed=feed, quality=DataQuality.MISSING, rows=0, coverage=None,
                 note="no visible observation",
             )
 
         age = view.feed_age_seconds(feed)
         rows = self._rows(view, feed)
         last_ts = self._last_ts(view, feed)
+        first_ts = self._first_ts(view, feed)
+        limit = self.staleness_limit(view, feed)
 
-        if age is not None and age > self.data.max_staleness_seconds:
+        if age is not None and age > limit:
+            cadence = view.feed_cadence_seconds(feed)
+            cadence_note = "" if cadence is None else f", own cadence {cadence:.0f}s"
             return FeedStatus(
-                feed=feed, quality=DataQuality.STALE, rows=rows, coverage=0.0,
-                age_seconds=age, last_ts=last_ts,
+                feed=feed, quality=DataQuality.STALE, rows=rows, coverage=None,
+                age_seconds=age, first_ts=first_ts, last_ts=last_ts,
                 note=(
-                    f"last observation {age:.0f}s old, limit "
-                    f"{self.data.max_staleness_seconds:.0f}s; a frozen feed is "
-                    "not usable however complete its history"
+                    f"last observation {age:.0f}s old, limit {limit:.0f}s"
+                    f"{cadence_note}; a frozen feed is not usable however "
+                    "complete its history"
                 ),
             )
 
         if feed is Feed.TICK_AGGREGATE:
-            return self._grade_ticks(view, rows, age, last_ts)
+            return self._grade_ticks(view, rows, age, first_ts, last_ts)
         if feed is Feed.OPTIONS_SNAPSHOT:
-            return self._grade_options(view, rows, age, last_ts)
+            return self._grade_options(view, rows, age, first_ts, last_ts)
         if feed is Feed.QUOTES:
-            return self._grade_quotes(view, rows, age, last_ts)
-        return self._grade_bars(view, rows, age, last_ts)
+            return self._grade_quotes(view, rows, age, first_ts, last_ts)
+        return self._grade_bars(view, rows, age, first_ts, last_ts)
 
-    def _grade_bars(self, view, rows, age, last_ts) -> FeedStatus:
+    def _grade_bars(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
         coverage = self._bar_coverage(view)
+        if coverage is None:
+            return FeedStatus(
+                feed=Feed.BARS, quality=DataQuality.DEGRADED, rows=rows, coverage=None,
+                age_seconds=age, first_ts=first_ts, last_ts=last_ts,
+                note=(
+                    "bar coverage not measurable: every step in the window exceeded "
+                    "the session-break threshold, so contiguity cannot be judged. "
+                    "Graded DEGRADED rather than GOOD -- absence of information is "
+                    "not evidence of completeness."
+                ),
+            )
         quality, note = self._from_coverage(
             coverage, self.thresholds.min_coverage_good, self.thresholds.min_coverage_degraded,
             "bar coverage",
         )
         return FeedStatus(feed=Feed.BARS, quality=quality, rows=rows, coverage=coverage,
-                          age_seconds=age, last_ts=last_ts, note=note)
+                          age_seconds=age, first_ts=first_ts, last_ts=last_ts, note=note)
 
-    def _grade_quotes(self, view, rows, age, last_ts) -> FeedStatus:
+    def _grade_quotes(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
         crossed = self._crossed_quote_rate(view)
         coverage = 1.0 - crossed
         if crossed > self.thresholds.max_crossed_quote_rate:
             return FeedStatus(
                 feed=Feed.QUOTES, quality=DataQuality.DEGRADED, rows=rows,
-                coverage=coverage, age_seconds=age, last_ts=last_ts,
+                coverage=coverage, age_seconds=age, first_ts=first_ts, last_ts=last_ts,
                 note=(
                     f"crossed-quote rate {crossed:.3f} exceeds "
                     f"{self.thresholds.max_crossed_quote_rate:.3f}, which indicates a "
@@ -363,22 +466,26 @@ class QualityGrader:
         return FeedStatus(feed=Feed.QUOTES, quality=DataQuality.GOOD, rows=rows,
                           coverage=coverage, age_seconds=age, last_ts=last_ts)
 
-    def _grade_ticks(self, view, rows, age, last_ts) -> FeedStatus:
-        classification = self._tick_classification(view)
+    def _grade_ticks(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
+        classification, basis = self._tick_classification(view)
         quality, note = self._from_coverage(
             classification,
             self.thresholds.min_tick_classification_good,
             self.thresholds.min_tick_classification_degraded,
             "aggressor classification",
         )
+        detail = note or basis
+        if note and basis:
+            detail = f"{note} ({basis})"
         return FeedStatus(feed=Feed.TICK_AGGREGATE, quality=quality, rows=rows,
-                          coverage=classification, age_seconds=age, last_ts=last_ts, note=note)
+                          coverage=classification, age_seconds=age, first_ts=first_ts, last_ts=last_ts,
+                          note=detail)
 
-    def _grade_options(self, view, rows, age, last_ts) -> FeedStatus:
+    def _grade_options(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
         if not view.options_are_intraday():
             return FeedStatus(
                 feed=Feed.OPTIONS_SNAPSHOT, quality=DataQuality.DEGRADED, rows=rows,
-                coverage=1.0, age_seconds=age, last_ts=last_ts,
+                coverage=1.0, age_seconds=age, first_ts=first_ts, last_ts=last_ts,
                 note=(
                     "end-of-day chain only: expresses positioning but not flow "
                     "timing, so the options sub-score must be capped"
@@ -415,43 +522,72 @@ class QualityGrader:
         age = view.feed_age_seconds(feed)
         if age is None:
             return None
-        from datetime import timedelta
-
         return view.now - timedelta(seconds=age)
+
+    @staticmethod
+    def _first_ts(view: MarketView, feed: Feed) -> datetime | None:
+        """Oldest visible observation for a feed.
+
+        `FeedStatus.first_ts` was declared and never assigned, so every
+        report serialized `first_ts: null` -- a field that looks like data
+        but is only ever absent.
+        """
+        series = view._series_for(feed)  # noqa: SLF001 - the grader is part of the data layer
+        if series is None or len(series) == 0:
+            return None
+        return from_ns(int(series.ts_ns[0]))
 
     # --- point-in-time report ------------------------------------------
 
     def required_feeds(self) -> dict[Feed, tuple[Component, ...]]:
         """Feeds that at least one ENABLED component requires."""
-        out: dict[Feed, list[Component]] = {}
+        return {feed: who for feed, (_, who) in self.feed_floors().items()}
+
+    def feed_floors(self) -> dict[Feed, tuple[DataQuality, tuple[Component, ...]]]:
+        """The quality floor each required feed must clear, and who demands it.
+
+        Built from each enabled component's own `FeedRequirement.minimum_quality`
+        rather than from one global threshold. Those per-feed floors were
+        declared in `defaults.yaml`, loaded, validated -- and then read
+        nowhere, so tightening `feed_requirements.structure.minimum_quality`
+        to GOOD had no effect at all. The dataset-wide
+        `data.min_quality_to_trade` applies on top as a floor under the floor.
+        """
+        floors: dict[Feed, tuple[DataQuality, list[Component]]] = {}
         for component, requirements in self.flow.feed_requirements.items():
             if not self.flow.enabled_components.get(component, True):
                 continue
             for requirement in requirements:
-                if requirement.required:
-                    out.setdefault(requirement.feed, []).append(component)
-        return {feed: tuple(components) for feed, components in out.items()}
+                if not requirement.required:
+                    continue
+                strictest, claimants = floors.get(
+                    requirement.feed, (self.data.min_quality_to_trade, [])
+                )
+                if requirement.minimum_quality.rank > strictest.rank:
+                    strictest = requirement.minimum_quality
+                claimants.append(component)
+                floors[requirement.feed] = (strictest, claimants)
+        return {feed: (floor, tuple(who)) for feed, (floor, who) in floors.items()}
 
     def grade(self, view: MarketView) -> QualityReport:
         statuses = {feed: self.grade_feed(view, feed) for feed in Feed}
-        required = self.required_feeds()
+        floors = self.feed_floors()
 
-        relevant = [statuses[feed].quality for feed in required if feed in statuses]
+        relevant = [statuses[feed].quality for feed in floors if feed in statuses]
         overall = DataQuality.worst(*relevant) if relevant else DataQuality.MISSING
 
         blocking = tuple(
             feed
-            for feed in required
-            if not statuses[feed].quality.is_tradable(self.data.min_quality_to_trade)
+            for feed, (floor, _) in floors.items()
+            if not statuses[feed].quality.is_tradable(floor)
         )
         note = ""
         if blocking:
-            note = (
-                "required feed(s) below "
-                f"{self.data.min_quality_to_trade.value}: "
-                + ", ".join(
-                    f"{feed.value}={statuses[feed].quality.value}" for feed in blocking
-                )
+            note = "; ".join(
+                f"{feed.value}={statuses[feed].quality.value} below the "
+                f"{floors[feed][0].value} floor required by "
+                + ", ".join(c.value for c in floors[feed][1])
+                for feed in blocking
             )
         return QualityReport(
             symbol=view.symbol, ts=view.now, statuses=statuses, overall=overall,
@@ -461,6 +597,15 @@ class QualityGrader:
     # --- dataset report ------------------------------------------------
 
     def availability(self, data: SymbolData) -> AvailabilityReport:
+        """Dataset-level feed availability. **Deliberately forward-looking.**
+
+        Reads the WHOLE series, including bars after any evaluation instant.
+        That is correct for its purpose -- it answers "is this dataset usable
+        at all" before a run starts -- but it means this method must NEVER be
+        called per bar inside a backtest, where it would leak the existence of
+        future observations. `grade(view)` is the point-in-time counterpart
+        and the only one a signal engine may call.
+        """
         present = data.available_feeds()
         components: dict[Component, ComponentAvailability] = {}
 
@@ -480,6 +625,37 @@ class QualityGrader:
                 and not data.options.is_intraday
             ):
                 degraded = (Feed.OPTIONS_SNAPSHOT,)
+                # Agreement check. `availability()` is the pre-run promise and
+                # `grade()` is what happens per bar; they contradicted each
+                # other outright when the staleness limit was shorter than the
+                # options cadence -- 100 of 100 points promised, 98.7% of bars
+                # blocked. If the limit cannot accommodate this feed's own
+                # cadence, say so here rather than at bar 1 of the backtest.
+                cadence = _median_cadence_seconds(data.options)
+                worst = _worst_gap_seconds(data.options)
+                limit = float(
+                    self.data.max_staleness_seconds_by_feed.get(
+                        Feed.OPTIONS_SNAPSHOT, self.data.max_staleness_seconds
+                    )
+                )
+                allowed = max(limit, (cadence or 0.0) * self.data.stale_cadence_multiple)
+                if worst is not None and worst > allowed:
+                    components[component] = ComponentAvailability(
+                        component=component,
+                        computable=False,
+                        quality=DataQuality.MISSING,
+                        weight=weight,
+                        missing_required_feeds=(Feed.OPTIONS_SNAPSHOT,),
+                        note=(
+                            f"options cadence is incompatible with the staleness "
+                            f"limit: the feed goes up to {worst / 3600:.0f}h between "
+                            f"snapshots but is allowed {allowed / 3600:.0f}h, so "
+                            f"grade() will return STALE and block most bars. Raise "
+                            f"data.max_staleness_seconds_by_feed[options_snapshot] "
+                            f"above {worst:.0f}s or supply an intraday feed."
+                        ),
+                    )
+                    continue
             if (
                 component is Component.LIQUIDITY
                 and Feed.QUOTES not in present

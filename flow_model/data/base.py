@@ -36,7 +36,16 @@ class FeedStatus(FrozenModel):
     feed: Feed
     quality: DataQuality
     rows: int = Field(ge=0, default=0)
-    coverage: float = Field(ge=0.0, le=1.0, default=0.0)
+    coverage: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "None means NOT MEASURED, which is different from 0.0 meaning "
+            "measured-and-empty. A STALE feed is never coverage-checked, and "
+            "reporting 0.0 for it asserted a measurement that was never taken."
+        ),
+    )
     age_seconds: float | None = None
     first_ts: datetime | None = None
     last_ts: datetime | None = None
@@ -82,8 +91,25 @@ class CleanReport(FrozenModel):
     partial_bars_dropped: int = Field(ge=0, default=0)
     zero_volume_flagged: int = Field(ge=0, default=0)
     outliers_quarantined: int = Field(ge=0, default=0)
-    gaps_detected: int = Field(ge=0, default=0)
+    gaps_detected: int = Field(
+        ge=0,
+        default=0,
+        description=(
+            "Gap runs present in the INPUT. Measured before cleaning, so the "
+            "cleaner's own removals are never reported as defects in the data."
+        ),
+    )
     largest_gap_bars: int = Field(ge=0, default=0)
+    gaps_introduced_by_cleaning: int = Field(
+        ge=0,
+        default=0,
+        description=(
+            "Gap runs present in the OUTPUT but not the input, i.e. holes this "
+            "cleaner created by dropping rows. Counted separately because a "
+            "combined number cannot be acted on: one means fix the feed, the "
+            "other means re-tune the cleaner."
+        ),
+    )
     quarantined_timestamps: tuple[datetime, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -102,6 +128,12 @@ class CleanReport(FrozenModel):
 class SessionCalendarProtocol(Protocol):
     """Trading-session calendar.
 
+    `session_date` is part of the contract because `data.clean.detect_gaps`
+    needs it to tell an overnight break from a dropped bar. It was omitted
+    once, and the consequence was silent: a conforming calendar missing the
+    method had its `AttributeError` swallowed, and the caller received the
+    no-calendar gap count labelled as the calendar-aware one.
+
     Implementations must be pure functions of the timestamp and the
     instrument spec -- no network, no mutable state -- so that a backtest
     and a live run classify an identical timestamp identically.
@@ -114,6 +146,8 @@ class SessionCalendarProtocol(Protocol):
     def session_of(self, ts: datetime, spec: InstrumentSpec) -> Session: ...
 
     def is_rth(self, ts: datetime, spec: InstrumentSpec) -> bool: ...
+
+    def session_date(self, ts: datetime, spec: InstrumentSpec) -> date: ...
 
 
 class DataSourceAdapter(ABC):

@@ -408,3 +408,82 @@ def test_report_is_json_serializable(cleaner):
     restored = json.loads(dumps(report))
     assert restored["rows_in"] == 120
     assert "rows_removed" in restored and "retention" in restored
+
+
+# ---------------------------------------------------------------------------
+# Regressions for the Phase 2 adversarial audit
+# ---------------------------------------------------------------------------
+
+
+def test_gaps_are_measured_on_the_input_not_the_output(cleaner):
+    """HIGH finding: gaps were detected on the post-quarantine output, so the
+    cleaner reported its own removals as defects in the data. A pristine
+    generated dataset came back claiming 60 gaps, every one a hole the
+    outlier quarantine had just made."""
+    ts, cols = _spike(*raw(n=200), index=120, factor=1.4)
+    _, report = clean_raw(cleaner, ts, cols)
+    assert report.outliers_quarantined >= 1
+    assert report.gaps_detected == 0                       # the INPUT had none
+    assert report.gaps_introduced_by_cleaning >= 1         # the cleaner made one
+
+
+def test_the_two_gap_causes_are_counted_separately(cleaner):
+    ts, cols = raw(n=200)
+    mask = np.ones(200, dtype=bool)
+    mask[50:53] = False                                    # a real hole in the feed
+    ts, cols = ts[mask], {k: v[mask] for k, v in cols.items()}
+    ts, cols = _spike(ts, cols, index=150, factor=1.4)      # plus a spike to quarantine
+    _, report = clean_raw(cleaner, ts, cols)
+    assert report.gaps_detected == 1                        # the feed's fault
+    assert report.gaps_introduced_by_cleaning >= 1          # the cleaner's
+    assert report.largest_gap_bars == 3
+
+
+def test_disabling_the_quarantine_leaves_both_gap_counts_at_zero():
+    """Establishes causation for the finding above."""
+    loose = BarCleaner(load_config(overrides=["data.outlier_sigma=1e9"]).data)
+    ts, cols = raw(n=200)
+    _, report = clean_raw(loose, ts, cols)
+    assert report.outliers_quarantined == 0
+    assert report.gaps_detected == 0
+    assert report.gaps_introduced_by_cleaning == 0
+
+
+def test_provenance_meta_survives_cleaning(cleaner):
+    """HIGH finding: the cleaner discarded the input series' meta, destroying
+    the `source` tag and the adapter's `timestamp_is_bar_open` convention --
+    the one irreversible provenance fact about a dataset."""
+    ts, cols = raw(n=60)
+    original = BarSeries(
+        symbol="NQ", ts_ns=ts, interval_seconds=INTERVAL, columns=cols,
+        meta={"source": "csv", "path": "/data/NQ_300s.csv", "timestamp_is_bar_open": True},
+    )
+    cleaned, _ = cleaner.clean(original)
+    assert cleaned.meta["source"] == "csv"
+    assert cleaned.meta["path"] == "/data/NQ_300s.csv"
+    assert cleaned.meta["timestamp_is_bar_open"] is True
+    assert cleaned.meta["cleaned"] is True
+    assert cleaned.interval_seconds == INTERVAL
+
+
+def test_detect_gaps_requires_a_calendar_that_implements_the_protocol(cleaner, nq):
+    """HIGH finding: detect_gaps called session_date, which the published
+    protocol did not declare, and swallowed the AttributeError -- so a
+    conforming calendar silently produced the no-calendar answer while the
+    report claimed otherwise. session_date is now part of the protocol."""
+    from flow_model.data.base import SessionCalendarProtocol
+
+    class WithoutSessionDate:
+        def is_trading_day(self, day, spec): return True
+        def is_half_day(self, day, spec): return False
+        def session_of(self, ts, spec): return None
+        def is_rth(self, ts, spec): return True
+
+    assert not isinstance(WithoutSessionDate(), SessionCalendarProtocol)
+    from flow_model.data.calendar import TradingCalendar
+
+    assert isinstance(TradingCalendar(), SessionCalendarProtocol)
+
+    ts = to_ns_array(TS0 + timedelta(seconds=INTERVAL * i) for i in (1, 2, 3, 8))
+    with pytest.raises(AttributeError):
+        detect_gaps(ts, INTERVAL, spec=nq, calendar=WithoutSessionDate())

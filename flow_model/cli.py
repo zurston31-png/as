@@ -236,13 +236,23 @@ def cmd_data(args: argparse.Namespace) -> int:
         print("\n".join(grader.availability(data).summary_lines()))
         print(
             f"\n  rows: {clean_report.rows_in} in -> {clean_report.rows_out} out "
-            f"(retention {clean_report.retention:.4f}); "
-            f"gaps={clean_report.gaps_detected} "
-            f"outliers_quarantined={clean_report.outliers_quarantined} "
-            f"zero_volume={clean_report.zero_volume_flagged}"
+            f"(retention {clean_report.retention:.4f})"
+        )
+        print(
+            f"  gaps in the data: {clean_report.gaps_detected} "
+            f"(largest {clean_report.largest_gap_bars} bars)   "
+            f"gaps the cleaner introduced: "
+            f"{clean_report.gaps_introduced_by_cleaning}"
+        )
+        print(
+            f"  outliers_quarantined={clean_report.outliers_quarantined} "
+            f"zero_volume_flagged={clean_report.zero_volume_flagged}"
         )
         print(f"  range: {data.primary_bars.first_ts} -> {data.primary_bars.last_ts}")
-        print(f"  data_hash: {data.fingerprint.data_hash if data.fingerprint else '-'}")
+        print(
+            f"  source: {data.fingerprint.source if data.fingerprint else '-'}  "
+            f"data_hash: {data.fingerprint.data_hash if data.fingerprint else '-'}"
+        )
         print()
 
     print(f"combined data_hash: {store.combined_data_hash()}")

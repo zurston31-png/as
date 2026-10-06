@@ -70,7 +70,11 @@ def csv_adapter(write_csv):
 
     def _make(rows: str, header: str = HEADER, interval: int = 300, **config) -> CsvAdapter:
         root, _ = write_csv(f"{header}\n{rows}", interval=interval)
-        return CsvAdapter(CsvAdapterConfig(root_path=root, **config))
+        # The convention has no default, so the fixture states it; a test
+        # that cares passes timestamp_is_bar_open explicitly.
+        return CsvAdapter(
+            CsvAdapterConfig(root_path=root, **{"timestamp_is_bar_open": False, **config})
+        )
 
     return _make
 
@@ -167,7 +171,7 @@ def test_vendor_column_names_are_remapped(csv_adapter):
 def test_utf8_bom_header_is_tolerated(write_csv):
     root, path = write_csv("")
     path.write_text(f"﻿{HEADER}\n{iso_rows(1)}", encoding="utf-8")
-    series = CsvAdapter(CsvAdapterConfig(root_path=root)).load_bars(
+    series = CsvAdapter(CsvAdapterConfig(root_path=root, timestamp_is_bar_open=False)).load_bars(
         "NQ", 300, WIDE_START, WIDE_END
     )
 
@@ -184,7 +188,7 @@ def test_header_only_file_yields_an_empty_series(csv_adapter):
 def test_empty_file_names_the_missing_header(write_csv):
     root, _ = write_csv("")
     with pytest.raises(SchemaError, match="expected a header row"):
-        CsvAdapter(CsvAdapterConfig(root_path=root)).load_bars("NQ", 300, WIDE_START, WIDE_END)
+        CsvAdapter(CsvAdapterConfig(root_path=root, timestamp_is_bar_open=False)).load_bars("NQ", 300, WIDE_START, WIDE_END)
 
 
 def test_repeated_loads_are_identical(csv_adapter):
@@ -208,7 +212,7 @@ def test_bar_open_timestamps_are_shifted_by_exactly_one_interval(write_csv):
     like skill.
     """
     root, _ = write_csv(f"{HEADER}\n{iso_rows(4)}")
-    as_close = CsvAdapter(CsvAdapterConfig(root_path=root)).load_bars(
+    as_close = CsvAdapter(CsvAdapterConfig(root_path=root, timestamp_is_bar_open=False)).load_bars(
         "NQ", 300, WIDE_START, WIDE_END
     )
     as_open = CsvAdapter(
@@ -242,12 +246,17 @@ def test_bar_open_flag_is_boolean_with_no_guess_value():
     """
     field = CsvAdapterConfig.model_fields["timestamp_is_bar_open"]
     assert field.annotation is bool
-    assert field.default is False
+    assert field.is_required(), (
+        "the convention must have no default: a default of False hands the "
+        "lookahead-producing reading to any config that omits the field"
+    )
+    with pytest.raises(ValidationError):
+        CsvAdapterConfig(root_path="/tmp")
 
 
 def test_bar_open_and_bar_close_are_different_datasets(write_csv):
     root, _ = write_csv(f"{HEADER}\n{iso_rows(3)}")
-    close_fp = CsvAdapter(CsvAdapterConfig(root_path=root)).fingerprint(
+    close_fp = CsvAdapter(CsvAdapterConfig(root_path=root, timestamp_is_bar_open=False)).fingerprint(
         "NQ", 300, WIDE_START, WIDE_END, 3
     )
     open_fp = CsvAdapter(
@@ -354,7 +363,7 @@ def test_date_only_timestamps_become_local_midnight(csv_adapter):
 
 def test_timestamp_unit_is_validated_by_the_config():
     with pytest.raises(ValidationError):
-        CsvAdapterConfig(root_path="x", timestamp_unit="minutes")
+        CsvAdapterConfig(root_path="x", timestamp_is_bar_open=False, timestamp_unit="minutes")
 
 
 def test_unreadable_timestamp_column_asks_for_an_explicit_unit(csv_adapter):
@@ -417,7 +426,8 @@ def test_nonexistent_local_time_is_rejected(csv_adapter):
 
 def test_unknown_timezone_is_rejected_at_construction(tmp_path):
     with pytest.raises(DataLayerError, match="unknown input_timezone 'Mars/Olympus'"):
-        CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path), input_timezone="Mars/Olympus"))
+        CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False,
+                                   input_timezone="Mars/Olympus"))
 
 
 # --- schema and numeric validation -----------------------------------------
@@ -589,7 +599,7 @@ def test_reversed_range_is_rejected(csv_adapter):
 
 
 def test_available_feeds_reflects_the_disk(tmp_path):
-    adapter = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path)))
+    adapter = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False))
     assert adapter.available_feeds("NQ") == frozenset()
 
     (tmp_path / "NQ_300s.csv").write_text(f"{HEADER}\n{iso_rows(1)}", encoding="utf-8")
@@ -599,7 +609,7 @@ def test_available_feeds_reflects_the_disk(tmp_path):
 
 def test_available_feeds_finds_any_interval(tmp_path):
     (tmp_path / "NQ_900s.csv").write_text(f"{HEADER}\n{iso_rows(1)}", encoding="utf-8")
-    adapter = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path)))
+    adapter = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False))
 
     assert adapter.available_feeds("NQ") == frozenset({Feed.BARS})
     assert [p.name for p in adapter.bar_files("NQ")] == ["NQ_900s.csv"]
@@ -615,7 +625,7 @@ def test_csv_adapter_never_claims_a_feed_it_cannot_read(csv_adapter):
 
 
 def test_missing_file_error_names_the_expected_path(tmp_path):
-    adapter = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path)))
+    adapter = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False))
     with pytest.raises(DataLayerError) as excinfo:
         adapter.load_bars("NQ", 300, WIDE_START, WIDE_END)
 
@@ -625,7 +635,8 @@ def test_missing_file_error_names_the_expected_path(tmp_path):
 def test_filename_template_is_honoured(tmp_path):
     (tmp_path / "bars-NQ-300.csv").write_text(f"{HEADER}\n{iso_rows(2)}", encoding="utf-8")
     adapter = CsvAdapter(
-        CsvAdapterConfig(root_path=str(tmp_path), filename_template="bars-{symbol}-{interval}.csv")
+        CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False,
+                         filename_template="bars-{symbol}-{interval}.csv")
     )
 
     assert adapter.available_feeds("NQ") == frozenset({Feed.BARS})
@@ -634,7 +645,8 @@ def test_filename_template_is_honoured(tmp_path):
 
 def test_filename_template_with_an_unknown_placeholder_is_reported(tmp_path):
     adapter = CsvAdapter(
-        CsvAdapterConfig(root_path=str(tmp_path), filename_template="{sym}_{interval}s.csv")
+        CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False,
+                         filename_template="{sym}_{interval}s.csv")
     )
     with pytest.raises(DataLayerError, match="unknown placeholder"):
         adapter.available_feeds("NQ")
@@ -642,7 +654,7 @@ def test_filename_template_with_an_unknown_placeholder_is_reported(tmp_path):
 
 def test_fingerprint_tracks_the_file_bytes(write_csv):
     root, path = write_csv(f"{HEADER}\n{iso_rows(3)}")
-    adapter = CsvAdapter(CsvAdapterConfig(root_path=root))
+    adapter = CsvAdapter(CsvAdapterConfig(root_path=root, timestamp_is_bar_open=False))
     before = adapter.fingerprint("NQ", 300, WIDE_START, WIDE_END, 3)
 
     path.write_text(f"{HEADER}\n{iso_rows(3, start='2020-01-03T14:30:00+00:00')}")
@@ -808,11 +820,11 @@ def test_parquet_adapter_reports_missing_pyarrow_clearly(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
 
     with pytest.raises(DataLayerError, match="requires the optional 'pyarrow' package"):
-        ParquetAdapter(ParquetAdapterConfig(root_path=str(tmp_path)))
+        ParquetAdapter(ParquetAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False))
 
 
 def test_parquet_config_defaults_to_a_parquet_filename():
-    assert ParquetAdapterConfig(root_path="x").filename_template == "{symbol}_{interval}s.parquet"
+    assert ParquetAdapterConfig(root_path="x", timestamp_is_bar_open=False).filename_template == "{symbol}_{interval}s.parquet"
 
 
 def test_parquet_round_trip_matches_csv(tmp_path):
@@ -834,10 +846,10 @@ def test_parquet_round_trip_matches_csv(tmp_path):
     pq.write_table(table, tmp_path / "NQ_300s.parquet")
     (tmp_path / "NQ_300s.csv").write_text(f"{HEADER}\n{iso_rows(3)}", encoding="utf-8")
 
-    from_parquet = ParquetAdapter(ParquetAdapterConfig(root_path=str(tmp_path))).load_bars(
+    from_parquet = ParquetAdapter(ParquetAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False)).load_bars(
         "NQ", 300, WIDE_START, WIDE_END
     )
-    from_csv = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path))).load_bars(
+    from_csv = CsvAdapter(CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False)).load_bars(
         "NQ", 300, WIDE_START, WIDE_END
     )
 
@@ -871,7 +883,7 @@ def test_parquet_bar_open_shift_applies(tmp_path):
 
 def test_parquet_missing_file_names_the_expected_path(tmp_path):
     pytest.importorskip("pyarrow")
-    adapter = ParquetAdapter(ParquetAdapterConfig(root_path=str(tmp_path)))
+    adapter = ParquetAdapter(ParquetAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=False))
 
     with pytest.raises(DataLayerError) as excinfo:
         adapter.load_bars("NQ", 300, WIDE_START, WIDE_END)

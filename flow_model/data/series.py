@@ -237,6 +237,43 @@ class ColumnSeries:
     def timestamps(self) -> tuple[datetime, ...]:
         return tuple(from_ns(v) for v in self.ts_ns)
 
+    def prefix(self, count: int):
+        """Zero-copy, read-only prefix `[0:count)` of this series.
+
+        Deliberately bypasses `__init__`. The constructor copies its inputs so
+        that a series owns its data (an earlier version aliased the caller's
+        buffer, and mutating the caller's array silently rewrote stored market
+        data). But `MarketView` builds one prefix per bar of a backtest, and
+        copying there would make a single chronological pass O(n^2) -- roughly
+        two minutes of pure array copying for ten years of five-minute bars.
+
+        The arrays handed out are read-only NumPy views, so a prefix can
+        neither be mutated nor used to mutate its parent, and it holds no
+        reference to the rows beyond `count`. That is what lets `MarketView`
+        truthfully claim that future data is absent from the object rather
+        than merely un-requested.
+        """
+        n = len(self)
+        count = max(0, min(int(count), n))
+        obj = object.__new__(type(self))
+        obj.symbol = self.symbol
+        obj.ts_ns = _readonly(self.ts_ns[:count])
+        obj._cols = {name: _readonly(values[:count]) for name, values in self._cols.items()}
+        obj.meta = self.meta
+        return obj
+
+    def hidden_boundary_ns(self, count: int) -> int | None:
+        """Timestamp of the first row AFTER `count`, or None if there is none.
+
+        `MarketView` keeps this single integer instead of a reference to the
+        parent series, so its self-check can still verify that nothing at or
+        before the cutoff was wrongly hidden without the view holding any
+        future data.
+        """
+        n = len(self)
+        count = max(0, min(int(count), n))
+        return int(self.ts_ns[count]) if count < n else None
+
     def slice_rows(self, start: int, end: int):
         """A new series containing rows `[start:end)`."""
         n = len(self)
@@ -484,10 +521,12 @@ class OptionsSeries(ColumnSeries):
             put_premium=req("put_premium"),
             call_oi=req("call_oi"),
             put_oi=req("put_oi"),
-            call_oi_change=opt("call_oi_change") or 0.0,
-            put_oi_change=opt("put_oi_change") or 0.0,
-            delta_weighted_call_volume=opt("delta_weighted_call_volume") or 0.0,
-            delta_weighted_put_volume=opt("delta_weighted_put_volume") or 0.0,
+            # `or 0.0` here would have mapped a genuine zero and an absent
+            # column to the same value.
+            call_oi_change=opt("call_oi_change"),
+            put_oi_change=opt("put_oi_change"),
+            delta_weighted_call_volume=opt("delta_weighted_call_volume"),
+            delta_weighted_put_volume=opt("delta_weighted_put_volume"),
             atm_iv=opt("atm_iv"),
             iv_25d_call=opt("iv_25d_call"),
             iv_25d_put=opt("iv_25d_put"),

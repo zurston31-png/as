@@ -393,3 +393,193 @@ def test_a_grader_that_always_says_good_would_be_useless(grader):
     report = grader.grade(_view(data))
     assert report.overall is not DataQuality.GOOD
     assert report.blocking_feeds
+
+
+# ---------------------------------------------------------------------------
+# Regressions for the Phase 2 adversarial audit
+# ---------------------------------------------------------------------------
+
+
+def _session_days(count):
+    """Weekday offsets from TS0, so the series contains a real weekend gap.
+
+    Without one, the worst inter-snapshot gap equals the median and the
+    cadence-vs-staleness check cannot be exercised -- it is precisely the
+    Friday-to-Monday gap that decides whether a limit starts blocking bars
+    every Monday.
+    """
+    out, offset = [], 0
+    while len(out) < count:
+        if (TS0 + timedelta(days=offset)).weekday() < 5:
+            out.append(offset)
+        offset += 1
+    return out
+
+
+def _eod_options(days=10, per_day_bars=78):
+    """An options series with a realistic EOD cadence: one snapshot per
+    SESSION, not one per bar.
+
+    The original fixture gave its "EOD" series one row per bar, so it tested
+    the `is_intraday` flag at zero staleness and could never catch a
+    cadence-vs-staleness mismatch.
+    """
+    stamps = [
+        TS0 + timedelta(days=d, seconds=INTERVAL * per_day_bars)
+        for d in _session_days(days)
+    ]
+    ts = to_ns_array(stamps)
+    n = len(ts)
+    return OptionsSeries(
+        symbol="NQ", ts_ns=ts, meta={"is_intraday": False, "source": "eod"},
+        columns={"call_volume": np.full(n, 10.0), "put_volume": np.full(n, 8.0),
+                 "call_premium": np.full(n, 1e6), "put_premium": np.full(n, 9e5),
+                 "call_oi": np.full(n, 1e4), "put_oi": np.full(n, 1.1e4)})
+
+
+def _multiday_bars(days=10, per_day=78):
+    stamps = [
+        TS0 + timedelta(days=d, seconds=INTERVAL * (i + 1))
+        for d in _session_days(days) for i in range(per_day)
+    ]
+    ts = to_ns_array(stamps)
+    n = len(ts)
+    close = 18000.0 + np.arange(n, dtype=np.float64) * 0.5
+    return BarSeries(symbol="NQ", ts_ns=ts, interval_seconds=INTERVAL, columns={
+        "open": close - 1, "high": close + 4, "low": close - 4,
+        "close": close, "volume": np.full(n, 1000.0)})
+
+
+def test_eod_options_at_a_realistic_cadence_are_degraded_not_stale(grader):
+    """CRITICAL finding: one global max_staleness_seconds (120s) made the
+    documented EOD degradation path unreachable. An EOD chain is a session
+    old by construction, so it graded STALE on 98.7% of bars while
+    availability() promised all 100 points were real."""
+    bars = _multiday_bars()
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL, bars={INTERVAL: bars},
+                      options=_eod_options())
+    store = DataStore().add(data)
+    grades = []
+    for ts in store.timeline("NQ"):
+        report = grader.grade(store.view("NQ", from_ns(int(ts)), now_ns=int(ts)))
+        grades.append(report.status_of(Feed.OPTIONS_SNAPSHOT).quality)
+    assert DataQuality.STALE not in grades
+    assert grades.count(DataQuality.DEGRADED) > 0.8 * len(grades)
+
+
+def test_staleness_limit_is_per_feed(grader, config):
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _multiday_bars()}, options=_eod_options())
+    view = _view(data)
+    bars_limit = grader.staleness_limit(view, Feed.BARS)
+    options_limit = grader.staleness_limit(view, Feed.OPTIONS_SNAPSHOT)
+    assert options_limit > bars_limit * 100
+    assert config.data.max_staleness_seconds_by_feed[Feed.OPTIONS_SNAPSHOT] >= 86_400
+
+
+def test_staleness_limit_widens_to_a_feeds_own_cadence(grader):
+    """'Stale' must mean missed observations, not elapsed wall-clock."""
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _multiday_bars()}, options=_eod_options())
+    view = _view(data)
+    cadence = view.feed_cadence_seconds(Feed.OPTIONS_SNAPSHOT)
+    assert cadence == pytest.approx(86_400, rel=0.01)
+    assert grader.staleness_limit(view, Feed.OPTIONS_SNAPSHOT) >= cadence
+
+
+def test_a_genuinely_frozen_feed_is_still_stale(grader):
+    """The widening must not make staleness unreachable."""
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _multiday_bars()}, options=_eod_options(days=3))
+    store = DataStore().add(data)
+    last = int(data.primary_bars.ts_ns[-1])
+    report = grader.grade(store.view("NQ", from_ns(last), now_ns=last))
+    assert report.status_of(Feed.OPTIONS_SNAPSHOT).quality is DataQuality.STALE
+
+
+def test_availability_warns_when_the_limit_cannot_fit_the_cadence():
+    """availability() and grade() must not contradict each other."""
+    config = load_config(overrides=[
+        "data.max_staleness_seconds_by_feed={options_snapshot: 120.0}",
+        "data.stale_cadence_multiple=1.0",
+    ])
+    grader = QualityGrader(config.data, config.flow_score)
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _multiday_bars()}, options=_eod_options())
+    availability = grader.availability(data).components[Component.OPTIONS_FLOW]
+    assert not availability.computable
+    assert "incompatible with the staleness limit" in availability.note
+
+
+def test_per_requirement_minimum_quality_is_honoured(grader):
+    """HIGH finding: the per-feed floors in defaults.yaml were loaded,
+    validated, and then read nowhere."""
+    floors = grader.feed_floors()
+    assert floors[Feed.BARS][0] is DataQuality.GOOD
+    assert Component.STRUCTURE in floors[Feed.BARS][1]
+
+    mask = np.ones(N, dtype=bool)
+    mask[[20, 40, 60]] = False                 # ~96% contiguity -> DEGRADED
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _bars(mask=mask)}, ticks={INTERVAL: _ticks()},
+                      quotes=_quotes(), options=_options(True))
+    report = grader.grade(_view(data))
+    assert report.status_of(Feed.BARS).quality is DataQuality.DEGRADED
+    assert Feed.BARS in report.blocking_feeds
+    assert "GOOD floor required by" in report.note
+    assert not report.is_tradable(DataQuality.DEGRADED)
+
+
+def test_unmeasurable_coverage_is_not_reported_as_perfect(grader):
+    """HIGH finding: when every step exceeded the break threshold the
+    coverage was 1.0, so a feed missing 99% of its bars graded GOOD -- and
+    the grade was non-monotonic across the threshold."""
+    grades = {}
+    for every in (12, 13, 100):
+        keep = np.arange(0, N, every)
+        close = 18000.0 + np.arange(N, dtype=np.float64)
+        bars = BarSeries(symbol="NQ", ts_ns=_ts()[keep], interval_seconds=INTERVAL, columns={
+            "open": (close - 1)[keep], "high": (close + 4)[keep], "low": (close - 4)[keep],
+            "close": close[keep], "volume": np.full(len(keep), 1000.0)})
+        data = SymbolData(symbol="NQ", primary_interval=INTERVAL, bars={INTERVAL: bars})
+        grades[every] = grader.grade_feed(_view(data), Feed.BARS)
+    assert all(s.quality is not DataQuality.GOOD for s in grades.values())
+    assert "not measurable" in grades[100].note
+
+
+def test_complete_daily_bars_are_not_degraded_by_their_weekends(grader):
+    """At daily granularity any step beyond one interval is a non-session
+    span, so a complete daily series must grade GOOD."""
+    days = [TS0 + timedelta(days=d) for d in range(120) if (TS0 + timedelta(days=d)).weekday() < 5]
+    ts = to_ns_array(days)
+    n = len(ts)
+    close = 18000.0 + np.arange(n, dtype=np.float64)
+    bars = BarSeries(symbol="NQ", ts_ns=ts, interval_seconds=86_400, columns={
+        "open": close - 1, "high": close + 4, "low": close - 4,
+        "close": close, "volume": np.full(n, 1000.0)})
+    data = SymbolData(symbol="NQ", primary_interval=86_400, bars={86_400: bars})
+    status = grader.grade_feed(_view(data), Feed.BARS)
+    assert status.quality is DataQuality.GOOD
+    assert status.coverage == pytest.approx(1.0)
+
+
+def test_tick_classification_is_reconciled_against_bar_volume(grader):
+    """HIGH finding: omitting the optional unclassified_volume column turned
+    a 50%-classified feed from MISSING into GOOD, because the denominator
+    was whatever the feed chose to report."""
+    ts = _ts()
+    honest = TickSeries(symbol="NQ", ts_ns=ts, meta={"classification_method": "bid_ask"},
+                        columns={"buy_volume": np.full(N, 300.0),
+                                 "sell_volume": np.full(N, 200.0),
+                                 "unclassified_volume": np.full(N, 500.0)})
+    silent = TickSeries(symbol="NQ", ts_ns=ts, meta={"classification_method": "bid_ask"},
+                        columns={"buy_volume": np.full(N, 300.0),
+                                 "sell_volume": np.full(N, 200.0)})
+    grades = []
+    for ticks in (honest, silent):
+        data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                          bars={INTERVAL: _bars()}, ticks={INTERVAL: ticks})
+        grades.append(grader.grade_feed(_view(data), Feed.TICK_AGGREGATE))
+    assert grades[0].coverage == pytest.approx(grades[1].coverage, abs=0.02)
+    assert grades[0].quality is grades[1].quality is DataQuality.MISSING
+    assert "bar volume" in grades[1].note

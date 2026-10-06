@@ -112,6 +112,12 @@ data:
   timezone: America/New_York
   data_latency_seconds: 0.0
   max_staleness_seconds: 120.0
+  # One global bound cannot fit a 5-minute bar feed and a once-per-session
+  # options chain. An EOD chain is a session old by construction; a 120s limit
+  # graded it STALE on 98.7% of bars while the availability report claimed all
+  # 100 points were real. Four days spans a long weekend.
+  max_staleness_seconds_by_feed: {options_snapshot: 345600.0}
+  stale_cadence_multiple: 2.5   # "stale" = missed observations, not wall-clock
   min_quality_to_trade: DEGRADED
   drop_partial_bars: true
   max_gap_bars_tolerated: 3
@@ -226,6 +232,12 @@ levels:
   overlap_reference: 0.70
   failed_break_horizon_bars: 4
   min_cleanliness: 0.55          # <- defines "clean"
+
+  magnitude_weights:            # 14.6: how S, C and R combine into the score
+    significance: 0.40
+    cleanliness: 0.35
+    rejection: 0.25
+  atr_median_window: 50         # 14.4 volatility-regularity term
 
   rejection_weights:
     close_position: 0.40

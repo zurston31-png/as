@@ -192,10 +192,14 @@ class OptionsSnapshot:
     put_premium: float
     call_oi: float
     put_oi: float
-    call_oi_change: float = 0.0
-    put_oi_change: float = 0.0
-    delta_weighted_call_volume: float = 0.0
-    delta_weighted_put_volume: float = 0.0
+    # None means NOT SUPPLIED. 0.0 is a meaningful value for all four -- "open
+    # interest did not change" and "no delta-weighted volume" are real
+    # observations -- so collapsing absence into 0.0 would feed a Phase 5
+    # feature a measurement that was never made.
+    call_oi_change: float | None = None
+    put_oi_change: float | None = None
+    delta_weighted_call_volume: float | None = None
+    delta_weighted_put_volume: float | None = None
     atm_iv: float | None = None
     iv_25d_call: float | None = None
     iv_25d_put: float | None = None

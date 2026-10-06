@@ -166,7 +166,7 @@ honestly run at all.
 
 | Component | Points (prior) | Primary features | Required data | If unavailable |
 |---|---|---|---|---|
-| Order flow | 25 | signed delta, CVD slope, aggression ratio, absorption at level, trade-size distribution | tick-level trades w/ aggressor side, or bid/ask-classified ticks | **No proxy accepted.** Component disabled, weight redistributed, and every run is tagged `ORDERFLOW_PROXY=none`. Bar-volume-only "delta" is a known-bad estimator and is not substituted silently. |
+| Order flow | 25 | signed delta, CVD slope, aggression ratio, absorption at level, trade-size distribution | tick-level trades w/ aggressor side, or bid/ask-classified ticks | **No proxy accepted.** Component disabled and the 25 points are reported UNAVAILABLE; the weight is **not** redistributed (see the honest-consequence paragraph below and §14.5). Bar-volume-only "delta" is a known-bad estimator and is not substituted silently. |
 | Options flow | 20 | net premium (call-prem minus put-prem), delta-weighted volume, OI change, 25d skew, gamma-exposure proxy | OPRA trade prints (ideal), or EOD chain + OI (degraded) | Degrades to `DEGRADED` with daily granularity; `OptionsFlow` sub-score capped and flagged. Never synthesized. |
 | Market structure | 20 | swing pivots (ATR-scaled), break-of-structure, HH/HL sequence, VWAP deviation, opening-range position, prior-day levels | OHLCV bars | Full function on bars alone. |
 | Liquidity | 15 | quoted spread, spread percentile, depth imbalance, volume percentile vs time-of-day curve, participation cost estimate | L1 quotes (ideal), bar volume (degraded) | Degrades to volume-percentile only, flagged `DEGRADED`. |

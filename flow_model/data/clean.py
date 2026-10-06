@@ -110,13 +110,11 @@ def detect_gaps(
         before = from_ns(int(ts_ns[index]))
         after = from_ns(int(ts_ns[index + 1]))
         if spec is not None and calendar is not None:
-            try:
-                same_session = calendar.session_date(before, spec) == calendar.session_date(
-                    after, spec
-                )
-            except (AttributeError, ValueError):
-                same_session = True
-            if not same_session:
+            # No AttributeError guard: `session_date` is part of
+            # SessionCalendarProtocol. Swallowing a missing method here meant a
+            # conforming-but-incomplete calendar silently produced the
+            # no-calendar answer while the report claimed otherwise.
+            if calendar.session_date(before, spec) != calendar.session_date(after, spec):
                 continue
         missing = int(deltas[index] // interval_ns) - 1
         if missing > 0:
@@ -144,6 +142,11 @@ class BarCleaner:
 
         Duplicate/out-of-order/malformed counts are zero by construction
         here, because `BarSeries` rejects those at build time.
+
+        The input's `meta` is forwarded. It carries the provenance that
+        matters most -- `source`, `path`, and the adapter's
+        `timestamp_is_bar_open` convention -- and dropping it at the cleaning
+        step destroyed the only record of which convention produced a result.
         """
         return self.clean_raw(
             symbol=series.symbol,
@@ -152,6 +155,7 @@ class BarCleaner:
             columns={name: series.col(name) for name in series.columns},
             spec=spec,
             calendar=calendar,
+            meta=series.meta,
         )
 
     def clean_raw(
@@ -162,6 +166,7 @@ class BarCleaner:
         columns: Mapping[str, Sequence[float] | np.ndarray],
         spec: InstrumentSpec | None = None,
         calendar=None,
+        meta: Mapping[str, object] | None = None,
     ) -> tuple[BarSeries, CleanReport]:
         """Clean raw columnar bar data into a validated series."""
         ts = np.asarray(ts_ns, dtype=np.int64)
@@ -177,6 +182,11 @@ class BarCleaner:
                 )
 
         rows_in = int(len(ts))
+        # Gaps are measured on the INPUT. Measuring them on the output made the
+        # cleaner report its own outlier removals as defects in the data: a
+        # pristine generated dataset came back claiming 60 gaps, every one of
+        # them a hole the quarantine had just made.
+        input_gaps = detect_gaps(ts, interval_seconds, spec=spec, calendar=calendar)
         counts = {
             "malformed_dropped": 0,
             "duplicates_dropped": 0,
@@ -206,6 +216,7 @@ class BarCleaner:
         counts["zero_volume_flagged"] = int(np.count_nonzero((volume == 0.0) & keep))
 
         kept_ts = ts[keep]
+        forwarded = {k: v for k, v in dict(meta or {}).items() if k != "interval_seconds"}
         cleaned = BarSeries(
             symbol=symbol,
             ts_ns=kept_ts,
@@ -215,10 +226,15 @@ class BarCleaner:
                 for name, values in cols.items()
                 if name in BarSeries.REQUIRED or name in BarSeries.OPTIONAL
             },
+            meta={**forwarded, "cleaned": True},
         )
 
-        # 7. gaps -- detected on the OUTPUT, counted, never filled
-        gaps = detect_gaps(kept_ts, interval_seconds, spec=spec, calendar=calendar)
+        # 7. gaps -- counted, never filled. The two causes are kept apart:
+        # `gaps` is what was wrong with the feed, `introduced` is what this
+        # cleaner did to it.
+        gaps = input_gaps
+        output_gaps = detect_gaps(kept_ts, interval_seconds, spec=spec, calendar=calendar)
+        introduced = max(0, len(output_gaps) - len(input_gaps))
         if spec is None or calendar is None:
             notes.append(
                 "gap detection ran without a calendar: session breaks are "
@@ -232,6 +248,7 @@ class BarCleaner:
             rows_out=int(len(cleaned)),
             gaps_detected=len(gaps),
             largest_gap_bars=max((count for _, _, count in gaps), default=0),
+            gaps_introduced_by_cleaning=introduced,
             quarantined_timestamps=tuple(quarantined),
             notes=tuple(notes),
             **counts,

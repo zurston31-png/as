@@ -163,7 +163,18 @@ class CsvAdapterConfig(FrozenModel):
     root_path: str
     column_map: ColumnMap = ColumnMap()
     input_timezone: str = "UTC"
-    timestamp_is_bar_open: bool = False
+    timestamp_is_bar_open: bool = Field(
+        description=(
+            "REQUIRED, with no default. Our BarSeries contract is bar CLOSE. "
+            "Most OHLCV exports stamp bars by the interval START, and reading "
+            "one of those as a close makes every bar visible exactly one "
+            "interval early -- a silent head start on every signal that looks "
+            "like skill. A default of False would hand that reading to any "
+            "config that simply omits the field, so there is no default: a "
+            "config that does not declare its convention fails validation "
+            "instead of guessing."
+        )
+    )
     timestamp_unit: str = Field(default="auto", pattern=_UNIT_PATTERN)
     filename_template: str = "{symbol}_{interval}s.csv"
 

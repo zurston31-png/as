@@ -85,7 +85,30 @@ class DataConfig(FrozenModel):
     max_staleness_seconds: float = Field(
         gt=0.0,
         default=120.0,
-        description="Beyond this age a feed is graded STALE and trading halts.",
+        description="Default age beyond which a feed is graded STALE and trading halts.",
+    )
+    max_staleness_seconds_by_feed: dict[Feed, float] = Field(
+        default_factory=lambda: {Feed.OPTIONS_SNAPSHOT: 345_600.0},
+        description=(
+            "Per-feed overrides, in seconds. One global bound cannot fit both "
+            "a 5-minute bar feed and a once-per-session options chain: an "
+            "end-of-day chain is a session old by construction, so a 120s "
+            "limit graded it STALE on 98.7% of bars while the availability "
+            "report claimed all 100 points were real. The options default is "
+            "four days, which spans a long weekend -- a Friday chain is ~63 "
+            "hours old at Monday's open and is normal, not frozen -- while "
+            "still catching a feed that has genuinely stopped updating."
+        ),
+    )
+    stale_cadence_multiple: float = Field(
+        ge=1.0,
+        default=2.5,
+        description=(
+            "A feed is also allowed this many of its OWN observed intervals "
+            "before being called stale, so 'stale' means missed observations "
+            "rather than elapsed wall-clock. The configured limit is a floor, "
+            "never a ceiling, so tightening it cannot be undone by cadence."
+        ),
     )
     min_quality_to_trade: DataQuality = DataQuality.DEGRADED
 
@@ -395,6 +418,26 @@ class RejectionWeights(FrozenModel):
         return self
 
 
+class StructureMagnitudeWeights(FrozenModel):
+    """Weights combining S, C and R into the STRUCTURE component's magnitude.
+
+    ARCHITECTURE.md 14.6 names `w_S`, `w_C` and `w_R` but gave them no config
+    field, so Phase 3 would have had to hardcode them -- which is exactly the
+    situation `levels` exists to prevent.
+    """
+
+    significance: float = Field(ge=0.0, default=0.40)
+    cleanliness: float = Field(ge=0.0, default=0.35)
+    rejection: float = Field(ge=0.0, default=0.25)
+
+    @model_validator(mode="after")
+    def _check(self) -> "StructureMagnitudeWeights":
+        total = self.significance + self.cleanliness + self.rejection
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"structure magnitude weights sum to {total}, expected 1.0")
+        return self
+
+
 class StructureLevelConfig(FrozenModel):
     """Support/resistance zone detection, scoring and gating.
 
@@ -464,6 +507,14 @@ class StructureLevelConfig(FrozenModel):
 
     # --- rejection ---
     rejection_weights: RejectionWeights = Field(default_factory=RejectionWeights)
+    magnitude_weights: StructureMagnitudeWeights = Field(
+        default_factory=StructureMagnitudeWeights
+    )
+    atr_median_window: int = Field(
+        gt=1,
+        default=50,
+        description="Window for the ATR median in the volatility-regularity term (14.4).",
+    )
     displacement_reference_atr: float = Field(gt=0.0, default=0.50)
     require_close_back_outside: bool = Field(
         default=True,

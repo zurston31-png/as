@@ -101,6 +101,13 @@ class SymbolData:
             "first_ts": self.primary_bars.first_ts.isoformat() if len(self.primary_bars) else None,
             "last_ts": self.primary_bars.last_ts.isoformat() if len(self.primary_bars) else None,
             "data_hash": self.fingerprint.data_hash if self.fingerprint else "",
+            # `source` is the field that distinguishes a synthetic dataset from
+            # a real one. Dropping it here meant the natural run-report
+            # serialization of a synthetic run was indistinguishable from a
+            # real one, which is how a synthetic backtest gets mistaken for
+            # evidence later.
+            "source": self.fingerprint.source if self.fingerprint else "unknown",
+            "synthetic": bool(self.primary_bars.meta.get("synthetic", False)),
         }
 
 
@@ -220,9 +227,19 @@ class DataStore:
                 f"{symbol!r} is not loaded; loaded symbols: {list(self.symbols)}"
             ) from None
 
-    def view(self, symbol: str, now: datetime) -> MarketView:
-        """The only sanctioned way for code above the data layer to read data."""
-        return MarketView(self.get(symbol), now=now, latency_seconds=self.latency_seconds)
+    def view(self, symbol: str, now: datetime, now_ns: int | None = None) -> MarketView:
+        """The only sanctioned way for code above the data layer to read data.
+
+        `now_ns` carries an exact int64 instant when the caller has one, so a
+        nanosecond-stamped observation is not pushed outside the cutoff by
+        datetime's microsecond resolution.
+        """
+        return MarketView(
+            self.get(symbol),
+            now=now,
+            latency_seconds=self.latency_seconds,
+            now_ns=now_ns,
+        )
 
     def timeline(self, symbol: str, interval: int | None = None) -> np.ndarray:
         """Bar close timestamps (int64 UTC ns) for the backtest clock.
@@ -252,7 +269,8 @@ class DataStore:
     def iter_views(self, symbol: str) -> Iterator[MarketView]:
         """Views at each of the symbol's bar closes, in chronological order."""
         for ts_ns in self.timeline(symbol):
-            yield self.view(symbol, from_ns(int(ts_ns)))
+            exact = int(ts_ns)
+            yield self.view(symbol, from_ns(exact), now_ns=exact)
 
     # --- provenance ----------------------------------------------------
 
