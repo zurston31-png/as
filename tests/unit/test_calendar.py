@@ -20,7 +20,7 @@ import pytest
 from flow_model.config.schema import SessionFilterConfig
 from flow_model.core.enums import InstrumentType, Session
 from flow_model.core.instruments import InstrumentSpec, SessionWindow
-from flow_model.data.base import SchemaError, SessionCalendarProtocol
+from flow_model.data.base import DataLayerError, SchemaError, SessionCalendarProtocol
 from flow_model.config.loader import default_config
 from flow_model.data.calendar import (
     HALF_DAY_CLOSE_MINUTES,
@@ -418,7 +418,9 @@ def test_span_properties_cover_the_configured_years():
 
 
 def test_first_year_after_last_year_is_rejected():
-    with pytest.raises(ValueError, match="exceeds last_year"):
+    """Raises DataLayerError, not a bare ValueError: a caller wrapping
+    calendar construction in `except DataLayerError` must actually catch it."""
+    with pytest.raises(DataLayerError, match="exceeds last_year"):
         TradingCalendar(first_year=2030, last_year=2020)
 
 
@@ -435,7 +437,7 @@ def test_extra_holidays_and_half_days_are_honoured(nq):
 def test_extra_holidays_reject_datetimes():
     # datetime subclasses date, so a datetime would type-check and then
     # match nothing: the injected holiday would silently not exist.
-    with pytest.raises(TypeError, match="must contain date objects"):
+    with pytest.raises(SchemaError, match="must contain date objects"):
         TradingCalendar(extra_holidays={datetime(2024, 3, 5, tzinfo=timezone.utc)})
 
 
@@ -752,8 +754,43 @@ def test_weekend_rejection_precedes_the_holiday_filter(cal, nq):
 # --- purity and contract ---------------------------------------------------
 
 
+PROTOCOL_MEMBERS = ("is_trading_day", "is_half_day", "session_of", "is_rth", "session_date")
+
+
 def test_satisfies_the_session_calendar_protocol(cal):
+    """isinstance against a runtime_checkable Protocol only checks that the
+    NAMES exist -- it ignores signatures, parameter order and return types,
+    so it cannot fail for any of the ways a calendar actually drifts from
+    the contract. Asserted structurally instead."""
     assert isinstance(cal, SessionCalendarProtocol)
+    assert set(PROTOCOL_MEMBERS) <= set(dir(SessionCalendarProtocol))
+
+
+@pytest.mark.parametrize("method", PROTOCOL_MEMBERS)
+def test_protocol_signatures_match_the_implementation(cal, method):
+    """Catches a rename or a reordered parameter, which the isinstance check
+    cannot. `clean.detect_gaps` calls `session_date(ts, spec)` positionally."""
+    import inspect
+
+    declared = inspect.signature(getattr(SessionCalendarProtocol, method))
+    actual = inspect.signature(getattr(type(cal), method))
+    assert list(declared.parameters) == list(actual.parameters), (
+        f"{method}: protocol declares {list(declared.parameters)}, "
+        f"TradingCalendar takes {list(actual.parameters)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "method,expected",
+    [("is_trading_day", bool), ("is_half_day", bool), ("is_rth", bool),
+     ("session_of", Session), ("session_date", date)],
+)
+def test_protocol_members_return_the_declared_types(cal, nq, method, expected):
+    """Called by KEYWORD, so a reordered implementation fails here too."""
+    ts = datetime(2024, 3, 5, 15, 0, tzinfo=timezone.utc)
+    argument = {"day": ts.date()} if method in ("is_trading_day", "is_half_day") else {"ts": ts}
+    result = getattr(cal, method)(spec=nq, **argument)
+    assert isinstance(result, expected), f"{method} returned {type(result).__name__}"
 
 
 @pytest.mark.parametrize(

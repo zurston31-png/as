@@ -163,6 +163,17 @@ class CsvAdapterConfig(FrozenModel):
     root_path: str
     column_map: ColumnMap = ColumnMap()
     input_timezone: str = "UTC"
+    ambiguous_time_policy: str = Field(
+        default="reject",
+        pattern="^(reject|first|second)$",
+        description=(
+            "How to resolve a local timestamp that occurs twice on the "
+            "daylight-saving fall-back day. 'reject' (the default) refuses "
+            "the file; 'first'/'second' pick the earlier or later instant. "
+            "There is no 'guess': the two are an hour apart and choosing "
+            "wrong back-dates an hour of bars."
+        ),
+    )
     timestamp_is_bar_open: bool = Field(
         description=(
             "REQUIRED, with no default. Our BarSeries contract is bar CLOSE. "
@@ -217,21 +228,53 @@ def _is_blank(value: object) -> bool:
     return isinstance(value, str) and value.strip() == ""
 
 
-def _localize(naive: datetime, zone: ZoneInfo, where: str) -> datetime:
+def _localize(
+    naive: datetime,
+    zone: ZoneInfo,
+    where: str,
+    ambiguous_policy: str = "reject",
+) -> datetime:
     """Attach `zone` to a naive wall-clock timestamp.
 
-    A local time inside the spring-forward gap does not exist, so reading one
-    means the file was not written in the declared zone. Accepting it would
-    silently shift that row by an hour.
+    Two DST hazards, and both used to be handled asymmetrically.
+
+    A local time inside the spring-forward GAP does not exist, so reading one
+    means the file was not written in the declared zone. That was already
+    rejected.
+
+    A local time inside the autumn fall-back hour is AMBIGUOUS -- it names
+    two different instants an hour apart. `datetime.replace(tzinfo=zone)`
+    silently resolves it to the earlier one (`fold=0`), which places an hour
+    of bars an hour before they happened: one hour of lookahead per year, in
+    the data layer, with no warning. It is now rejected unless the config
+    declares a resolution, because a coin flip on a one-hour shift is not
+    something a loader should make on its own.
     """
-    local = naive.replace(tzinfo=zone)
-    if local.astimezone(UTC).astimezone(zone).replace(tzinfo=None) != naive:
+    first = naive.replace(tzinfo=zone, fold=0)
+    second = naive.replace(tzinfo=zone, fold=1)
+
+    if first.astimezone(UTC).astimezone(zone).replace(tzinfo=None) != naive:
         raise SchemaError(
             f"{where}: local time {naive.isoformat()} does not exist in "
             f"{getattr(zone, 'key', zone)!s} (it falls in the daylight-saving gap), so "
             "input_timezone is not the zone this file was written in"
         )
-    return local
+
+    if first.utcoffset() != second.utcoffset():
+        if ambiguous_policy == "first":
+            return first
+        if ambiguous_policy == "second":
+            return second
+        raise SchemaError(
+            f"{where}: local time {naive.isoformat()} is ambiguous in "
+            f"{getattr(zone, 'key', zone)!s} -- it occurs twice on the "
+            f"daylight-saving fall-back day, {first.isoformat()} and "
+            f"{second.isoformat()}. Resolving it silently would place an hour of "
+            f"bars an hour before they happened. Set "
+            f"ambiguous_time_policy='first' or 'second' to declare which "
+            f"instant the file means, or supply UTC timestamps."
+        )
+    return first
 
 
 def _scale_epoch(value: int, multiplier: int, where: str, unit: str) -> int:
@@ -282,13 +325,19 @@ def _detect_timestamp_unit(values: Sequence[object], where: str) -> str:
     return "ns"
 
 
-def _timestamp_to_ns(value: object, unit: str, zone: ZoneInfo, where: str) -> int:
+def _timestamp_to_ns(
+    value: object,
+    unit: str,
+    zone: ZoneInfo,
+    where: str,
+    ambiguous_policy: str = "reject",
+) -> int:
     """One raw timestamp cell to UTC nanoseconds."""
     if isinstance(value, datetime):
-        aware = value if value.tzinfo is not None else _localize(value, zone, where)
+        aware = value if value.tzinfo is not None else _localize(value, zone, where, ambiguous_policy)
         return to_ns(aware)
     if isinstance(value, date):
-        return to_ns(_localize(datetime(value.year, value.month, value.day), zone, where))
+        return to_ns(_localize(datetime(value.year, value.month, value.day), zone, where, ambiguous_policy))
     if _is_blank(value):
         raise SchemaError(f"{where}: timestamp is empty")
 
@@ -302,7 +351,7 @@ def _timestamp_to_ns(value: object, unit: str, zone: ZoneInfo, where: str) -> in
                     f"{where}: timestamp {value!r} is not ISO-8601 "
                     "(expected e.g. '2020-01-02T09:30:00' or '2020-01-02 09:30:00-05:00')"
                 ) from None
-            aware = parsed if parsed.tzinfo is not None else _localize(parsed, zone, where)
+            aware = parsed if parsed.tzinfo is not None else _localize(parsed, zone, where, ambiguous_policy)
             return to_ns(aware)
         try:
             number: float | int = int(text) if _INTEGER_TEXT.match(text) else float(text)
@@ -340,6 +389,7 @@ def _timestamp_column(
     zone: ZoneInfo,
     path: str,
     row_word: str,
+    ambiguous_policy: str = "reject",
 ) -> np.ndarray:
     """The timestamp column as int64 UTC nanoseconds."""
     if not len(values):
@@ -361,7 +411,11 @@ def _timestamp_column(
     out = np.empty(len(values), dtype=np.int64)
     for i, value in enumerate(values):
         out[i] = _timestamp_to_ns(
-            value, resolved, zone, f"{path}: {row_word} {rows[i]}, timestamp"
+            value,
+            resolved,
+            zone,
+            f"{path}: {row_word} {rows[i]}, timestamp",
+            ambiguous_policy,
         )
     return out
 
@@ -600,6 +654,7 @@ class _FileBarAdapter(DataSourceAdapter):
             zone=self.zone,
             path=table.path,
             row_word=table.row_word,
+            ambiguous_policy=self.config.ambiguous_time_policy,
         )
         if self.config.timestamp_is_bar_open:
             ts_ns = ts_ns + interval * NS_PER_SECOND
@@ -618,8 +673,15 @@ class _FileBarAdapter(DataSourceAdapter):
             if canonical != "timestamp"
         }
 
-        lo = np.searchsorted(ts_ns, self._midnight_ns(start), side="left")
-        hi = np.searchsorted(ts_ns, self._midnight_ns(end), side="left")
+        # The bounds are shifted with the timestamps. `ts_ns` has already had
+        # one interval added when `timestamp_is_bar_open` is set, so filtering
+        # on unshifted midnights selected a different SET of bars under the two
+        # conventions: the bar opening just before `start` moved inside the
+        # window, and the last bar of `end - 1` moved out. The range now means
+        # the same sessions either way.
+        shift = interval * NS_PER_SECOND if self.config.timestamp_is_bar_open else 0
+        lo = np.searchsorted(ts_ns, self._midnight_ns(start) + shift, side="left")
+        hi = np.searchsorted(ts_ns, self._midnight_ns(end) + shift, side="left")
         window = slice(int(lo), int(hi))
 
         return BarSeries(
@@ -671,6 +733,16 @@ class _FileBarAdapter(DataSourceAdapter):
         )
 
     # --- internals -----------------------------------------------------
+
+    #: The calendar the (start, end) date range is resolved in. A file adapter
+    #: uses its own `input_timezone`, because a "day" in a vendor export is a
+    #: day in the zone that export was written in. `InMemoryAdapter` uses UTC,
+    #: since its series are already canonical. Reported so `DataStore` can
+    #: surface the difference rather than letting two adapters silently
+    #: disagree about which bars a date range contains.
+    @property
+    def range_timezone(self) -> str:
+        return str(getattr(self.zone, "key", self.zone))
 
     def _midnight_ns(self, day: date) -> int:
         return to_ns(datetime(day.year, day.month, day.day, tzinfo=self.zone))
@@ -890,18 +962,41 @@ class InMemoryAdapter(DataSourceAdapter):
         return self._slice(series, start, end)
 
     def load_quotes(self, symbol: str, start: date, end: date) -> QuoteSeries | None:
+        """None when absent entirely OR absent in this window.
+
+        An empty series is falsy but is NOT None, and `DataStore` branches on
+        `is not None`, so returning one made a window with no rows read as
+        "feed present" and the quality layer graded an empty feed instead of
+        reporting it missing.
+        """
         series = self.quotes.get(symbol)
-        return None if series is None else self._slice(series, start, end)
+        if series is None:
+            return None
+        sliced = self._slice(series, start, end)
+        return sliced if len(sliced) else None
 
     def load_tick_aggregates(
         self, symbol: str, interval_seconds: int, start: date, end: date
     ) -> TickSeries | None:
         series = self.ticks.get((symbol, int(interval_seconds)))
-        return None if series is None else self._slice(series, start, end)
+        if series is None:
+            return None
+        sliced = self._slice(series, start, end)
+        return sliced if len(sliced) else None
 
     def load_options(self, symbol: str, start: date, end: date) -> OptionsSeries | None:
+        """None when absent entirely OR absent in this window.
+
+        An empty series is falsy but is NOT None, and `DataStore` branches on
+        `is not None`, so returning one made a window with no rows read as
+        "feed present" and the quality layer graded an empty feed instead of
+        reporting it missing.
+        """
         series = self.options.get(symbol)
-        return None if series is None else self._slice(series, start, end)
+        if series is None:
+            return None
+        sliced = self._slice(series, start, end)
+        return sliced if len(sliced) else None
 
     def fingerprint(
         self, symbol: str, interval_seconds: int, start: date, end: date, rows: int
@@ -930,6 +1025,10 @@ class InMemoryAdapter(DataSourceAdapter):
         )
 
     # --- internals -----------------------------------------------------
+
+    #: See `_FileBarAdapter.range_timezone`. UTC here: an in-memory series is
+    #: already canonical, so there is no vendor calendar to honour.
+    range_timezone = "UTC"
 
     @staticmethod
     def _midnight_ns(day: date) -> int:

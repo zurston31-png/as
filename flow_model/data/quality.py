@@ -141,9 +141,10 @@ class QualityReport(FrozenModel):
             coverage = (
                 "not measured" if status.coverage is None else f"{status.coverage:.3f}"
             )
+            integrity = "" if status.integrity is None else f" integrity={status.integrity:.3f}"
             lines.append(
                 f"  {feed.value:<18} {status.quality.value:<9} "
-                f"rows={status.rows:<7} coverage={coverage} age={age}"
+                f"rows={status.rows:<7} coverage={coverage}{integrity} age={age}"
                 + (f"  {status.note}" if status.note else "")
             )
         if self.blocking_feeds:
@@ -430,6 +431,47 @@ class QualityGrader:
             return self._grade_quotes(view, rows, age, first_ts, last_ts)
         return self._grade_bars(view, rows, age, first_ts, last_ts)
 
+    def _presence_coverage(self, view: MarketView, feed: Feed) -> float | None:
+        """Observations present divided by observations expected.
+
+        One definition for every feed, which is the point. Quotes and tick
+        aggregates are expected once per bar; an options chain is expected
+        once per its own observed cadence. Previously neither quotes nor
+        options were graded on presence at all, so a single quote in a month
+        graded GOOD. None means not measurable.
+        """
+        bars = view.bar_count()
+        if feed is Feed.QUOTES:
+            return None if bars == 0 else round(min(view.quote_count() / bars, 1.0), 6)
+        if feed is Feed.TICK_AGGREGATE:
+            return None if bars == 0 else round(min(view.tick_count() / bars, 1.0), 6)
+        if feed is Feed.OPTIONS_SNAPSHOT:
+            # An INTRADAY chain is expected once per bar, so presence is
+            # measurable the same way as quotes. An END-OF-DAY chain is
+            # expected once per SESSION, and the grader has no calendar, so
+            # dividing the wall-clock span by the cadence counts weekend days
+            # as missed snapshots -- a complete EOD feed measured 0.77 and
+            # graded MISSING. It is reported not-measurable instead, which
+            # already maps to DEGRADED, and an EOD feed is DEGRADED anyway for
+            # carrying no flow timing. CleanReport, which does have the
+            # calendar, is the authority on missing sessions.
+            if not view.options_are_intraday() or bars == 0:
+                return None
+            return round(min(view.options_count() / bars, 1.0), 6)
+        return self._bar_coverage(view)
+
+    def _presence_grade(
+        self, coverage: float | None, label: str
+    ) -> tuple[DataQuality, str]:
+        if coverage is None:
+            return DataQuality.DEGRADED, f"{label} not measurable"
+        return self._from_coverage(
+            coverage,
+            self.thresholds.min_coverage_good,
+            self.thresholds.min_coverage_degraded,
+            label,
+        )
+
     def _grade_bars(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
         coverage = self._bar_coverage(view)
         if coverage is None:
@@ -444,55 +486,69 @@ class QualityGrader:
                 ),
             )
         quality, note = self._from_coverage(
-            coverage, self.thresholds.min_coverage_good, self.thresholds.min_coverage_degraded,
-            "bar coverage",
+            coverage, self.thresholds.min_coverage_good,
+            self.thresholds.min_coverage_degraded, "bar coverage",
         )
         return FeedStatus(feed=Feed.BARS, quality=quality, rows=rows, coverage=coverage,
                           age_seconds=age, first_ts=first_ts, last_ts=last_ts, note=note)
 
     def _grade_quotes(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
         crossed = self._crossed_quote_rate(view)
-        coverage = 1.0 - crossed
+        integrity = round(1.0 - crossed, 6)
+        coverage = self._presence_coverage(view, Feed.QUOTES)
+        presence_quality, notes = self._presence_grade(coverage, "quote presence")
+        note_parts = [notes] if notes else []
+        integrity_quality = DataQuality.GOOD
         if crossed > self.thresholds.max_crossed_quote_rate:
-            return FeedStatus(
-                feed=Feed.QUOTES, quality=DataQuality.DEGRADED, rows=rows,
-                coverage=coverage, age_seconds=age, first_ts=first_ts, last_ts=last_ts,
-                note=(
-                    f"crossed-quote rate {crossed:.3f} exceeds "
-                    f"{self.thresholds.max_crossed_quote_rate:.3f}, which indicates a "
-                    "broken or stitched feed"
-                ),
+            integrity_quality = DataQuality.DEGRADED
+            note_parts.append(
+                f"crossed-quote rate {crossed:.3f} exceeds "
+                f"{self.thresholds.max_crossed_quote_rate:.3f}, which indicates a "
+                "broken or stitched feed"
             )
-        return FeedStatus(feed=Feed.QUOTES, quality=DataQuality.GOOD, rows=rows,
-                          coverage=coverage, age_seconds=age, last_ts=last_ts)
+        return FeedStatus(
+            feed=Feed.QUOTES,
+            quality=DataQuality.worst(presence_quality, integrity_quality),
+            rows=rows, coverage=coverage, integrity=integrity, age_seconds=age,
+            first_ts=first_ts, last_ts=last_ts, note="; ".join(note_parts),
+        )
 
     def _grade_ticks(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
         classification, basis = self._tick_classification(view)
-        quality, note = self._from_coverage(
+        coverage = self._presence_coverage(view, Feed.TICK_AGGREGATE)
+        classification_quality, class_note = self._from_coverage(
             classification,
             self.thresholds.min_tick_classification_good,
             self.thresholds.min_tick_classification_degraded,
             "aggressor classification",
         )
-        detail = note or basis
-        if note and basis:
-            detail = f"{note} ({basis})"
-        return FeedStatus(feed=Feed.TICK_AGGREGATE, quality=quality, rows=rows,
-                          coverage=classification, age_seconds=age, first_ts=first_ts, last_ts=last_ts,
-                          note=detail)
+        presence_quality, presence_note = self._presence_grade(coverage, "tick presence")
+        notes = [n for n in (class_note, presence_note, basis) if n]
+        return FeedStatus(
+            feed=Feed.TICK_AGGREGATE,
+            quality=DataQuality.worst(classification_quality, presence_quality),
+            rows=rows, coverage=coverage, integrity=classification,
+            age_seconds=age, first_ts=first_ts, last_ts=last_ts,
+            note="; ".join(notes),
+        )
 
     def _grade_options(self, view, rows, age, first_ts, last_ts) -> FeedStatus:
+        coverage = self._presence_coverage(view, Feed.OPTIONS_SNAPSHOT)
+        presence_quality, presence_note = self._presence_grade(coverage, "options presence")
+        notes = [presence_note] if presence_note else []
+        cadence_quality = DataQuality.GOOD
         if not view.options_are_intraday():
-            return FeedStatus(
-                feed=Feed.OPTIONS_SNAPSHOT, quality=DataQuality.DEGRADED, rows=rows,
-                coverage=1.0, age_seconds=age, first_ts=first_ts, last_ts=last_ts,
-                note=(
-                    "end-of-day chain only: expresses positioning but not flow "
-                    "timing, so the options sub-score must be capped"
-                ),
+            cadence_quality = DataQuality.DEGRADED
+            notes.append(
+                "end-of-day chain only: expresses positioning but not flow "
+                "timing, so the options sub-score must be capped"
             )
-        return FeedStatus(feed=Feed.OPTIONS_SNAPSHOT, quality=DataQuality.GOOD, rows=rows,
-                          coverage=1.0, age_seconds=age, last_ts=last_ts)
+        return FeedStatus(
+            feed=Feed.OPTIONS_SNAPSHOT,
+            quality=DataQuality.worst(presence_quality, cadence_quality),
+            rows=rows, coverage=coverage, age_seconds=age, first_ts=first_ts,
+            last_ts=last_ts, note="; ".join(notes),
+        )
 
     def _from_coverage(
         self, value: float, good: float, degraded: float, label: str

@@ -451,16 +451,18 @@ def test_session_bar_count_comes_from_the_spec_window(year_dataset):
     assert set(per_day.values()) == {RTH_BARS}
 
 
-def test_bars_per_day_applies_when_the_spec_has_no_rth_window(sessionless_spec):
-    config = SyntheticConfig(bars_per_day=10, start_price=400.0)
-    dataset = _generate(config, seed=2, spec=sessionless_spec, symbol="XX",
-                        end=date(2021, 1, 16))
-    local = [ts.astimezone(NY) for ts in dataset.bars.timestamps()]
-    per_day: dict[date, int] = {}
-    for ts in local:
-        per_day[ts.date()] = per_day.get(ts.date(), 0) + 1
-    assert set(per_day.values()) == {10}
-    assert min(ts.hour * 60 + ts.minute for ts in local) == 9 * 60 + 35
+def test_a_spec_with_no_rth_window_is_refused(sessionless_spec):
+    """The generator will not invent a session the calendar reports CLOSED.
+
+    With no declared RTH it used to assume a 09:30 open, while
+    `calendar.session_of` returns Session.CLOSED for every timestamp of such
+    an instrument -- so every generated bar was simultaneously a valid bar
+    and outside any session. Two modules disagreeing about the same data is
+    now impossible rather than resolved twice.
+    """
+    with pytest.raises(DataLayerError, match="no RTH window declared"):
+        _generate(SyntheticConfig(bars_per_day=10), seed=2, spec=sessionless_spec,
+                  symbol="XX", end=date(2021, 1, 16))
 
 
 def test_interval_longer_than_the_session_is_rejected():

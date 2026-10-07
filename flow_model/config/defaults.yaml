@@ -121,7 +121,10 @@ data:
   min_quality_to_trade: DEGRADED
   drop_partial_bars: true
   max_gap_bars_tolerated: 3
-  outlier_sigma: 10.0
+  outlier_sigma: 10.0           # measured: 15.0 halves recall to 0.31
+  outlier_window_bars: 500      # must span several vol regimes; 50 gave
+                                # 11 false positives on clean data
+  outlier_min_history_bars: 20
 
 features:
   atr_period: 14

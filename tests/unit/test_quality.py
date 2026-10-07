@@ -283,7 +283,9 @@ def test_poor_tick_classification_grades_missing(grader):
                       ticks={INTERVAL: _ticks(classified=0.50)})
     status = grader.grade(_view(data)).status_of(Feed.TICK_AGGREGATE)
     assert status.quality is DataQuality.MISSING
-    assert status.coverage == pytest.approx(0.50)
+    # the classification share is `integrity`; `coverage` is presence
+    assert status.integrity == pytest.approx(0.50)
+    assert status.coverage == pytest.approx(1.0)
 
 
 def test_partial_tick_classification_grades_degraded(grader):
@@ -583,3 +585,58 @@ def test_tick_classification_is_reconciled_against_bar_volume(grader):
     assert grades[0].coverage == pytest.approx(grades[1].coverage, abs=0.02)
     assert grades[0].quality is grades[1].quality is DataQuality.MISSING
     assert "bar volume" in grades[1].note
+
+
+def test_coverage_means_presence_for_every_feed(grader):
+    """`coverage` carried presence for bars, classification share for ticks
+    and one-minus-crossed-rate for quotes -- three incompatible meanings in
+    one field. It is now presence everywhere, with `integrity` holding the
+    feed-specific soundness measure."""
+    data = _data()
+    report = grader.grade(_view(data))
+    for feed in (Feed.BARS, Feed.QUOTES, Feed.TICK_AGGREGATE, Feed.OPTIONS_SNAPSHOT):
+        status = report.status_of(feed)
+        assert status.coverage is None or 0.0 <= status.coverage <= 1.0
+    assert report.status_of(Feed.TICK_AGGREGATE).integrity is not None
+    assert report.status_of(Feed.QUOTES).integrity is not None
+    assert report.status_of(Feed.BARS).integrity is None
+
+
+def test_one_quote_in_a_month_does_not_grade_good(grader):
+    """Quotes and options were never graded on presence at all."""
+    # The single quote sits at the END of the window, so it is fresh and the
+    # grade turns on presence rather than on staleness.
+    ts = _ts()
+    sparse = QuoteSeries(symbol="NQ", ts_ns=ts[-1:], columns={
+        "bid": np.full(1, 18000.0), "ask": np.full(1, 18000.25),
+        "bid_size": np.full(1, 10.0), "ask_size": np.full(1, 10.0)})
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _bars()}, quotes=sparse)
+    status = grader.grade_feed(_view(data), Feed.QUOTES)
+    assert status.quality is not DataQuality.GOOD
+    assert status.coverage is not None and status.coverage < 0.05
+    assert status.integrity == pytest.approx(1.0)      # sound, just absent
+
+
+def test_a_sparse_tick_feed_is_graded_on_presence_too(grader):
+    ts = _ts()
+    keep = np.r_[np.arange(0, N, 20), N - 1]        # include the newest bar
+    sparse = TickSeries(symbol="NQ", ts_ns=ts[keep], meta={"classification_method": "bid_ask"},
+                        columns={"buy_volume": np.full(len(keep), 600.0),
+                                 "sell_volume": np.full(len(keep), 400.0),
+                                 "unclassified_volume": np.zeros(len(keep))})
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _bars()}, ticks={INTERVAL: sparse})
+    status = grader.grade_feed(_view(data), Feed.TICK_AGGREGATE)
+    assert status.quality is not DataQuality.GOOD
+    assert status.coverage is not None and status.coverage < 0.1
+
+
+def test_crossed_quotes_show_up_as_integrity_not_coverage(grader):
+    data = SymbolData(symbol="NQ", primary_interval=INTERVAL,
+                      bars={INTERVAL: _bars()}, quotes=_quotes(crossed_every=10))
+    status = grader.grade_feed(_view(data), Feed.QUOTES)
+    assert status.quality is DataQuality.DEGRADED
+    assert status.integrity == pytest.approx(0.90, abs=0.01)
+    assert status.coverage == pytest.approx(1.0)       # every bar has a quote
+    assert "crossed-quote rate" in status.note

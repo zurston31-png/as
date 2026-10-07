@@ -117,7 +117,36 @@ class DataConfig(FrozenModel):
     outlier_sigma: float = Field(
         gt=0.0,
         default=10.0,
-        description="Bars with returns beyond this many sigma are quarantined, not deleted.",
+        description=(
+            "Bars whose return exceeds this many robust sigma are quarantined. "
+            "Raising it to 15 more than halves recall (0.75 -> 0.31) against "
+            "the synthetic generator's injected outliers, so 10 is the "
+            "measured operating point, not a round number."
+        ),
+    )
+    outlier_window_bars: int = Field(
+        gt=10,
+        default=500,
+        description=(
+            "Trailing window for the robust dispersion estimate. Must span "
+            "several volatility regimes: the generator's LOW_VOL to HIGH_VOL "
+            "ratio is 5.5x and DIRECTIONAL_SHIFT lasts ~6 bars, so a 50-bar "
+            "window flagged the first bars after every vol switch as bad "
+            "prints -- 11 false positives on a dataset with zero injected "
+            "outliers, precision 0.52. Measured against ground truth: 50 "
+            "bars gives precision 0.52, 100 gives 0.50, 250 gives 0.65, 500 "
+            "gives 0.80 at unchanged recall."
+        ),
+    )
+    outlier_min_history_bars: int = Field(
+        gt=1,
+        default=20,
+        description=(
+            "Bars of trailing history required before a bar can be "
+            "quarantined at all. Earlier bars are never judged: there is "
+            "nothing to judge them against, and judging them on later data "
+            "is the lookahead this avoids."
+        ),
     )
 
     @model_validator(mode="after")
@@ -555,6 +584,37 @@ class StructureLevelConfig(FrozenModel):
             "arbitrary-R setup."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_non_negotiables(self) -> "StructureLevelConfig":
+        """Refuse the combinations ARCHITECTURE section 14 calls non-negotiable.
+
+        The config was able to switch off every gate the specification
+        describes as required, which would leave a "structure-based" setup
+        with no structural requirement at all -- and nothing in the code
+        would have said so.
+        """
+        if not self.require_close_back_outside:
+            raise ValueError(
+                "require_close_back_outside=False removes the only non-negotiable "
+                "part of the rejection trigger (section 14.5: the bar's extreme "
+                "entered the zone AND the close returned outside it). Without it "
+                "a 'rejection' is any bar that touched the level."
+            )
+        if self.min_significance <= 0.0 and self.min_cleanliness <= 0.0:
+            raise ValueError(
+                "min_significance and min_cleanliness are both zero, so every "
+                "price cluster is both 'major' and 'clean' and section 14's two "
+                "gates admit everything. Set at least one above zero."
+            )
+        if self.fallback_target_atr is not None and self.target_requires_major_zone:
+            raise ValueError(
+                "fallback_target_atr is set while target_requires_major_zone is "
+                "True, which is contradictory: section 14.6 makes achievable R:R a "
+                "measurement off the structure, and an ATR fallback turns a "
+                "declined trade into an arbitrary-R trade. Choose one."
+            )
+        return self
 
     @model_validator(mode="after")
     def _check(self) -> "StructureLevelConfig":

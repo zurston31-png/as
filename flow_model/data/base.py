@@ -26,11 +26,12 @@ from flow_model.core.model import FrozenModel
 class FeedStatus(FrozenModel):
     """Grade for one feed at one point in time.
 
-    `coverage` is the fraction of expected observations actually present in
-    the requested window; `age_seconds` is the staleness of the most recent
-    observation relative to the evaluation timestamp. Both drive the
-    GOOD/DEGRADED/STALE/MISSING grade, and both are reported so a degraded
-    grade can be explained rather than just asserted.
+    `coverage` means ONE thing for every feed: the fraction of expected
+    observations actually present in the window. `integrity` carries the
+    feed-specific soundness measure instead. `age_seconds` is the staleness
+    of the most recent observation relative to the evaluation timestamp. All
+    three are reported so a degraded grade can be explained rather than just
+    asserted.
     """
 
     feed: Feed
@@ -50,6 +51,20 @@ class FeedStatus(FrozenModel):
     first_ts: datetime | None = None
     last_ts: datetime | None = None
     note: str = ""
+
+    integrity: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Feed-specific soundness, separate from presence: the aggressor-"
+            "classification share for ticks, one-minus-the-crossed-quote-rate "
+            "for quotes. None where the concept does not apply. Kept apart "
+            "from `coverage` because overloading one field with presence, "
+            "classification share and crossed-quote rate made the same number "
+            "mean three incompatible things across the four feeds."
+        ),
+    )
 
     @property
     def present(self) -> bool:
@@ -162,6 +177,12 @@ class DataSourceAdapter(ABC):
     """
 
     name: str = "abstract"
+
+    #: Which calendar a (start, end) date range is resolved in. Two adapters
+    #: resolving the same dates in different zones select different bars, and
+    #: nothing reported the difference. Declared here so a multi-adapter run
+    #: can assert agreement.
+    range_timezone: str = "UTC"
 
     @abstractmethod
     def available_feeds(self, symbol: str) -> frozenset[Feed]:

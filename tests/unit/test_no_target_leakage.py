@@ -31,7 +31,13 @@ TARGET_READERS_ALLOWED = {"analytics", "validation", "config", "dashboard"}
 # Modules that must never consult a target, because they decide what to trade.
 DECISION_MODULES = {"features", "signals", "regime", "risk", "backtest", "monte_carlo", "data"}
 
-TARGET_LITERALS = {0.88, 0.92, 0.72, 88.0, 92.0, 72.0}
+#: Every straightforward encoding of the brief's target win rates. The first
+#: version of this guard checked floats only, so the integer percentage form
+#: (`88`), the `88 / 100` expression and the string `"0.88"` all slipped
+#: through -- three ways to write the same number the test was meant to ban.
+TARGET_LITERALS = {0.88, 0.92, 0.72}
+TARGET_PERCENTAGES = {88, 92, 72}
+TARGET_TOLERANCE = 1e-9
 
 
 def _python_files() -> list[Path]:
@@ -69,23 +75,86 @@ def test_decision_modules_never_reference_research_targets():
     )
 
 
+def _is_target(value: object) -> bool:
+    """True for any numeric encoding of a target win rate."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value in TARGET_PERCENTAGES
+    if isinstance(value, float):
+        if any(abs(value - t) < TARGET_TOLERANCE for t in TARGET_LITERALS):
+            return True
+        return any(abs(value - p) < TARGET_TOLERANCE for p in TARGET_PERCENTAGES)
+    if isinstance(value, str):
+        try:
+            return _is_target(float(value))
+        except ValueError:
+            return False
+    return False
+
+
+def _folded_value(node: ast.AST) -> object:
+    """Constant-fold the `n / 100` shape, so `88 / 100` is caught too."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.Mult)):
+        left, right = _folded_value(node.left), _folded_value(node.right)
+        if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+            if isinstance(node.op, ast.Div):
+                return left / right if right else None
+            return left * right
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        inner = _folded_value(node.operand)
+        return -inner if isinstance(inner, (int, float)) else None
+    return None
+
+
 def test_target_literals_do_not_appear_in_decision_modules():
-    """Guards against the target leaking in as a bare number."""
+    """Guards against the target leaking in as a bare number.
+
+    Covers the fraction (0.88), the percentage (88 and 88.0), the `88 / 100`
+    expression and the string form. Verified against the current tree: no
+    innocent constant in a decision module collides with 72, 88 or 92.
+    """
     offenders: list[str] = []
     for path in _python_files():
         if _top_package(path) not in DECISION_MODULES:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, float):
-                if node.value in TARGET_LITERALS:
-                    offenders.append(
-                        f"{path.relative_to(PACKAGE)}:{node.lineno}: literal {node.value}"
-                    )
+            value = _folded_value(node)
+            if value is not None and _is_target(value):
+                offenders.append(
+                    f"{path.relative_to(PACKAGE)}:{getattr(node, 'lineno', '?')}: "
+                    f"target value {value!r}"
+                )
     assert not offenders, (
         "the brief's target win rates appear as literals in decision code:\n"
         + "\n".join(offenders)
     )
+
+
+@pytest.mark.parametrize(
+    "source,should_trip",
+    [
+        ("x = 0.88", True),
+        ("x = 88", True),
+        ("x = 88.0", True),
+        ("x = 88 / 100", True),
+        ('x = "0.88"', True),
+        ("x = 0.90", False),
+        ("x = 100", False),
+        ("x = 0.72", True),
+    ],
+)
+def test_the_literal_guard_actually_trips(source, should_trip):
+    """A guard that cannot fail is worth nothing, so its detector is tested
+    directly against each encoding."""
+    tripped = any(
+        (lambda v: v is not None and _is_target(v))(_folded_value(node))
+        for node in ast.walk(ast.parse(source))
+    )
+    assert tripped is should_trip
 
 
 def test_research_targets_are_excluded_from_the_config_hash(config):

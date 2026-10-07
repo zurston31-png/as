@@ -167,6 +167,12 @@ class MarketView:
         if feed is Feed.QUOTES:
             return self._quotes is not None and len(self._quotes) > 0
         if feed is Feed.TICK_AGGREGATE:
+            # The PRIMARY interval only, matching `_series_for` and every tick
+            # accessor's default. Scanning all intervals here while
+            # `feed_age_seconds` read only the primary meant a non-primary
+            # tick feed reported present and then could never be graded
+            # STALE: "the feed exists" must mean "exists where the accessors
+            # will look".
             series = self._ticks.get(self.primary_interval)
             return series is not None and len(series) > 0
         if feed is Feed.OPTIONS_SNAPSHOT:

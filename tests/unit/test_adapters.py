@@ -666,9 +666,33 @@ def test_fingerprint_tracks_the_file_bytes(write_csv):
 
 
 def test_csv_adapter_satisfies_the_adapter_contract(csv_adapter):
-    adapter = csv_adapter(iso_rows(1))
+    """Behavioural, not nominal: a subclass relation and a name string cannot
+    fail independently of the rest of the file. Every abstract member is
+    called, and the optional loaders must return the declared Series type or
+    None -- never an empty series, which `DataStore` reads as feed present."""
+    adapter = csv_adapter(iso_rows(3))
     assert isinstance(adapter, DataSourceAdapter)
-    assert adapter.name == "csv"
+
+    feeds = adapter.available_feeds("NQ")
+    assert isinstance(feeds, frozenset) and Feed.BARS in feeds
+
+    bars = adapter.load_bars("NQ", 300, WIDE_START, WIDE_END)
+    assert isinstance(bars, BarSeries) and len(bars) == 3
+    assert bars.interval_seconds == 300
+
+    for loader, kind in (
+        (lambda: adapter.load_quotes("NQ", WIDE_START, WIDE_END), QuoteSeries),
+        (lambda: adapter.load_options("NQ", WIDE_START, WIDE_END), OptionsSeries),
+        (lambda: adapter.load_tick_aggregates("NQ", 300, WIDE_START, WIDE_END), TickSeries),
+    ):
+        result = loader()
+        assert result is None or isinstance(result, kind)
+        assert result is None or len(result) > 0, "an empty series must be None"
+
+    fingerprint = adapter.fingerprint("NQ", 300, WIDE_START, WIDE_END, len(bars))
+    assert fingerprint.rows == 3
+    assert fingerprint.interval_seconds == 300
+    assert len(fingerprint.data_hash) == 16
 
 
 # --- in-memory adapter -----------------------------------------------------
@@ -918,3 +942,93 @@ def test_series_content_hash_is_sensitive_to_timestamps():
 
     assert series_content_hash(one) != series_content_hash(two)
     assert to_ns(one.timestamps()[0]) == int(one.ts_ns[0])
+
+
+# ---------------------------------------------------------------------------
+# Regressions for the Phase 2 adversarial audit
+# ---------------------------------------------------------------------------
+
+
+def test_ambiguous_fall_back_timestamp_is_rejected_by_default(tmp_path):
+    """An hour that occurs twice resolved silently to the EARLIER instant --
+    one hour of lookahead per year, in the data layer, with no warning."""
+    rows = "timestamp,open,high,low,close,volume\n" + "\n".join(
+        f"2024-11-03 01:{m:02d}:00,100,101,99,100.5,10" for m in (25, 30, 35)
+    )
+    (tmp_path / "NQ_300s.csv").write_text(rows)
+    config = CsvAdapterConfig(
+        root_path=str(tmp_path), timestamp_is_bar_open=False,
+        input_timezone="America/New_York",
+    )
+    with pytest.raises(SchemaError, match="is ambiguous"):
+        CsvAdapter(config).load_bars("NQ", 300, date(2024, 11, 1), date(2024, 11, 5))
+
+
+@pytest.mark.parametrize("policy,expected_hour", [("first", 5), ("second", 6)])
+def test_ambiguous_policy_selects_the_declared_instant(tmp_path, policy, expected_hour):
+    """The two readings are exactly one hour apart, which is the size of the
+    error the default refuses to make on the caller's behalf."""
+    rows = "timestamp,open,high,low,close,volume\n2024-11-03 01:30:00,100,101,99,100.5,10"
+    (tmp_path / "NQ_300s.csv").write_text(rows)
+    config = CsvAdapterConfig(
+        root_path=str(tmp_path), timestamp_is_bar_open=False,
+        input_timezone="America/New_York", ambiguous_time_policy=policy,
+    )
+    series = CsvAdapter(config).load_bars("NQ", 300, date(2024, 11, 1), date(2024, 11, 5))
+    assert series.first_ts.hour == expected_hour
+
+
+def test_spring_forward_gap_is_still_rejected(tmp_path):
+    """The gap case was already handled; it must stay handled."""
+    rows = "timestamp,open,high,low,close,volume\n2024-03-10 02:30:00,100,101,99,100.5,10"
+    (tmp_path / "NQ_300s.csv").write_text(rows)
+    config = CsvAdapterConfig(
+        root_path=str(tmp_path), timestamp_is_bar_open=False,
+        input_timezone="America/New_York", ambiguous_time_policy="first",
+    )
+    with pytest.raises(SchemaError, match="does not exist"):
+        CsvAdapter(config).load_bars("NQ", 300, date(2024, 3, 1), date(2024, 3, 15))
+
+
+def test_the_date_range_selects_the_same_sessions_under_both_conventions(tmp_path):
+    """The filter ran after the open->close shift, so `[start, end)` admitted
+    a bar whose session was before `start` and dropped one inside the range."""
+    stamps = [f"2020-01-0{d}T{h:02d}:30:00+00:00" for d in (1, 2, 3) for h in (14, 15)]
+    rows = "timestamp,open,high,low,close,volume\n" + "\n".join(
+        f"{t},100,101,99,100.5,10" for t in stamps
+    )
+    (tmp_path / "NQ_300s.csv").write_text(rows)
+
+    def sessions(flag):
+        config = CsvAdapterConfig(root_path=str(tmp_path), timestamp_is_bar_open=flag)
+        series = CsvAdapter(config).load_bars("NQ", 300, date(2020, 1, 2), date(2020, 1, 3))
+        return len(series)
+
+    assert sessions(False) == sessions(True) == 2
+
+
+def test_every_adapter_declares_the_calendar_it_resolves_dates_in(tmp_path):
+    """Two adapters resolving the same dates in different zones select
+    different bars, and nothing reported the difference."""
+    (tmp_path / "NQ_300s.csv").write_text(f"{HEADER}\n{iso_rows(2)}")
+    eastern = CsvAdapter(CsvAdapterConfig(
+        root_path=str(tmp_path), timestamp_is_bar_open=False,
+        input_timezone="America/New_York"))
+    assert eastern.range_timezone == "America/New_York"
+    assert InMemoryAdapter(bars={}).range_timezone == "UTC"
+    assert DataSourceAdapter.range_timezone == "UTC"
+
+
+def test_optional_loaders_return_none_for_an_out_of_range_window():
+    """An empty series is falsy but is NOT None, and DataStore branches on
+    `is not None`, so one made an empty window read as "feed present"."""
+    ts = to_ns_array(
+        datetime(2020, 1, 2, 14, 30, tzinfo=timezone.utc) + timedelta(seconds=300 * i)
+        for i in range(5)
+    )
+    quotes = QuoteSeries(symbol="NQ", ts_ns=ts, columns={
+        "bid": np.full(5, 100.0), "ask": np.full(5, 100.25),
+        "bid_size": np.full(5, 1.0), "ask_size": np.full(5, 1.0)})
+    adapter = InMemoryAdapter(bars={}, quotes={"NQ": quotes})
+    assert adapter.load_quotes("NQ", date(2020, 1, 2), date(2020, 1, 3)) is not None
+    assert adapter.load_quotes("NQ", date(2021, 1, 2), date(2021, 1, 3)) is None

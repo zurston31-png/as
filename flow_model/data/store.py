@@ -120,6 +120,7 @@ class DataStore:
         self.latency_seconds = float(latency_seconds)
         self.guard = guard
         self._symbols: dict[str, SymbolData] = {}
+        self._range_timezone: str | None = None
 
     # --- population ----------------------------------------------------
 
@@ -162,6 +163,17 @@ class DataStore:
             else:
                 self.guard.check_access(start, end, purpose=f"load {symbol} bars")
 
+        zone = getattr(adapter, "range_timezone", "UTC")
+        if self._range_timezone is None:
+            self._range_timezone = zone
+        elif self._range_timezone != zone:
+            logger.warning(
+                "adapter %r resolves date ranges in %s while an earlier load used "
+                "%s; the same (start, end) selects different bars in the two "
+                "calendars",
+                adapter.name, zone, self._range_timezone,
+            )
+
         feeds = adapter.available_feeds(symbol)
         if Feed.BARS not in feeds:
             raise DataLayerError(
@@ -198,6 +210,22 @@ class DataStore:
                 symbol, int(primary_interval), start, end, len(bars[int(primary_interval)])
             ),
         )
+        # The adapter's fingerprint reports the feeds it COULD serve. Overwrite
+        # with the feeds this slice actually contains, so the provenance
+        # describes the dataset it claims to describe -- a window with no
+        # quotes previously recorded `quotes` in its fingerprint.
+        if data.fingerprint is not None:
+            data = SymbolData(
+                symbol=data.symbol,
+                primary_interval=data.primary_interval,
+                bars=data.bars,
+                ticks=data.ticks,
+                quotes=data.quotes,
+                options=data.options,
+                fingerprint=data.fingerprint.replace(
+                    feeds=tuple(sorted(data.available_feeds(), key=lambda f: f.value))
+                ),
+            )
         self.add(data)
         logger.info(
             "loaded %s: %d bars, feeds=%s",

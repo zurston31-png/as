@@ -43,7 +43,7 @@ from zoneinfo import ZoneInfo
 
 from flow_model.core.enums import Session
 from flow_model.core.instruments import InstrumentSpec
-from flow_model.data.base import SchemaError
+from flow_model.data.base import DataLayerError, SchemaError
 
 MINUTES_PER_DAY = 24 * 60
 
@@ -265,7 +265,11 @@ def _as_date_set(days: Iterable[date], label: str) -> frozenset[date]:
     out: set[date] = set()
     for day in days:
         if isinstance(day, datetime) or not isinstance(day, date):
-            raise TypeError(f"{label} must contain date objects, got {day!r}")
+            raise SchemaError(
+                f"{label} must contain date objects, got {day!r}. A datetime "
+                "subclasses date, so it would type-check and then match nothing, "
+                "making the injected holiday silently cease to exist."
+            )
         out.add(day)
     return frozenset(out)
 
@@ -290,7 +294,9 @@ class TradingCalendar:
         last_year: int = 2035,
     ) -> None:
         if first_year > last_year:
-            raise ValueError(f"first_year {first_year} exceeds last_year {last_year}")
+            raise DataLayerError(
+                f"first_year {first_year} exceeds last_year {last_year}"
+            )
         self.first_year = first_year
         self.last_year = last_year
         self._extra_holidays = _as_date_set(extra_holidays, "extra_holidays")

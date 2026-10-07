@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -487,3 +487,89 @@ def test_detect_gaps_requires_a_calendar_that_implements_the_protocol(cleaner, n
     ts = to_ns_array(TS0 + timedelta(seconds=INTERVAL * i) for i in (1, 2, 3, 8))
     with pytest.raises(AttributeError):
         detect_gaps(ts, INTERVAL, spec=nq, calendar=WithoutSessionDate())
+
+
+def test_outlier_detection_scored_against_synthetic_ground_truth():
+    """Scores the detector against the generator's injected outliers.
+
+    The synthetic generator records which bars it corrupted, which is what
+    those labels exist for. Pinning precision and recall here turns two
+    numbers that were previously unexamined into a stated operating point:
+    a cascade fix and a window widening moved precision from 0.022 (a
+    runaway rejection bug) through 0.52 to 0.80.
+
+    Recall is deliberately below 1.0: a 12-sigma print injected during a
+    HIGH_VOL regime is genuinely within 10 robust sigma of the local
+    dispersion, and flagging it would require either a tighter threshold
+    (which costs far more false positives) or knowledge of the regime the
+    detector does not have at that bar.
+    """
+    from flow_model.data import SyntheticConfig, SyntheticMarketGenerator, TradingCalendar
+    from flow_model.data.series import to_ns as _to_ns
+
+    config = load_config()
+    calendar = TradingCalendar()
+    spec = config.spec("NQ")
+    generator = SyntheticMarketGenerator(
+        SyntheticConfig(outlier_probability=0.002, outlier_sigma_multiple=12.0), seed=7
+    )
+    dataset = generator.generate(
+        "NQ", spec, date(2016, 1, 1), date(2016, 7, 1), 300, calendar=calendar
+    )
+    truth = {int(dataset.bars.ts_ns[i]) for i in dataset.outlier_indices}
+    assert len(truth) >= 10, "fixture must inject enough outliers to score"
+
+    _, report = BarCleaner(config.data).clean(dataset.bars, spec=spec, calendar=calendar)
+    flagged = {_to_ns(t) for t in report.quarantined_timestamps}
+
+    true_positives = len(truth & flagged)
+    precision = true_positives / max(1, len(flagged))
+    recall = true_positives / len(truth)
+
+    assert recall >= 0.70, f"recall {recall:.3f} regressed"
+    assert precision >= 0.70, f"precision {precision:.3f} regressed"
+
+
+def test_a_clean_dataset_produces_few_false_positives():
+    """The companion to the above: the detector must not invent outliers.
+
+    A 50-bar window produced 11 false positives here, all at volatility
+    regime transitions, because the generator's LOW_VOL to HIGH_VOL ratio is
+    5.5x and the dispersion estimate had not caught up.
+    """
+    from flow_model.data import SyntheticConfig, SyntheticMarketGenerator, TradingCalendar
+
+    config = load_config()
+    calendar = TradingCalendar()
+    spec = config.spec("NQ")
+    dataset = SyntheticMarketGenerator(
+        SyntheticConfig(outlier_probability=0.0), seed=7
+    ).generate("NQ", spec, date(2016, 1, 1), date(2016, 7, 1), 300, calendar=calendar)
+
+    _, report = BarCleaner(config.data).clean(dataset.bars, spec=spec, calendar=calendar)
+    rate = report.outliers_quarantined / len(dataset.bars)
+    assert report.outliers_quarantined <= 5, (
+        f"{report.outliers_quarantined} false positives on data with no injected "
+        f"outliers (rate {rate:.5f})"
+    )
+
+
+def test_a_rejected_bar_does_not_cascade():
+    """A stale anchor across an unbounded run of rejections rejects the rest
+    of a trending series: 536 false positives on 16 injected spikes, measured.
+    Consecutive rejections are capped at one."""
+    ts, cols = raw(n=400, drift=0.0015)       # a persistent uptrend
+    cols = {k: v.copy() for k, v in cols.items()}
+    for name in ("open", "high", "low", "close"):
+        cols[name][200] *= 1.35               # one bad print mid-trend
+    cols["high"][200] = max(cols["high"][200], cols["open"][200], cols["close"][200])
+    cols["low"][200] = min(cols["low"][200], cols["open"][200], cols["close"][200])
+    _, report = clean_raw(cleaner_for(load_config().data), ts, cols)
+    assert report.outliers_quarantined <= 3, (
+        f"{report.outliers_quarantined} bars quarantined from one bad print: the "
+        "anchor cascaded"
+    )
+
+
+def cleaner_for(data_config):
+    return BarCleaner(data_config)

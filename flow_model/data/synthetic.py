@@ -61,6 +61,7 @@ from flow_model.data.base import (
     SessionCalendarProtocol,
 )
 from flow_model.data.series import (
+    from_ns,
     NS_PER_SECOND,
     BarSeries,
     OptionsSeries,
@@ -89,8 +90,9 @@ STREAMS: tuple[str, ...] = (
 SOURCE_NAME = "synthetic"
 
 # Session geometry used only when an InstrumentSpec declares no RTH window.
-DEFAULT_SESSION_START_MINUTES = 9 * 60 + 30
-HALF_DAY_CLOSE_MINUTES = 13 * 60
+# Imported, not redefined: calendar.py is the authority on session
+# geometry, and two copies of a half-day close can drift apart.
+from flow_model.data.calendar import HALF_DAY_CLOSE_MINUTES  # noqa: E402
 
 # Intraday volume curve: volume = base * u(x), x = position in session in
 # [0, 1]. Two decaying exponentials rather than a parabola because the real
@@ -611,9 +613,25 @@ class SyntheticMarketGenerator:
         return int(span_minutes * 60 // interval_seconds)
 
     def _session_start_minutes(self, spec: InstrumentSpec) -> int:
-        return (
-            spec.rth.start_minutes if spec.rth is not None else DEFAULT_SESSION_START_MINUTES
-        )
+        """Session open, from the instrument's own RTH window.
+
+        Refuses to invent one. With no declared RTH the generator used to
+        assume 09:30, while `calendar.session_of` returns Session.CLOSED for
+        every timestamp of such an instrument -- so every generated SPX bar
+        was simultaneously a valid bar and outside any session, and two
+        modules disagreed about the same data. Making it an error means the
+        disagreement cannot exist.
+        """
+        if spec.rth is None:
+            raise DataLayerError(
+                f"{spec.symbol}: no RTH window declared, so there is no session to "
+                f"generate into. The calendar reports Session.CLOSED for every "
+                f"timestamp of such an instrument, and inventing a 09:30 open here "
+                f"would put the generator and the calendar in disagreement about "
+                f"the same bars. Declare `rth` for {spec.symbol} in defaults.yaml, "
+                f"or generate for a tradable instrument."
+            )
+        return spec.rth.start_minutes
 
     def _grid(
         self,
@@ -660,7 +678,14 @@ class SyntheticMarketGenerator:
             if self._is_trading_day(day, spec, calendar):
                 count = full_count
                 if self._is_half_day(day, spec, calendar):
-                    count = int((HALF_DAY_CLOSE_MINUTES - start_minutes) * 60 // interval_seconds)
+                    # A CAP, matching calendar.rth_bounds: min(end, HALF_DAY).
+                    # Applied as an absolute close, an instrument whose RTH
+                    # ends before 13:00 (GC closes 13:30, but a 12:00 session
+                    # would) got MORE bars on a half day than on a full one.
+                    close_minutes = min(spec.rth.end_minutes, HALF_DAY_CLOSE_MINUTES)
+                    count = max(
+                        0, int((close_minutes - start_minutes) * 60 // interval_seconds)
+                    )
                 if count > 0:
                     local_open = datetime(
                         day.year,
@@ -752,15 +777,7 @@ class SyntheticMarketGenerator:
         )
 
         keep = self._keep_mask(symbol, n)
-        dropped_ts = tuple(
-            datetime.fromtimestamp(int(value) / NS_PER_SECOND, tz=timezone.utc)
-            for value in ts_ns[~keep]
-        )
-        if int(keep.sum()) == 0:
-            raise DataLayerError(
-                f"{symbol}: gap injection removed every bar; lower gap_probability"
-            )
-
+        dropped_ts = tuple(from_ns(int(value)) for value in ts_ns[~keep])
         outlier_indices = tuple(np.flatnonzero(outlier_mask[keep]).tolist())
         ts_ns, pos, session_size, session_id = (
             ts_ns[keep],

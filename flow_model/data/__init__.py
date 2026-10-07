@@ -19,6 +19,8 @@ Typical wiring:
             continue        # -> WAIT("data_quality")
 """
 
+from __future__ import annotations
+
 from flow_model.core.enums import Feed
 from flow_model.data.adapters import (
     ColumnMap,
@@ -26,6 +28,7 @@ from flow_model.data.adapters import (
     CsvAdapterConfig,
     InMemoryAdapter,
     ParquetAdapter,
+    ParquetAdapterConfig,
 )
 from flow_model.data.base import (
     CleanReport,
@@ -94,6 +97,7 @@ __all__ = [
     "MonotonicityError",
     "OptionsSeries",
     "ParquetAdapter",
+    "ParquetAdapterConfig",
     "QualityGrader",
     "QualityReport",
     "QualityThresholds",

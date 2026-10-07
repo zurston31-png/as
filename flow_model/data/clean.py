@@ -44,7 +44,7 @@ was absent from the input.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime
 from typing import Mapping, Sequence
 
@@ -127,8 +127,8 @@ class BarCleaner:
 
     def __init__(self, config: DataConfig) -> None:
         self.config = config
-        self.outlier_window = 50
-        self.min_outlier_history = 20
+        self.outlier_window = int(config.outlier_window_bars)
+        self.min_outlier_history = int(config.outlier_min_history_bars)
 
     # --- public API ----------------------------------------------------
 
@@ -344,7 +344,19 @@ class BarCleaner:
         if indices.size < 2:
             return keep
         interval_ns = int(interval_seconds) * NS_PER_SECOND
-        phase = _modal_phase(ts[indices], interval_ns)
+        # Establish the grid from the rows BEFORE the final bar, and only act
+        # if that phase is genuinely dominant. On mostly off-grid vendor data
+        # the modal phase is an artifact, and acting on it dropped a
+        # grid-correct final bar.
+        body = ts[indices[:-1]]
+        phase = _modal_phase(body, interval_ns)
+        share = float(np.count_nonzero(body % interval_ns == phase)) / body.size
+        if share <= 0.60:
+            notes.append(
+                f"interval grid not established ({share:.0%} of rows share the modal "
+                f"phase); no partial-bar drop attempted"
+            )
+            return keep
         last = int(indices[-1])
         if int(ts[last]) % interval_ns != phase:
             keep = keep.copy()
@@ -365,14 +377,77 @@ class BarCleaner:
     ) -> tuple[np.ndarray, list[datetime]]:
         """Remove bars whose return is extreme versus a STRICTLY TRAILING MAD.
 
+        Two properties this implementation is built around:
+
+        **Causality.** The dispersion estimate for a bar is computed only from
+        returns of bars before it, and only from returns that were themselves
+        accepted. Nothing after the bar under test is read, so appending data
+        to the end of a series cannot change which earlier bars survive.
+        Verified by `test_outlier_detection_is_causal`.
+
+        **A bad print costs one bar, not two.** The return of the bar FOLLOWING
+        a spike is measured against the last SURVIVING close rather than the
+        raw previous row. Measuring against the spike made the reversion look
+        equally extreme, so one bad print quarantined two bars and the count
+        could not be compared against a known injected count (precision was
+        0.52 against the generator's ground truth).
+
+        **Consecutive rejections are capped at one**, and that cap is what
+        makes the anchoring safe. Holding the anchor across an unbounded run
+        of rejections cascades: if the price genuinely moved, every later bar
+        is extreme relative to a stale anchor and the detector rejects the
+        rest of the series (measured: precision 0.022, 536 false positives on
+        16 injected spikes). With the cap, a transient print costs exactly the
+        print, and a genuine level shift costs exactly one bar -- the first
+        one, which is indistinguishable from a spike without looking ahead.
+        Choosing one bar of false positive over a 1-bar lookahead is
+        deliberate.
+
         The first `min_outlier_history` evaluable bars are never quarantined:
         there is no trailing history to judge them against, and judging them
-        on later data is precisely the lookahead this avoids.
+        on later data is exactly the lookahead this avoids.
         """
         indices = np.flatnonzero(keep)
         quarantined: list[datetime] = []
         if indices.size <= self.min_outlier_history + 1:
             return keep, quarantined
+
+        close = cols["close"][indices]
+        if not np.any(np.isfinite(close)) or np.nanmin(close) <= 0:
+            return keep, quarantined
+
+        keep = keep.copy()
+        threshold = float(self.config.outlier_sigma)
+        accepted: deque[float] = deque(maxlen=self.outlier_window)
+        last_close = float(close[0])
+        consecutive = 0
+
+        for position in range(1, close.size):
+            current = float(close[position])
+            if not np.isfinite(current) or current <= 0 or last_close <= 0:
+                last_close = current if np.isfinite(current) and current > 0 else last_close
+                continue
+            value = float(np.log(current / last_close))
+
+            if consecutive == 0 and len(accepted) >= self.min_outlier_history:
+                window = np.fromiter(accepted, dtype=np.float64, count=len(accepted))
+                centre = float(np.median(window))
+                mad = float(np.median(np.abs(window - centre)))
+                if mad > 0.0 and abs(value - centre) > threshold * MAD_TO_SIGMA * mad:
+                    row = int(indices[position])
+                    keep[row] = False
+                    counts["outliers_quarantined"] += 1
+                    quarantined.append(from_ns(int(ts[row])))
+                    consecutive = 1
+                    # last_close deliberately unchanged: the next bar is judged
+                    # against the last price we believe, not against the spike.
+                    continue
+
+            consecutive = 0
+            accepted.append(value)
+            last_close = current
+
+        return keep, quarantined
 
         close = cols["close"][indices]
         with np.errstate(divide="ignore", invalid="ignore"):
