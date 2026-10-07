@@ -234,11 +234,51 @@ class RegimeConfig(FrozenModel):
     shift_decay_bars: int = Field(
         ge=1, default=10, description="How long DIRECTIONAL_SHIFT persists after triggering."
     )
+    cusum_window_bars: int = Field(
+        gt=2,
+        default=60,
+        description=(
+            "Returns in the CUSUM window. The statistic standardizes the "
+            "returns inside this window with the window's own mean and "
+            "stdev and accumulates from zero at its start, so the window "
+            "sets both the estimation sample and the accumulation span. "
+            "The default 60 is a little under one 78-bar RTH session at a "
+            "5-minute interval: long enough that the stdev is estimated "
+            "from 60 observations (relative standard error ~1/sqrt(2n) = "
+            "9%) and short enough that a detected break is local rather "
+            "than something that happened a session ago. Added in Phase 3 "
+            "because section 6 names a CUSUM statistic without naming its "
+            "window; see regime/detector.py for what the length implies "
+            "about the smallest detectable shift."
+        ),
+    )
+    hysteresis_search_bars: int = Field(
+        ge=1,
+        default=24,
+        description=(
+            "How far back the hysteresis rule looks for the most recent "
+            "confirmed run of `min_regime_bars` identical raw labels. This "
+            "is the horizon that replaces mutable detector state: the "
+            "confirmed label is a pure function of the raw labels in this "
+            "trailing window, so it cannot depend on call order. A bar "
+            "with no completed run anywhere in the window is reported as "
+            "UNKNOWN rather than carrying a label forward indefinitely. "
+            "The default is 8x the default `min_regime_bars`. Added in "
+            "Phase 3; see regime/detector.py."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "RegimeConfig":
         if self.low_vol_percentile >= self.high_vol_percentile:
             raise ValueError("low_vol_percentile must be below high_vol_percentile")
+        if self.hysteresis_search_bars < self.min_regime_bars:
+            raise ValueError(
+                f"hysteresis_search_bars={self.hysteresis_search_bars} is shorter "
+                f"than min_regime_bars={self.min_regime_bars}; no run of "
+                "min_regime_bars identical labels could ever fit in the search "
+                "window, so every bar would be reported UNKNOWN"
+            )
         return self
 
 
@@ -572,6 +612,19 @@ class StructureLevelConfig(FrozenModel):
             "what makes setup selection a measurement rather than a parameter: "
             "achievable R:R is read off the structure, and a trade whose next "
             "level is too close is declined rather than retargeted."
+        ),
+    )
+    min_reward_risk: float = Field(
+        gt=0.0,
+        default=1.0,
+        description=(
+            "Achievable R:R below this declines the trade (14.6, "
+            "WAIT('rr_too_low')). The default is 1.0 rather than SetupConfig's "
+            "0.9 because 14.6's setup bands start at 1.0: a value in [0.9, 1.0) "
+            "would pass this gate and then match no setup class, which is a "
+            "trade declined with a misleading reason. Per-setup "
+            "`SetupConfig.min_reward_risk` still applies afterwards and may be "
+            "stricter; this is the structure layer's own floor."
         ),
     )
     fallback_target_atr: float | None = Field(

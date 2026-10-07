@@ -119,9 +119,30 @@ def test_registry_rejects_duplicate_names():
         ))
 
 
+def test_a_test_window_may_not_overlap_the_sealed_window():
+    """Accepted until this check existed. It is incoherent rather than
+    immediately leaky -- the guard still blocks the read, because it works on
+    dates and not on phase labels -- but a researcher who believes they hold
+    two years of TEST actually holds one, and finds out only as a
+    SealedDataAccessError part-way through a run."""
+    with pytest.raises(ValueError, match="overlaps SEALED_OOS"):
+        SplitRegistry(splits=(
+            Split(name="sealed_oos", phase=SplitPhase.SEALED_OOS,
+                  range=DateRange(start=date(2023, 1, 1), end=date(2025, 1, 1))),
+            Split(name="test2", phase=SplitPhase.TEST,
+                  range=DateRange(start=date(2022, 1, 1), end=date(2024, 1, 1))),
+        ))
+
+
 def test_sealed_phase_wins_lookup_ties():
-    """If definitions ever overlap, a sealed date must never read as TRAIN."""
-    reg = SplitRegistry(splits=(
+    """`phase_of` resolves phase ties in favour of SEALED, so a sealed date can
+    never read as TRAIN. Validation now rejects every overlap that could
+    produce such a tie, so the registry here is built with `model_construct`
+    to bypass it deliberately: the precedence rule is defence in depth for a
+    registry that got past validation some other way (a future phase added
+    without a matching overlap rule, say), and a rule that cannot be
+    exercised is a rule nobody can rely on."""
+    reg = SplitRegistry.model_construct(splits=(
         Split(name="sealed_oos", phase=SplitPhase.SEALED_OOS,
               range=DateRange(start=date(2023, 1, 1), end=date(2025, 1, 1))),
         Split(name="test2", phase=SplitPhase.TEST,
@@ -294,3 +315,156 @@ def test_default_config_seal_covers_the_last_two_years(config):
     assert config.seal.enabled
     assert (config.seal.sealed_end - config.seal.sealed_start).days >= 365
     assert config.seal.sealed_end == config.backtest.end
+
+
+# ---------------------------------------------------------------------------
+# audit findings
+#
+# splits.py was flagged by the Phase 2 auditors as never reviewed, while
+# Phase 8's walk-forward and the sealed holdout both rest on it entirely. The
+# tests below pin the four defects that review found. Each one was accepted
+# silently by the version of this module that shipped.
+# ---------------------------------------------------------------------------
+
+
+def test_a_time_reversed_split_is_rejected():
+    """The defect that mattered most. TRAIN [2020, 2021) with TEST [2010,
+    2011) does not overlap, so every overlap check passed it -- and it is a
+    model fitted on the future and evaluated on the past. Phase 8 builds
+    these registries by arithmetic, so a sign error in fold stepping produces
+    exactly this shape and nothing else would have caught it."""
+    with pytest.raises(ValueError, match="non-chronological"):
+        build_registry(
+            train=(date(2020, 1, 1), date(2021, 1, 1)),
+            test=(date(2010, 1, 1), date(2011, 1, 1)),
+        )
+
+
+def test_the_holdout_must_come_last():
+    with pytest.raises(ValueError, match="non-chronological"):
+        build_registry(
+            train=(date(2015, 1, 1), date(2020, 1, 1)),
+            sealed=(date(2010, 1, 1), date(2011, 1, 1)),
+        )
+
+
+def test_validation_may_not_precede_train():
+    with pytest.raises(ValueError, match="non-chronological"):
+        build_registry(
+            train=(date(2019, 1, 1), date(2020, 1, 1)),
+            validation=(date(2015, 1, 1), date(2016, 1, 1)),
+        )
+
+
+def test_the_ordinary_chronological_split_still_builds():
+    """So the chronology rule is not merely rejecting everything."""
+    reg = build_registry(
+        train=(date(2015, 1, 1), date(2019, 1, 1)),
+        validation=(date(2019, 1, 1), date(2020, 1, 1)),
+        test=(date(2020, 1, 1), date(2023, 1, 1)),
+        sealed=(date(2023, 1, 1), date(2025, 1, 1)),
+    )
+    assert len(reg.splits) == 4
+
+
+def test_two_splits_in_the_same_phase_are_unordered():
+    """Two TRAIN folds carry no required order relative to each other, so the
+    chronology rule must not invent one."""
+    r = SplitRegistry(splits=(
+        Split(name="train_b", phase=SplitPhase.TRAIN,
+              range=DateRange(start=date(2018, 1, 1), end=date(2019, 1, 1))),
+        Split(name="train_a", phase=SplitPhase.TRAIN,
+              range=DateRange(start=date(2015, 1, 1), end=date(2016, 1, 1))),
+    ))
+    assert len(r.splits) == 2
+
+
+def test_embargo_rejects_touching_windows_and_accepts_a_gap():
+    """Adjacent-but-touching ranges leak at the seam: a position opened two
+    days before the boundary and closed after it is scored in one window
+    using the next window's prices. `walk_forward.embargo_days` defaults to
+    5, and nothing enforced it before."""
+    touching = build_registry(
+        train=(date(2015, 1, 1), date(2020, 1, 1)),
+        validation=(date(2020, 1, 1), date(2021, 1, 1)),
+    )
+    touching.assert_embargo(0)  # opting out is allowed
+    with pytest.raises(ValueError, match="embargo violated"):
+        touching.assert_embargo(5)
+
+    spaced = build_registry(
+        train=(date(2015, 1, 1), date(2020, 1, 1)),
+        validation=(date(2020, 1, 10), date(2021, 1, 1)),
+    )
+    spaced.assert_embargo(5)
+
+
+def test_a_seal_boundary_does_not_move_with_the_callers_timezone(guard):
+    """One instant, two spellings. `datetime.date()` on an aware datetime is
+    its date in its OWN zone, so 2023-01-01T02:30Z and the identical moment
+    written in New York time used to land on opposite sides of the seal --
+    the earlier spelling reading as allowed. A boundary that depends on the
+    caller's tzinfo is not a boundary."""
+    from datetime import timezone as _tz
+    from zoneinfo import ZoneInfo
+
+    instant_utc = datetime(2023, 1, 1, 2, 30, tzinfo=_tz.utc)
+    instant_ny = instant_utc.astimezone(ZoneInfo("America/New_York"))
+    assert instant_utc == instant_ny  # the same moment, by construction
+    assert instant_ny.date() != instant_utc.date()  # and the trap it used to set
+
+    assert guard.touches_seal(instant_utc, datetime(2023, 1, 2, tzinfo=_tz.utc))
+    assert guard.touches_seal(instant_ny, datetime(2023, 1, 2, tzinfo=_tz.utc))
+    with pytest.raises(SealedDataAccessError):
+        guard.check_access(instant_ny, datetime(2023, 1, 2, tzinfo=_tz.utc))
+
+
+def test_a_naive_datetime_is_read_as_utc_not_guessed_at():
+    from flow_model.validation.splits import _as_date
+
+    assert _as_date(datetime(2023, 1, 1, 2, 30)) == date(2023, 1, 1)
+
+
+def test_a_request_straddling_the_seal_does_not_silently_lose_data(guard):
+    """The quietest of the four. A sweep asking for everything over [2015,
+    2026) with the seal at [2023, 2025) was handed [2015, 2023) and lost all
+    of 2025 without a word -- a single DateRange cannot express the gap, and
+    the earlier side was returned by accident of branch order."""
+    parts = guard.allowed_ranges(date(2015, 1, 1), date(2026, 1, 1))
+    assert parts == (
+        DateRange(start=date(2015, 1, 1), end=date(2023, 1, 1)),
+        DateRange(start=date(2025, 1, 1), end=date(2026, 1, 1)),
+    )
+    # and the single-range accessor refuses rather than picking a side
+    with pytest.raises(SealedDataAccessError, match="straddles"):
+        guard.clip_to_allowed(date(2015, 1, 1), date(2026, 1, 1))
+
+
+def test_allowed_ranges_agrees_with_clip_where_clip_is_well_defined(guard):
+    """Single-sided requests must behave identically through both accessors,
+    so the new method is not a second, divergent implementation."""
+    cases = [
+        (date(2015, 1, 1), date(2025, 1, 1)),   # trims at the start boundary
+        (date(2016, 1, 1), date(2017, 1, 1)),   # entirely clear of the seal
+        (date(2025, 1, 1), date(2026, 1, 1)),   # entirely after the seal
+        (date(2023, 6, 1), date(2024, 1, 1)),   # entirely inside the seal
+    ]
+    for start, end in cases:
+        parts = guard.allowed_ranges(start, end)
+        clipped = guard.clip_to_allowed(start, end)
+        assert parts == (() if clipped is None else (clipped,))
+
+
+def test_allowed_ranges_returns_empty_when_fully_sealed(guard):
+    assert guard.allowed_ranges(date(2023, 6, 1), date(2024, 1, 1)) == ()
+
+
+def test_a_disabled_seal_passes_every_request_through_whole(tmp_path):
+    unsealed = DataAccessGuard(
+        sealed=DateRange(start=date(2023, 1, 1), end=date(2025, 1, 1)),
+        audit=SealAudit(tmp_path / "a.jsonl"),
+        enabled=False,
+    )
+    whole = DateRange(start=date(2015, 1, 1), end=date(2026, 1, 1))
+    assert unsealed.allowed_ranges(whole.start, whole.end) == (whole,)
+    assert unsealed.clip_to_allowed(whole.start, whole.end) == whole

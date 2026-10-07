@@ -17,8 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov>=4.1"]
+# pyarrow stays optional: ParquetAdapter guards its import and the CSV path
+# is the default, so a core install does not need it. It IS in `dev`, because
+# without it the three ParquetAdapter tests skip and the adapter ships
+# unexecuted -- which is how it sat until it was first actually run.
+dev = ["pytest>=8.0", "pytest-cov>=4.1", "pyarrow>=14.0"]
 api = ["fastapi>=0.110", "uvicorn>=0.27"]
+parquet = ["pyarrow>=14.0"]
 
 [project.scripts]
 flow-model = "flow_model.cli:main"

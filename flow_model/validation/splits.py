@@ -42,7 +42,22 @@ class SealBudgetExhaustedError(RuntimeError):
 
 
 def _as_date(value: date | datetime | str) -> date:
+    """The calendar date a timestamp belongs to, in UTC.
+
+    The UTC normalization is load-bearing. An aware datetime's `.date()` is
+    its date *in its own zone*, so the single instant 2016-01-01T02:30Z and
+    2015-12-31T21:30-05:00 -- the same moment -- used to return different
+    dates, and therefore landed on opposite sides of a seal boundary
+    depending only on which zone the caller happened to construct it in. A
+    seal boundary that moves with the caller's tzinfo is not a boundary.
+    Everything in this project stores int64 UTC nanoseconds, so UTC is the
+    convention the rest of the system already uses.
+
+    A naive datetime is taken as already-UTC rather than guessed at.
+    """
     if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
         return value.date()
     if isinstance(value, date):
         return value
@@ -204,7 +219,99 @@ class SplitRegistry(FrozenModel):
                     raise ValueError(
                         f"leakage: TRAIN {t.name} {t.range} overlaps VALIDATION {v.name} {v.range}"
                     )
+
+        # TEST overlapping SEALED_OOS was accepted until this check existed.
+        # It is incoherent rather than immediately leaky -- `DataAccessGuard`
+        # still blocks the read, because it works on dates and not on phase
+        # labels -- but it means a researcher who believes they hold two
+        # years of TEST actually holds one, and discovers the rest only as a
+        # SealedDataAccessError mid-run. `phase_of` reporting SEALED for the
+        # contested dates papered over the contradiction instead of naming it.
+        for ev in self.by_phase(SplitPhase.TEST):
+            for sealed in self.by_phase(SplitPhase.SEALED_OOS):
+                if ev.range.overlaps(sealed.range):
+                    raise ValueError(
+                        f"leakage: TEST {ev.name} {ev.range} overlaps SEALED_OOS "
+                        f"{sealed.name} {sealed.range}. The holdout must be "
+                        f"disjoint from every window that is evaluated more "
+                        f"than once, or it is not untouched."
+                    )
+
+        self._assert_chronological()
         return self
+
+    def _assert_chronological(self) -> None:
+        """Later phases must come after earlier ones in wall-clock time.
+
+        Non-overlap alone does not make a split honest: TRAIN [2020, 2021)
+        with TEST [2010, 2011) does not overlap and is still a model fitted
+        on the future and evaluated on the past. The brief is explicit --
+        "chronological only" and "Never randomly mix future data into
+        training" -- and this is the structural form of that rule, because
+        Phase 8 builds these registries by arithmetic and a sign error in
+        fold stepping produces exactly this shape with no other symptom.
+
+        One registry describes one fold plus the global seal, which is why a
+        global ordering is the right rule here. Across folds, a rolling
+        walk-forward legitimately reuses an earlier fold's TEST window as a
+        later fold's TRAIN data; that is a relationship between registries,
+        not within one, and `_no_leaky_overlap` would reject it inside a
+        single registry anyway.
+        """
+        rank = {
+            SplitPhase.TRAIN: 0,
+            SplitPhase.VALIDATION: 1,
+            SplitPhase.TEST: 2,
+            SplitPhase.SEALED_OOS: 3,
+        }
+        for earlier in self.splits:
+            for later in self.splits:
+                if rank[earlier.phase] >= rank[later.phase]:
+                    continue
+                if earlier.range.end > later.range.start:
+                    raise ValueError(
+                        f"non-chronological split: {earlier.name} "
+                        f"({earlier.phase.value}) {earlier.range} must end at "
+                        f"or before {later.name} ({later.phase.value}) "
+                        f"{later.range} begins. Fitting on data that postdates "
+                        f"the evaluation window inflates every result and the "
+                        f"brief forbids it."
+                    )
+
+    def assert_embargo(self, min_gap_days: int) -> None:
+        """Require a gap between each phase and the next.
+
+        Separate from the always-on chronology check because the embargo
+        length is a configured research choice (`walk_forward.embargo_days`,
+        default 5) rather than a structural truth, and because this class
+        does not read config. Phase 8 calls it when it builds folds.
+
+        The reason an embargo is needed at all: a trade opened two days
+        before a boundary and closed after it is scored in one window using
+        price action from the next, so adjacent-but-touching ranges leak at
+        the seam even though they do not overlap.
+        """
+        if min_gap_days <= 0:
+            return
+        rank = {
+            SplitPhase.TRAIN: 0,
+            SplitPhase.VALIDATION: 1,
+            SplitPhase.TEST: 2,
+            SplitPhase.SEALED_OOS: 3,
+        }
+        for earlier in self.splits:
+            for later in self.splits:
+                if rank[earlier.phase] + 1 != rank[later.phase]:
+                    continue
+                gap = (later.range.start - earlier.range.end).days
+                if gap < min_gap_days:
+                    raise ValueError(
+                        f"embargo violated: {earlier.name} ends {earlier.range.end} "
+                        f"and {later.name} starts {later.range.start}, a gap of "
+                        f"{gap} day(s), below the required {min_gap_days}. A "
+                        f"position held across the boundary would be scored in "
+                        f"one window using the next window's prices."
+                    )
 
 
 class DataAccessGuard:
@@ -277,6 +384,28 @@ class DataAccessGuard:
             f"Opens remaining: {self.opens_remaining()}/{self.max_opens}."
         )
 
+    def allowed_ranges(
+        self, start: date | datetime | str, end: date | datetime | str
+    ) -> tuple[DateRange, ...]:
+        """Every part of the request that is not sealed, in order.
+
+        Returns up to two ranges, because a request can straddle the seal and
+        have allowed data on both sides. `clip_to_allowed` cannot express
+        that -- it returns a single range -- and used to resolve the straddle
+        by returning the earlier side and silently dropping the later one. A
+        sweep asking for "everything available" over [2010, 2026) with a seal
+        at [2023, 2025) received [2010, 2023) and lost 2025 without a word.
+        """
+        requested = DateRange(start=_as_date(start), end=_as_date(end))
+        if not self.enabled or self.sealed is None or not requested.overlaps(self.sealed):
+            return (requested,)
+        out: list[DateRange] = []
+        if requested.start < self.sealed.start:
+            out.append(DateRange(start=requested.start, end=self.sealed.start))
+        if requested.end > self.sealed.end:
+            out.append(DateRange(start=self.sealed.end, end=requested.end))
+        return tuple(out)
+
     def clip_to_allowed(
         self, start: date | datetime | str, end: date | datetime | str
     ) -> DateRange | None:
@@ -285,15 +414,25 @@ class DataAccessGuard:
         For sweeps that legitimately want "everything available": they get
         everything up to the seal, rather than an exception or the holdout.
         Returns None if nothing outside the seal remains.
+
+        Raises when the request straddles the seal with allowed data on BOTH
+        sides, because a single `DateRange` cannot represent the gap and
+        every way of resolving it silently is wrong: returning one side
+        discards real data, and returning the span re-admits the holdout.
+        `allowed_ranges` handles that case explicitly.
         """
-        requested = DateRange(start=_as_date(start), end=_as_date(end))
-        if not self.enabled or self.sealed is None or not requested.overlaps(self.sealed):
-            return requested
-        if requested.start < self.sealed.start:
-            return DateRange(start=requested.start, end=min(requested.end, self.sealed.start))
-        if requested.end > self.sealed.end:
-            return DateRange(start=max(requested.start, self.sealed.end), end=requested.end)
-        return None
+        parts = self.allowed_ranges(start, end)
+        if not parts:
+            return None
+        if len(parts) > 1:
+            raise SealedDataAccessError(
+                f"request {_as_date(start)} -> {_as_date(end)} straddles the "
+                f"sealed window {self.sealed}, leaving allowed data on both "
+                f"sides ({', '.join(str(p) for p in parts)}). A single range "
+                f"cannot express that gap. Call allowed_ranges() and load each "
+                f"part, or request one side at a time."
+            )
+        return parts[0]
 
     @contextmanager
     def unseal(
