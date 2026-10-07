@@ -74,6 +74,45 @@ FORBIDDEN_IN_DECISION_CODE = (
 )
 
 
+def _forbidden_references(source: str) -> list[tuple[int, str]]:
+    """Banned identifiers actually *referenced* by this source, via AST.
+
+    Matched on the parse tree rather than the text. The first version of this
+    guard scanned raw lines with the `#` comment stripped, which was fine
+    while every banned token was an identifier nobody writes in English --
+    but `hypotheses` is an ordinary word, and the check duly flagged a
+    docstring in `features/levels.py` that reads "makes the constants
+    hypotheses to be swept". That is correct prose describing the right
+    policy, and a guard that punishes accurate documentation trains people
+    to delete the documentation.
+
+    Looking at Name, Attribute, Import and ImportFrom nodes catches every way
+    the value can actually be read, and cannot see string literals at all.
+    """
+    hits: list[tuple[int, str]] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if any(part in FORBIDDEN_IN_DECISION_CODE for part in alias.name.split(".")):
+                    hits.append((node.lineno, f"import {alias.name}"))
+        elif isinstance(node, ast.ImportFrom):
+            module_parts = (node.module or "").split(".")
+            for alias in node.names:
+                if (
+                    any(part in FORBIDDEN_IN_DECISION_CODE for part in module_parts)
+                    or alias.name in FORBIDDEN_IN_DECISION_CODE
+                ):
+                    hits.append((node.lineno, f"from {node.module} import {alias.name}"))
+        elif isinstance(node, ast.Attribute):
+            if node.attr in FORBIDDEN_IN_DECISION_CODE:
+                hits.append((node.lineno, f".{node.attr}"))
+        elif isinstance(node, ast.Name):
+            if node.id in FORBIDDEN_IN_DECISION_CODE:
+                hits.append((node.lineno, node.id))
+    return hits
+
+
 def test_decision_modules_never_reference_research_targets():
     """A module that decides what to trade must not know the desired win rate,
     nor the criteria it will be scored against."""
@@ -81,16 +120,35 @@ def test_decision_modules_never_reference_research_targets():
     for path in _python_files():
         if _top_package(path) not in DECISION_MODULES:
             continue
-        text = path.read_text(encoding="utf-8")
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            code = line.split("#", 1)[0]
-            if any(token in code for token in FORBIDDEN_IN_DECISION_CODE):
-                offenders.append(f"{path.relative_to(PACKAGE)}:{lineno}: {line.strip()}")
+        source = path.read_text(encoding="utf-8")
+        for lineno, what in _forbidden_references(source):
+            offenders.append(f"{path.relative_to(PACKAGE)}:{lineno}: {what}")
     assert not offenders, (
         "signal/risk/backtest code must not read the brief's target win rates "
         "or the pre-registered falsification criteria:\n"
         + "\n".join(offenders)
     )
+
+
+@pytest.mark.parametrize(
+    "source, should_trip",
+    [
+        ("from flow_model.validation.hypotheses import HYPOTHESES", True),
+        ("import flow_model.validation.hypotheses", True),
+        ("x = config.research_targets.combined_10y_win_rate", True),
+        ("gate = HYPOTHESES[0].threshold", True),
+        ("from flow_model.config.schema import ResearchTargets", True),
+        # prose, which is what the text-scanning version got wrong
+        ('"""makes the constants hypotheses to be swept, not improved."""', False),
+        ('"""ResearchTargets lives in config and is never read here."""', False),
+        ("# research_targets must not be imported in this module", False),
+        ("threshold = config.levels.s_major", False),
+    ],
+)
+def test_the_reference_guard_trips_on_access_and_not_on_prose(source, should_trip):
+    """Both halves matter. Without the True cases the guard could be vacuous;
+    without the False cases it penalizes writing down the policy."""
+    assert bool(_forbidden_references(source)) is should_trip
 
 
 def _is_target(value: object) -> bool:
