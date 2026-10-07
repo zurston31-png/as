@@ -58,8 +58,25 @@ def test_research_targets_defined_in_exactly_one_place():
     assert definitions[0].name == "schema.py"
 
 
+#: Tokens a decision module must never mention. `ResearchTargets` holds the
+#: brief's desired win rates; `hypotheses` holds the pre-registered
+#: refutation criteria. Both are scoring yardsticks, and the reason is the
+#: same for each: a rule that can see the number it will be judged against
+#: will, given enough iterations, reproduce that number and demonstrate
+#: nothing. Pre-registration only has force while the thing being tested
+#: cannot read the test.
+FORBIDDEN_IN_DECISION_CODE = (
+    "research_targets",
+    "ResearchTargets",
+    "hypotheses",
+    "HYPOTHESES",
+    "Hypothesis",
+)
+
+
 def test_decision_modules_never_reference_research_targets():
-    """A module that decides what to trade must not know the desired win rate."""
+    """A module that decides what to trade must not know the desired win rate,
+    nor the criteria it will be scored against."""
     offenders: list[str] = []
     for path in _python_files():
         if _top_package(path) not in DECISION_MODULES:
@@ -67,10 +84,11 @@ def test_decision_modules_never_reference_research_targets():
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), start=1):
             code = line.split("#", 1)[0]
-            if "research_targets" in code or "ResearchTargets" in code:
+            if any(token in code for token in FORBIDDEN_IN_DECISION_CODE):
                 offenders.append(f"{path.relative_to(PACKAGE)}:{lineno}: {line.strip()}")
     assert not offenders, (
-        "signal/risk/backtest code must not read the brief's target win rates:\n"
+        "signal/risk/backtest code must not read the brief's target win rates "
+        "or the pre-registered falsification criteria:\n"
         + "\n".join(offenders)
     )
 

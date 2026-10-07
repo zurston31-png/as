@@ -160,6 +160,59 @@ def cmd_experiments(args: argparse.Namespace) -> int:
 
 
 
+def cmd_hypotheses(args: argparse.Namespace) -> int:
+    """Show or register the pre-committed falsification criteria.
+
+    `register` is idempotent on purpose: re-running it must not append a
+    second copy, because a log holding the same prediction twice makes the
+    multiple-comparisons denominator in `overfitting_summary` wrong. It also
+    refuses to register anything once an evaluation phase has been touched --
+    at that point a "pre-registration" would be nothing of the kind, and
+    silently accepting it is exactly the self-deception the registry exists
+    to prevent.
+    """
+    from flow_model.validation.experiment_log import ExperimentLog
+    from flow_model.validation.hypotheses import HYPOTHESES, registration_rows
+
+    config = _load(args)
+    if args.action == "list":
+        print(f"{'id':<30}{'shape':<22}{'bound':<8}expect")
+        print("-" * 72)
+        for item in HYPOTHESES:
+            bound = "--" if item.threshold is None else f"{item.threshold:.2f}"
+            print(f"{item.hypothesis_id:<30}{item.direction.value:<22}{bound:<8}"
+                  f"{'holds' if item.expected_to_hold else 'REFUTED'}")
+        print(f"\n{len(HYPOTHESES)} registered in source. "
+              "Run `hypotheses register` to write them to the experiment log.")
+        return 0
+
+    with ExperimentLog(config.paths.experiment_db_path) as log:
+        for phase in (SplitPhase.TEST, SplitPhase.SEALED_OOS):
+            touches = log.total_phase_touches(phase)
+            if touches:
+                print(f"REFUSED: {phase.value} has already been evaluated "
+                      f"{touches} time(s). A criterion written down after the "
+                      f"evidence is not a pre-registration.")
+                return 1
+        already = {r.name for r in log.query(limit=None)}
+        written = 0
+        for row in registration_rows():
+            if row["name"] in already:
+                continue
+            log.log(
+                name=row["name"],
+                config_hash="pre-registration",
+                phase=SplitPhase.TRAIN,
+                results=row["results"],
+                notes=row["notes"],
+            )
+            written += 1
+        skipped = len(HYPOTHESES) - written
+        print(f"registered {written}, already present {skipped}, "
+              f"log now holds {log.count()} record(s).")
+        return 0
+
+
 def cmd_data(args: argparse.Namespace) -> int:
     """Load a dataset and report which Flow Score components are computable.
 
@@ -318,6 +371,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=50)
     _add_config_args(p)
     p.set_defaults(func=cmd_experiments)
+
+    p = sub.add_parser("hypotheses",
+                       help="Show or register the pre-committed falsification criteria.")
+    p.add_argument("action", nargs="?", default="list", choices=["list", "register"])
+    _add_config_args(p)
+    p.set_defaults(func=cmd_hypotheses)
 
     p = sub.add_parser("phases", help="Show which build phases are complete.")
     p.set_defaults(func=cmd_phases)
