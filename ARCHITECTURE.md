@@ -218,6 +218,9 @@ The brief's expectation ("88-92% in low- and high-vol, worse in chop") is
 registered as a **falsifiable hypothesis** in the experiment log, and
 `analytics.breakdowns` tests it directly rather than assuming it.
 
+Implemented in `validation/hypotheses.py` as `H-REGIME-WINRATE` and
+`H-REGIME-CHOP-WORSE`. See section 15.
+
 ---
 
 ## 7. Flow Score
@@ -316,6 +319,28 @@ so the sensitivity of results to this assumption is measurable.
   wraps any data load and **raises** `SealedDataAccessError` on a sealed
   range unless given an `UnsealToken` with a logged reason. Every seal open
   is appended to an immutable audit log.
+
+  The registry enforces four structural rules, all of which were absent in
+  the first implementation and added after review:
+
+  1. **No overlap** between a fitting phase and an evaluation phase, between
+     TRAIN and VALIDATION, or between TEST and SEALED_OOS.
+  2. **Chronological order.** Each earlier phase must end at or before every
+     later phase begins. Non-overlap alone does not make a split honest:
+     TRAIN [2020, 2021) with TEST [2010, 2011) does not overlap and is still
+     a model fitted on the future. Same-phase splits are left unordered, so
+     two TRAIN folds remain expressible.
+  3. **A UTC seal boundary.** `_as_date` normalizes aware datetimes to UTC.
+     `.date()` on an aware datetime gives its date in its own zone, so one
+     instant written in two zones used to land on opposite sides of the seal.
+  4. **No silent truncation.** `allowed_ranges()` returns every unsealed part
+     of a request; `clip_to_allowed()` raises when a request straddles the
+     seal with data on both sides, rather than returning one side and
+     discarding the other.
+
+  `assert_embargo(min_gap_days)` is available but not automatic, since the
+  embargo length is a configured research choice rather than a structural
+  truth. Phase 8 calls it when building folds.
 - `validation/walk_forward.py` — configurable train/validate/test windows,
   rolling or anchored, with a **purge + embargo** gap between windows so a
   trade open across a boundary cannot leak. Every fold is reported
@@ -588,3 +613,61 @@ seeing the data:
 5. If the zone-width constant `c_band` changes expectancy by more than
    `fragility_max_relative_drop` across ±1 step, the whole construction is
    fragile and should be reported as such.
+
+---
+
+## 15. Pre-registration: `validation/hypotheses.py`
+
+Sections 6 and 14.7 both say their criteria are recorded before any result
+exists. This section is where that stops being a promise in prose.
+
+The failure mode being prevented is specific and extremely common: run the
+backtest, look at the output, then decide which comparison counts as success.
+A criterion chosen after the data is seen is not a test of anything. Since
+the brief states targets *and* forbids optimizing toward them, the only way
+both hold is if the targets are fixed in advance, machine-readable, and
+unreadable by the code being judged.
+
+Nine hypotheses are registered: the five from 14.7 that would falsify the
+support/resistance construction, the brief's three headline numbers, and the
+consistency-over-peak claim from section 10. Each carries:
+
+| Field | Why it is there |
+|---|---|
+| `direction` | The *shape* of the prediction, which decides how it is refuted. A monotone claim is refuted by a non-monotone profile, not by a low level. |
+| `threshold` | The bound, for `AT_LEAST` / `AT_MOST` only. Present exactly when the shape needs one, so a shape claim cannot be scored against a number by mistake. |
+| `refuted_when` | The refutation condition, stated so it can be checked without judgment. |
+| `consequence` | **What is done if refuted.** 14.7 (2) requires refuted cleanliness terms to be *removed*, not reweighted. A hypothesis with no stated consequence gets quietly reweighted instead, which is the overfitting loop in another costume. |
+| `expected_to_hold` | My prior, pinned so it cannot be revised once results arrive. Six of nine are expected to be refuted. |
+
+### 15.1 Why it is enforced rather than documented
+
+- The id tuple and count are pinned literally in `test_hypotheses.py`, so a
+  late addition fails a test instead of passing silently. A second test
+  perturbs the tuple exactly as an addition would, so the pin is not vacuous
+  against a stale constant.
+- `test_no_target_leakage.py` bans `hypotheses` / `HYPOTHESES` /
+  `Hypothesis` from `features`, `signals`, `regime`, `risk`, `backtest`,
+  `monte_carlo` and `data`, alongside `ResearchTargets`. Same reasoning: a
+  rule that can read the number it will be judged against will reproduce
+  that number given enough iterations, and demonstrate nothing.
+  Pre-registration has force only while the thing being tested cannot read
+  the test.
+- `flow-model hypotheses register` is idempotent, because a duplicate row
+  would corrupt the multiple-comparisons denominator in
+  `overfitting_summary()` — the one number that says how much the reported
+  results should be discounted.
+- It **refuses** once TEST or SEALED_OOS has been touched. At that point a
+  "pre-registration" is nothing of the kind, and accepting it silently is
+  exactly the self-deception the registry exists to prevent.
+- Registration logs under TRAIN, so writing down a prediction spends no
+  evaluation budget, and is commit-stamped, so "this predates the evidence"
+  is checkable against git rather than taken on trust.
+
+### 15.2 The expected outcome is refutation
+
+`H-REGIME-WINRATE` (88% at 1R in favourable regimes) is registered because
+it is testable, not because it is plausible. A symmetric 1R system at that
+rate implies an annualized Sharpe far outside anything documented. A refuted
+hypothesis recorded in advance is a real research result; a confirmed
+hypothesis chosen in arrears is not a result at all.
