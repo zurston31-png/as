@@ -140,9 +140,9 @@ features:
   volume_percentile_lookback: 60
   spread_percentile_lookback: 60
   time_of_day_buckets: 26
-  cvd_period: 20
-  absorption_lookback: 10
-  options_lookback_days: 20
+  # cvd_period / absorption_lookback / options_lookback_days moved out in the
+  # Phase 4+5 config pass: they now live in `order_flow` and `options_flow`,
+  # which own those parameter surfaces. One window, one home.
 
 regime:
   high_vol_percentile: 0.80
@@ -158,6 +158,87 @@ regime:
   # in config/schema.py and in regime/detector.py.
   cusum_window_bars: 60
   hysteresis_search_bars: 24
+
+# ---------------------------------------------------------------------------
+# Order flow (ARCHITECTURE.md section 5, Phase 4).
+#
+# Required data: tick trades carrying an aggressor side. There is NO degraded
+# path -- section 5 accepts no proxy -- so an absent, unclassified or
+# proxy-classified tick feed disables the component and its 25 points are
+# reported UNAVAILABLE without redistribution.
+#
+# Every window and threshold below is a hypothesis, swept in Phase 8 on
+# training folds only. Nothing here was chosen by looking at a result.
+order_flow:
+  delta_smoothing_bars: 3          # judgement call
+  delta_percentile_lookback: 60    # matches features.volume_percentile_lookback
+  cvd_lookback_bars: 20            # carried from Phase 1's features.cvd_period
+  cvd_slope_squash_scale: 0.25     # judgement call; slope is dimensionless
+  aggression_lookback_bars: 10     # judgement call
+  min_classified_trades: 20        # judgement call
+  min_classification_coverage: 0.60  # judgement call; 0.0 would be the proxy
+  absorption_lookback_bars: 10     # carried from features.absorption_lookback
+  absorption_delta_percentile: 0.80  # same "extreme" as regime.high_vol_percentile
+  absorption_max_displacement_atr: 0.25   # mirrors levels.zone_band_atr
+  absorption_level_window_atr: 0.25       # mirrors levels.zone_band_atr
+  trade_size_percentile_lookback: 120     # judgement call
+  large_trade_percentile: 0.90            # judgement call
+
+  weights:                        # declared prior; section 5 names no weights
+    signed_delta: 0.25
+    cvd_slope: 0.25
+    aggression_ratio: 0.20
+    absorption: 0.15
+    trade_size_distribution: 0.15
+  # A dropped term's weight is NOT redistributed, so below this fraction of
+  # available weight the component reports UNAVAILABLE rather than a small
+  # number that reads like "the tape is balanced".
+  min_available_weight_fraction: 0.50
+
+  # Non-negotiable (section 5). Both are refused if flipped; the fields exist
+  # so the rule is visible and testable here instead of implied by absent code.
+  allow_bar_volume_delta_proxy: false
+  require_aggressor_classification: true
+  rejected_classification_methods:
+    - bar_volume
+    - bar_volume_tick_rule
+    - tick_rule_on_bars
+    - uptick_downtick_on_bars
+    - volume_split
+
+# ---------------------------------------------------------------------------
+# Options flow (ARCHITECTURE.md section 5, Phase 5).
+#
+# Ideal: OPRA trade prints. Degraded: EOD chain + OI, which is graded DEGRADED
+# and whose sub-score is CAPPED (eod_degraded_cap_fraction) and flagged.
+# Nothing is ever synthesized to fill a gap.
+#
+# This component measures imbalance and positioning. It makes no claim about
+# who traded or why: premium has an ambiguous sign (opening bet, closing sale,
+# or hedge leg are indistinguishable in a chain aggregate).
+options_flow:
+  lookback_snapshots: 20          # carried from Phase 1's options_lookback_days
+  min_snapshot_volume: 1.0        # judgement call; stops 0/0 reading as neutral
+  oi_change_squash_scale: 0.05    # judgement call; fraction of total OI
+  use_gamma_exposure_proxy: true  # section 5 lists it; it is a proxy, not inventory
+
+  weights:                        # declared prior; section 5 names no weights
+    net_premium: 0.25
+    delta_weighted_volume: 0.25
+    oi_change: 0.20
+    skew_25d: 0.15
+    gamma_exposure: 0.15
+  # Four of the five inputs are optional in OptionsSnapshot. Premium alone
+  # carries 0.25, which is below this floor, so a premium-only chain reports
+  # UNAVAILABLE instead of a quarter-strength opinion.
+  min_available_weight_fraction: 0.50
+
+  # The cap section 5 requires on the EOD-degraded path, as a FRACTION of the
+  # component's weight so it survives the Phase 8 weight sweep. 0.50 is a
+  # judgement call; section 5 names no number.
+  eod_degraded_cap_fraction: 0.50
+  require_intraday_prints: false  # false = cap and flag, which is what section 5 says
+  never_synthesize_missing_fields: true   # non-negotiable; refused if flipped
 
 flow_score:
   weights:

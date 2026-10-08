@@ -18,9 +18,11 @@ Three conventions:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date
+from typing import Any
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import Field, computed_field, field_validator, model_validator
 
 from flow_model.core.determinism import DEFAULT_SEED, stable_hash
 from flow_model.core.enums import (
@@ -190,10 +192,12 @@ class FeatureConfig(FrozenModel):
     spread_percentile_lookback: int = Field(gt=10, default=60)
     time_of_day_buckets: int = Field(gt=1, default=26)
 
-    cvd_period: int = Field(gt=1, default=20)
-    absorption_lookback: int = Field(gt=1, default=10)
-
-    options_lookback_days: int = Field(gt=1, default=20)
+    # Phase 1 also parked `cvd_period`, `absorption_lookback` and
+    # `options_lookback_days` here as placeholders. They now live in
+    # `OrderFlowConfig` and `OptionsFlowConfig`, which own the Phases 4 and 5
+    # parameter surfaces. Two homes for one window is one too many: the pair
+    # loads cleanly, and the computer reads whichever the author happened to
+    # remember.
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -211,7 +215,6 @@ class FeatureConfig(FrozenModel):
             self.spread_percentile_lookback,
             self.realized_vol_period + self.vol_of_vol_period,
             self.efficiency_period,
-            self.cvd_period,
         ) + 1
 
 
@@ -281,6 +284,634 @@ class RegimeConfig(FrozenModel):
             )
         return self
 
+
+# ---------------------------------------------------------------------------
+# Order flow and options flow (Phases 4 and 5)
+# ---------------------------------------------------------------------------
+
+#: Aggressor-classification methods that derive a side from BAR data rather
+#: than from trades. ARCHITECTURE.md section 5 calls bar-volume-only "delta" a
+#: known-bad estimator and refuses to substitute it silently; these are the
+#: names such an estimator ships under. `OrderFlowConfig` refuses to drop any
+#: of them from its denylist, because a denylist that can be emptied is not a
+#: rule -- it is a default.
+BAR_VOLUME_DELTA_PROXIES: frozenset[str] = frozenset(
+    {
+        "bar_volume",
+        "bar_volume_tick_rule",
+        "tick_rule_on_bars",
+        "uptick_downtick_on_bars",
+        "volume_split",
+    }
+)
+
+
+class OrderFlowWeights(FrozenModel):
+    """Weights combining the five order-flow terms into the component magnitude.
+
+    ARCHITECTURE.md section 5 names the five features and gives them no
+    weights, so Phase 4 would otherwise hardcode `w_*` -- exactly the
+    situation `StructureMagnitudeWeights` was added to prevent.
+
+    A term whose input is absent is DROPPED WITHOUT REDISTRIBUTION, the rule
+    section 14.5 states for `s_flow`, applied to the whole component: the
+    lost weight stays lost, so missing data lowers the sub-score instead of
+    being reallocated into confidence the tape does not support.
+    `OrderFlowConfig.min_available_weight_fraction` is the floor below which
+    the component must report UNAVAILABLE rather than a small number that
+    reads like "no flow".
+
+    The split below is a declared prior, not a measurement. Nothing has been
+    fitted; it is swept in Phase 8 on training folds only.
+    """
+
+    signed_delta: float = Field(ge=0.0, default=0.25)
+    cvd_slope: float = Field(ge=0.0, default=0.25)
+    aggression_ratio: float = Field(ge=0.0, default=0.20)
+    absorption: float = Field(ge=0.0, default=0.15)
+    trade_size_distribution: float = Field(ge=0.0, default=0.15)
+
+    @model_validator(mode="after")
+    def _check(self) -> "OrderFlowWeights":
+        total = (
+            self.signed_delta + self.cvd_slope + self.aggression_ratio
+            + self.absorption + self.trade_size_distribution
+        )
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"order-flow weights sum to {total}, expected 1.0")
+        return self
+
+
+class OrderFlowConfig(FrozenModel):
+    """Order-flow features (ARCHITECTURE.md section 5, Phase 4).
+
+    Required data is tick-level trades carrying an aggressor side. There is
+    **no degraded path**: section 5 accepts no proxy, so an absent or
+    unclassified tick feed disables the component and reports its 25 points
+    UNAVAILABLE, without redistribution. The switches that hold that line are
+    `allow_bar_volume_delta_proxy` and `require_aggressor_classification`,
+    and `_check_non_negotiables` refuses to let either be turned off.
+
+    Every window and threshold here is a hypothesis. None was chosen by
+    looking at a result; most are judgement calls anchored on a prior already
+    declared elsewhere in this file, and the few that carry forward a Phase-1
+    placeholder say so.
+    """
+
+    # --- signed delta ---
+    delta_smoothing_bars: int = Field(
+        gt=0,
+        default=3,
+        description=(
+            "Bars of per-bar delta averaged before the signed-delta reading "
+            "is taken. One 5-minute bar's delta is a small sample of a noisy "
+            "quantity, and a feature that flips sign every bar cannot confirm "
+            "a direction. 1 disables the smoothing, which is the honest way "
+            "to measure what the smoothing is worth."
+        ),
+    )
+    delta_percentile_lookback: int = Field(
+        gt=10,
+        default=60,
+        description=(
+            "Trailing window the signed delta is percentile-ranked within, so "
+            "'large delta' means large for THIS symbol's recent tape rather "
+            "than a contract count that is meaningless across NQ, GC and QQQ. "
+            "A percentile rank is used instead of a z-score because the score "
+            "is a weighted sum and an unbounded term lets one print dominate "
+            "it (features/base.py). 60 matches the liquidity layer's "
+            "`volume_percentile_lookback`, so the two percentile features "
+            "describe the same stretch of tape."
+        ),
+    )
+
+    # --- CVD slope ---
+    cvd_lookback_bars: int = Field(
+        gt=2,
+        default=20,
+        description=(
+            "Bars of delta cumulated into the CVD path whose slope is the "
+            "feature. One window, not two: cumulating over one span and "
+            "regressing over another makes the reported slope depend on a "
+            "relationship between two constants that nobody tuned on purpose. "
+            "Carried from Phase 1's `FeatureConfig.cvd_period`, which was "
+            "itself a declared prior."
+        ),
+    )
+    cvd_slope_squash_scale: float = Field(
+        gt=0.0,
+        default=0.25,
+        description=(
+            "The DIMENSIONLESS CVD slope -- contracts per bar divided by the "
+            "window's own mean classified volume per bar -- that `squash` maps "
+            "to about 0.76. Dividing by the window's own volume is what makes "
+            "the term comparable across instruments and across volume "
+            "regimes; the scale then only sets how quickly it saturates. 0.25 "
+            "means a CVD climbing by a quarter of a typical bar's classified "
+            "volume per bar already reads as strong, which is a guess."
+        ),
+    )
+
+    # --- aggression ratio ---
+    aggression_lookback_bars: int = Field(
+        gt=0,
+        default=10,
+        description=(
+            "Bars pooled before the aggression ratio is formed. The ratio is "
+            "built from TRADE COUNTS (buy_trades vs sell_trades), which is a "
+            "different measurement from `TickAggregate.delta_ratio`'s "
+            "volume weighting: many small lifts and one large one give the "
+            "same delta and a very different count ratio. Counts in a single "
+            "bar are few, so they are pooled."
+        ),
+    )
+    min_classified_trades: int = Field(
+        gt=0,
+        default=20,
+        description=(
+            "Classified trades required in the pooled window before the "
+            "aggression ratio is reported at all. Below it the term is "
+            "dropped, not neutralized: a 3-trade ratio of 2:1 is noise, and "
+            "emitting 0.67 for it is indistinguishable downstream from a real "
+            "two-thirds reading."
+        ),
+    )
+    min_classification_coverage: float = Field(
+        gt=0.0,
+        le=1.0,
+        default=0.60,
+        description=(
+            "Fraction of window volume that must carry a known aggressor "
+            "(`TickAggregate.classification_coverage`) before any order-flow "
+            "feature is reported. Below it the component is disabled, because "
+            "a delta whose sign is set by a minority of the tape is the "
+            "known-bad estimator section 5 refuses under another name. The "
+            "bound is `gt=0.0` rather than `ge=0.0` for that reason -- 0.0 "
+            "would accept a feed with no classification at all. 0.60 is a "
+            "judgement call and a Phase 8 sweep candidate."
+        ),
+    )
+
+    # --- absorption at a level ---
+    absorption_lookback_bars: int = Field(
+        gt=0,
+        default=10,
+        description=(
+            "Bars over which absorption is measured: sustained one-sided "
+            "delta that does NOT move price. Carried from Phase 1's "
+            "`FeatureConfig.absorption_lookback`."
+        ),
+    )
+    absorption_delta_percentile: float = Field(
+        gt=0.0,
+        lt=1.0,
+        default=0.80,
+        description=(
+            "The window's summed delta must rank at or above this percentile "
+            "of its own history before absorption is considered, so 'heavy "
+            "one-sided flow' is relative to the symbol. 0.80 is the "
+            "percentile ARCHITECTURE section 6 already uses for "
+            "`high_vol_percentile`; reusing it keeps one notion of 'extreme' "
+            "in the system rather than inventing a second."
+        ),
+    )
+    absorption_max_displacement_atr: float = Field(
+        gt=0.0,
+        default=0.25,
+        description=(
+            "Net price change over the window, in ATR units, below which the "
+            "flow counts as absorbed. This is the 'result' half of "
+            "effort-versus-result: heavy delta WITH displacement is a drive, "
+            "not absorption, and scoring both the same way would make the "
+            "term unreadable. 0.25 mirrors `levels.zone_band_atr`."
+        ),
+    )
+    absorption_level_window_atr: float = Field(
+        gt=0.0,
+        default=0.25,
+        description=(
+            "Band, in ATR units, within which the window's closes must stay "
+            "for the window to count as 'at one level'. Section 5 says "
+            "'absorption at level', and this is how that is measured WITHOUT "
+            "the order-flow computer taking a dependency on the structure "
+            "layer's zone list: a computer that needed another computer's "
+            "output could not be audited for lookahead in isolation, which is "
+            "how every other FeatureComputer in the package is audited. The "
+            "structure layer still gates on its own zones in `StructureGate`; "
+            "this term only reports that flow was absorbed somewhere flat."
+        ),
+    )
+
+    # --- trade-size distribution ---
+    trade_size_percentile_lookback: int = Field(
+        gt=10,
+        default=120,
+        description=(
+            "Trailing window for percentile-ranking average and maximum trade "
+            "size. Longer than `delta_percentile_lookback` because a size "
+            "distribution's tail needs more observations than a volume "
+            "percentile does before its 90th percentile means anything. 120 "
+            "is a judgement call."
+        ),
+    )
+    large_trade_percentile: float = Field(
+        gt=0.0,
+        lt=1.0,
+        default=0.90,
+        description=(
+            "Percentile of its own history at or above which a window's "
+            "maximum trade size counts as a large-trade event. NOTE on what "
+            "is NOT here: bucket EDGES were considered and rejected. "
+            "`TickAggregate` carries `max_trade_size` and trade counts, not a "
+            "size histogram, so absolute edges would describe a measurement "
+            "the feed does not supply -- and in contracts they would be "
+            "instrument-specific besides. A relative threshold measures what "
+            "the data actually contains. A large print is an observation "
+            "about size, not evidence about who traded."
+        ),
+    )
+
+    # --- combination and availability ---
+    weights: OrderFlowWeights = Field(default_factory=OrderFlowWeights)
+    min_available_weight_fraction: float = Field(
+        gt=0.0,
+        le=1.0,
+        default=0.50,
+        description=(
+            "Terms carrying at least this fraction of the total weight must "
+            "have real inputs, or the component reports UNAVAILABLE. Without "
+            "the floor, dropping terms without redistribution (the honest "
+            "rule) produces a systematically small sub-score that reads "
+            "downstream as 'the tape is balanced' when it actually means "
+            "'most of this was never measured'. Principle 4: missing data "
+            "produces WAIT, never a guess."
+        ),
+    )
+
+    # --- the non-negotiables ---
+    allow_bar_volume_delta_proxy: bool = Field(
+        default=False,
+        description=(
+            "The switch that governs the no-proxy rule. Section 5: a delta "
+            "estimated from bar volume is a known-bad estimator and is NOT "
+            "substituted when the tick feed is missing. Enabling it is "
+            "refused by `_check_non_negotiables`; the field exists so the "
+            "rule is visible and testable in config rather than implied by "
+            "the absence of code."
+        ),
+    )
+    require_aggressor_classification: bool = Field(
+        default=True,
+        description=(
+            "A tick feed must declare HOW it classified the aggressor "
+            "(`TickSeries.classification_method`). The series default is "
+            "'unknown', and an undeclared method is not a classification: "
+            "volume with an unexplained side is bar volume with a label. "
+            "Disabling this is refused."
+        ),
+    )
+    rejected_classification_methods: tuple[str, ...] = Field(
+        default=(
+            "bar_volume",
+            "bar_volume_tick_rule",
+            "tick_rule_on_bars",
+            "uptick_downtick_on_bars",
+            "volume_split",
+        ),
+        description=(
+            "Classification methods that disable the component on sight. A "
+            "denylist rather than an allowlist, because the honest methods "
+            "are open-ended ('bid_ask', an exchange's own tag) while the "
+            "known-bad ones are a short named set. Entries are lower-cased on "
+            "load so the comparison is unambiguous; every name in "
+            "`BAR_VOLUME_DELTA_PROXIES` must remain present."
+        ),
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def warmup_bars(self) -> int:
+        """A FLOOR for the warmup a Phase-4 computer may declare.
+
+        Composed windows, not the longest single window: ranking a
+        `delta_smoothing_bars` average inside a `delta_percentile_lookback`
+        window reads `lookback + smoothing - 1` bars, not `lookback`. That
+        arithmetic is the whole content of this property, because getting it
+        wrong is a HIGH-severity bug that the lookahead audit cannot see --
+        the regime detector declared 268 and read 291, which made the label at
+        bar t depend on where the caller started loading while nothing read
+        the future.
+
+        It is a floor and not an answer, in the same way
+        `FeatureConfig.warmup_bars` is (see the note at the top of
+        features/volatility.py). A computer that composes these windows more
+        deeply must declare more. None may declare less.
+        """
+        return max(
+            self.delta_percentile_lookback + self.delta_smoothing_bars - 1,
+            self.delta_percentile_lookback + self.absorption_lookback_bars - 1,
+            self.trade_size_percentile_lookback + self.aggression_lookback_bars - 1,
+            self.cvd_lookback_bars,
+        ) + 1
+
+    @field_validator("rejected_classification_methods", mode="before")
+    @classmethod
+    def _normalize_methods(cls, value: Any) -> Any:
+        """Lower-case and de-duplicate, order preserved.
+
+        The subset check below and the consumer's membership test have to
+        agree on case, and 'Bar_Volume' slipping past a denylist is the one
+        failure this field exists to prevent.
+        """
+        if isinstance(value, str) or not isinstance(value, Iterable):
+            return value
+        seen: dict[str, None] = {}
+        for item in value:
+            if not isinstance(item, str):
+                return value
+            seen.setdefault(item.strip().lower(), None)
+        return tuple(seen)
+
+    @model_validator(mode="after")
+    def _check_non_negotiables(self) -> "OrderFlowConfig":
+        """Refuse the configurations ARCHITECTURE section 5 calls impossible.
+
+        Section 5's order-flow row is the only one in the table with no
+        degraded path at all. That is a strong claim, and a config able to
+        quietly undo it would make the claim decorative.
+        """
+        if self.allow_bar_volume_delta_proxy:
+            raise ValueError(
+                "allow_bar_volume_delta_proxy=True enables a bar-volume-derived "
+                "delta proxy. ARCHITECTURE.md section 5 accepts NO proxy for "
+                "order flow: bar-volume-only 'delta' is a known-bad estimator, "
+                "and substituting it would be indistinguishable from real "
+                "order flow to every caller above -- including the lookahead "
+                "audit, which would pass. The component is disabled and its 25 "
+                "points are reported UNAVAILABLE instead, without "
+                "redistribution."
+            )
+        if not self.require_aggressor_classification:
+            raise ValueError(
+                "require_aggressor_classification=False accepts a tick feed "
+                "that does not say how it assigned the aggressor side. An "
+                "undeclared method ('unknown', the TickSeries default) is not "
+                "a classification, so this is the bar-volume proxy admitted "
+                "through the back door."
+            )
+        missing = sorted(BAR_VOLUME_DELTA_PROXIES - set(self.rejected_classification_methods))
+        if missing:
+            raise ValueError(
+                f"rejected_classification_methods no longer rejects {missing}. "
+                "These are the names a bar-volume-derived delta ships under; "
+                "removing one admits the proxy that allow_bar_volume_delta_proxy "
+                "exists to refuse. A denylist that can be emptied is a default, "
+                "not a rule."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check(self) -> "OrderFlowConfig":
+        if self.delta_smoothing_bars > self.delta_percentile_lookback:
+            raise ValueError(
+                f"delta_smoothing_bars={self.delta_smoothing_bars} exceeds "
+                f"delta_percentile_lookback={self.delta_percentile_lookback}: the "
+                "smoothed value would be ranked against fewer observations than "
+                "it is built from, so its percentile would be nearly constant"
+            )
+        if self.absorption_lookback_bars >= self.delta_percentile_lookback:
+            raise ValueError(
+                f"absorption_lookback_bars={self.absorption_lookback_bars} is not "
+                f"shorter than delta_percentile_lookback="
+                f"{self.delta_percentile_lookback}: absorption_delta_percentile "
+                "ranks the absorption window's own delta against that history, "
+                "and a window cannot be an extreme of a history no longer than "
+                "itself"
+            )
+        if self.aggression_lookback_bars >= self.trade_size_percentile_lookback:
+            raise ValueError(
+                f"aggression_lookback_bars={self.aggression_lookback_bars} is not "
+                f"shorter than trade_size_percentile_lookback="
+                f"{self.trade_size_percentile_lookback}: the pooled trade-size "
+                "statistic would be ranked against a history no longer than the "
+                "pool it came from"
+            )
+        return self
+
+
+class OptionsFlowWeights(FrozenModel):
+    """Weights combining the five options-flow terms (section 5, Phase 5).
+
+    Same reasoning as `OrderFlowWeights`: section 5 names the features and no
+    weights, and a term whose input is `None` is dropped WITHOUT
+    redistribution rather than read as zero. `OptionsSnapshot` is explicit
+    that `None` means NOT SUPPLIED while 0.0 is a real observation, so a
+    dropped term and a zero term must not produce the same sub-score.
+
+    Four of the five inputs are optional in the contract; only net premium is
+    always present. With the defaults below, net premium alone carries 0.25,
+    which is under `OptionsFlowConfig.min_available_weight_fraction` -- so a
+    chain supplying premium and nothing else reports UNAVAILABLE rather than a
+    quarter-strength opinion.
+
+    None of these numbers is a finding.
+    """
+
+    net_premium: float = Field(ge=0.0, default=0.25)
+    delta_weighted_volume: float = Field(ge=0.0, default=0.25)
+    oi_change: float = Field(ge=0.0, default=0.20)
+    skew_25d: float = Field(ge=0.0, default=0.15)
+    gamma_exposure: float = Field(ge=0.0, default=0.15)
+
+    @model_validator(mode="after")
+    def _check(self) -> "OptionsFlowWeights":
+        total = (
+            self.net_premium + self.delta_weighted_volume + self.oi_change
+            + self.skew_25d + self.gamma_exposure
+        )
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"options-flow weights sum to {total}, expected 1.0")
+        return self
+
+
+class OptionsFlowConfig(FrozenModel):
+    """Options-flow features (ARCHITECTURE.md section 5, Phase 5).
+
+    Ideal data is OPRA trade prints; the degraded path is an end-of-day chain
+    plus open interest, which section 5 grades DEGRADED and caps. The cap is
+    `eod_degraded_cap_fraction` and the measurement that triggers it is
+    `OptionsSnapshot.is_intraday`, not a config guess about the vendor.
+
+    What this component is NOT: section 5 explicitly rejects reading options
+    flow as evidence of institutional intent. Premium has an ambiguous sign --
+    a large call print may be an opening bet, a closing sale or a hedge leg --
+    so every field here measures IMBALANCE and positioning, and no field
+    names an actor. Nothing is ever synthesized to fill a gap
+    (`never_synthesize_missing_fields`).
+    """
+
+    # --- normalization window ---
+    lookback_snapshots: int = Field(
+        gt=2,
+        default=20,
+        description=(
+            "Trailing OPTIONS SNAPSHOTS every term is percentile-ranked or "
+            "differenced against. Counted in snapshots, not days: the feed's "
+            "cadence is whatever it is -- EOD chains give roughly one per "
+            "session, OPRA prints give many -- and converting to days would "
+            "require this section to assume a cadence it cannot observe. "
+            "Carried from Phase 1's `FeatureConfig.options_lookback_days`, "
+            "whose name asserted the cadence this one does not. One window "
+            "serves all five terms so that the Phase 8 sweep moves one knob "
+            "rather than five correlated ones."
+        ),
+    )
+    min_snapshot_volume: float = Field(
+        ge=0.0,
+        default=1.0,
+        description=(
+            "Total option volume (calls plus puts) a snapshot must carry "
+            "before its imbalances are reported. `premium_imbalance` and "
+            "`put_call_volume_ratio` are ratios, and `safe_divide` turns a "
+            "zero denominator into 0.0 -- which is a NEUTRAL reading, "
+            "indistinguishable from a genuinely balanced chain. This gate "
+            "turns 'nothing traded' into DEGRADED instead."
+        ),
+    )
+
+    # --- term scaling ---
+    oi_change_squash_scale: float = Field(
+        gt=0.0,
+        default=0.05,
+        description=(
+            "Net open-interest change (call minus put) as a FRACTION of total "
+            "open interest that `squash` maps to about 0.76. Expressed as a "
+            "fraction so it is comparable across underlyings and across the "
+            "growth of a chain over ten years; a contract count would not be. "
+            "0.05 says a 5% one-session shift in net OI already reads as "
+            "large, which is a judgement call."
+        ),
+    )
+    use_gamma_exposure_proxy: bool = Field(
+        default=True,
+        description=(
+            "Whether the gamma-exposure proxy term is computed. An ablation "
+            "switch for Phase 8, not a data switch: absence of the input is "
+            "already handled by `OptionsSnapshot.gamma_exposure_proxy` being "
+            "None. It is a PROXY -- an OI-and-price construction, not a "
+            "dealer inventory, which nobody outside a dealer can observe. "
+            "Turning it off requires zeroing its weight (see `_check`)."
+        ),
+    )
+
+    # --- combination and availability ---
+    weights: OptionsFlowWeights = Field(default_factory=OptionsFlowWeights)
+    min_available_weight_fraction: float = Field(
+        gt=0.0,
+        le=1.0,
+        default=0.50,
+        description=(
+            "Terms carrying at least this fraction of the total weight must "
+            "have non-None inputs, or the component reports UNAVAILABLE. Four "
+            "of the five inputs are optional in `OptionsSnapshot`, so without "
+            "this floor a chain carrying premium alone would still produce a "
+            "number, and that number would be small for lack of data while "
+            "reading as 'options flow is neutral'."
+        ),
+    )
+
+    # --- the degraded path ---
+    eod_degraded_cap_fraction: float = Field(
+        gt=0.0,
+        default=0.50,
+        description=(
+            "Cap on the options sub-score when the chain is end-of-day only "
+            "(`OptionsSnapshot.is_intraday` is False), as a fraction of the "
+            "component's full weight. Section 5 says the sub-score is 'capped "
+            "and flagged' on that path and names no number; 0.50 is a "
+            "judgement call. A FRACTION rather than absolute points so the "
+            "cap survives the Phase 8 weight sweep: a cap of 10 points stops "
+            "binding the moment the sweep lowers the component's weight to 8, "
+            "and nothing would have said so. `_check_cap_can_bind` refuses a "
+            "fraction at or above 1.0, which is not a cap."
+        ),
+    )
+    require_intraday_prints: bool = Field(
+        default=False,
+        description=(
+            "If True, an EOD-only chain disables the component outright "
+            "instead of capping it. False follows section 5, which keeps the "
+            "degraded path and caps it -- EOD data can still carry "
+            "positioning, just not flow TIMING. True is the stricter research "
+            "choice and makes the cap moot; it is offered because 'is a capped "
+            "EOD sub-score worth anything' is a question for measurement, not "
+            "for this docstring."
+        ),
+    )
+    never_synthesize_missing_fields: bool = Field(
+        default=True,
+        description=(
+            "Absent fields stay absent. Section 5: options data is 'Never "
+            "synthesized.' An interpolated IV surface or a back-filled OI "
+            "change is a fabricated observation, and a feature built on one "
+            "cannot be distinguished downstream from a measured feature. "
+            "Disabling this is refused."
+        ),
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def warmup_snapshots(self) -> int:
+        """Snapshots required before any options term is valid.
+
+        In SNAPSHOTS, deliberately. A Phase-5 computer declares `warmup_bars`
+        in bars, and the conversion needs the feed's observed cadence, which
+        only a view can supply. Converting here would mean assuming a cadence
+        -- the same mistake the old `options_lookback_days` name made.
+        """
+        return self.lookback_snapshots + 1
+
+    @model_validator(mode="after")
+    def _check_non_negotiables(self) -> "OptionsFlowConfig":
+        if not self.never_synthesize_missing_fields:
+            raise ValueError(
+                "never_synthesize_missing_fields=False permits filling absent "
+                "chain fields. ARCHITECTURE.md section 5 says options data is "
+                "never synthesized, and the researcher's brief forbids "
+                "inventing missing options data outright. `OptionsSnapshot` "
+                "distinguishes None (not supplied) from 0.0 (observed as zero) "
+                "precisely so that absence survives into the feature layer; "
+                "synthesizing erases that distinction and the audit cannot "
+                "recover it."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_cap_can_bind(self) -> "OptionsFlowConfig":
+        if self.eod_degraded_cap_fraction >= 1.0:
+            raise ValueError(
+                f"eod_degraded_cap_fraction={self.eod_degraded_cap_fraction} is at "
+                "or above 1.0, which is the component's full weight -- that is "
+                "not a cap. Section 5 requires the EOD-degraded options "
+                "sub-score to be capped AND flagged; a cap that cannot bind "
+                "leaves the flag describing a restriction that was never "
+                "applied, which is worse than having neither."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check(self) -> "OptionsFlowConfig":
+        if not self.use_gamma_exposure_proxy and self.weights.gamma_exposure > 0.0:
+            raise ValueError(
+                f"use_gamma_exposure_proxy is False while its weight is "
+                f"{self.weights.gamma_exposure}. The weights sum to 1.0, so a "
+                "term that can never be computed would permanently remove that "
+                "much of the sub-score while the component still claimed full "
+                "availability -- a ceiling below 100% that no caller could see. "
+                "Set weights.gamma_exposure to 0.0 and redistribute the rest, or "
+                "leave the proxy enabled."
+            )
+        return self
 
 # ---------------------------------------------------------------------------
 # Flow Score and setups
@@ -1075,6 +1706,8 @@ class FlowModelConfig(FrozenModel):
     data: DataConfig = Field(default_factory=DataConfig)
     features: FeatureConfig = Field(default_factory=FeatureConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
+    order_flow: OrderFlowConfig = Field(default_factory=OrderFlowConfig)
+    options_flow: OptionsFlowConfig = Field(default_factory=OptionsFlowConfig)
     flow_score: FlowScoreConfig = Field(default_factory=FlowScoreConfig)
     levels: StructureLevelConfig = Field(default_factory=StructureLevelConfig)
     setups: dict[SetupType, SetupConfig] = Field(default_factory=dict)
