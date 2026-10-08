@@ -98,12 +98,24 @@ shift of `delta`, so reaching `cusum_threshold` inside the window requires
     delta > cusum_drift + cusum_threshold / cusum_window_bars
 
 which is 0.5 + 4/60 = 0.567 standard deviations per bar at the defaults.
-That is a strong requirement, and it is reported as a finding rather than
-tuned away: see the DIRECTIONAL_SHIFT row of the confusion matrix in
-`test_regime.py`, where the synthetic generator's own shift regime has a
-per-bar drift-to-vol ratio of 0.0005/0.0018 = 0.28 -- below `cusum_drift`
-alone, so its mean increment is negative and the statistic can only reach
-the threshold on a noise burst.
+The synthetic generator's own shift regime has a per-bar drift-to-vol ratio
+of 0.0005/0.0018 = 0.28 -- below `cusum_drift` alone -- so its mean
+increment is negative and the statistic reaches the threshold there only on
+a noise burst.
+
+The measured failure is the opposite of the one that reasoning suggests,
+and it is reported rather than tuned away. Noise bursts are not rare. Under
+iid returns the per-bar rate of `shift_stat > 4` is 0.82%, which
+`shift_decay_bars = 10` spreads over ten bars to 3.7% of bars; on the
+scored dataset the trigger fires on 17.4% of bars against a true
+DIRECTIONAL_SHIFT share of 3.0%, for a precision of 0.03 at a recall of
+0.18 -- precision equal to the base rate, which is to say no information.
+`cusum_threshold = 4.0` is a false-alarm threshold, not a detection
+threshold: it is the 99.2nd percentile of the null, and a regime occupying
+3% of bars needs a far tighter one. 6.0 would put the null rate with decay
+at 0.08%. The default is left exactly where it shipped and the number is in
+the confusion matrix in `test_regime.py`; see that file's header for why
+moving it against this data would be worthless.
 
 `shift_decay_bars` makes the trigger persist: a bar is raw-labelled
 DIRECTIONAL_SHIFT when `shift_stat > cusum_threshold` on *any* of the last
@@ -142,8 +154,11 @@ quadratic. A bar with no completed `k`-run anywhere in that window has had
 no label stable for `k` bars in the whole horizon, and is reported as
 `Regime.UNKNOWN` -- never tradable -- rather than carrying a stale label
 forward from beyond the horizon. Measured on the scored dataset in
-`test_regime.py`, that fallback fires on a small minority of bars and its
-rate is asserted, so a future change that made it common would fail.
+`test_regime.py`, that fallback fires on *no* bar at all: with
+`hysteresis_search_bars = 24` and `min_regime_bars = 3` some 3-run always
+exists inside the horizon. The rate is asserted anyway, so a future change
+that made it common would fail, and the branch is proved reachable
+separately on a hand-built raw sequence that alternates every bar.
 
 The bound also makes `classify` exactly equal to `label_span` over the
 whole series at the same bar, because `maximum.accumulate` over a span
@@ -176,7 +191,7 @@ Everything else (realized vol, vol-of-vol, efficiency, Kendall tau, the
 CUSUM recursion) is window-local and is computed for the whole span in one
 vectorized pass.
 
-## Warmup
+## Warmup, and why it is 291 rather than 268
 
 `warmup_bars` is the longest *chain*, not the longest single lookback:
 
@@ -185,17 +200,50 @@ vectorized pass.
                  efficiency_period + 1,                         #  21
                  cusum_window_bars + 1)                         #  61
     raw    = max(inst, cusum_window_bars + shift_decay_bars)    # 266, 70
-    warmup = raw + min_regime_bars - 1                          # 268
+    first_confirmable = raw + min_regime_bars - 1               # 268
+    warmup = raw + hysteresis_search_bars + min_regime_bars - 2  # 291
 
 266 bars for one ATR percentile, then `shift_decay_bars - 1` more only if
-the CUSUM chain is the binding one, then `min_regime_bars - 1` more because
-a confirmed label needs that many raw labels behind it. 268 on the shipped
-defaults. `FeatureConfig.warmup_bars` reports 253, which is short of this
-for the same reason `volatility.py` records: it omits the `atr_period` the
-ATR chain consumes before its first value exists, and it knows nothing
-about the regime config's own windows. `FeatureBundle.warmup_bars` takes the
-max over its computers, so declaring the true number here is sufficient --
-but the config's figure is optimistic and is reported as a deviation rather
+the CUSUM chain is the binding one. 268 bars is where a confirmed label
+first *exists*: the run of `min_regime_bars` raw labels behind it fits.
+
+268 is not where it becomes *reproducible*, and that distinction cost this
+module a bug. Hysteresis reads back up to `hysteresis_search_bars` raw
+labels, so at 268 bars the horizon holds 3 raw labels instead of 24 and the
+confirmed label is whatever those 3 say -- UNKNOWN when they disagree --
+while the same bar with 291 bars behind it finds a marker further back.
+Fed exactly the three raw labels a 268-bar window supplies, the closed form
+reports UNKNOWN -- "not tradable" -- on 1_710 of 9_458 scored bars, 18.1%,
+every one of which has a label once the full horizon is visible; cutting
+history to 291 moves none of the thirteen keys at any sampled bar.
+Declaring 268 would
+therefore have made the label at bar `t` depend on where the caller started
+loading, which is exactly the path-dependence the stateless hysteresis
+design above exists to prevent -- arriving through the warmup contract
+instead of through mutable state, and invisible to the lookahead audit
+because nothing here reads the future. So `warmup_bars` is
+`_classify_bars`: the number of bars `classify` actually reads, and the
+number at which every emitted value stops moving. `test_regime.py` asserts
+both halves -- stability at 291, instability at 268.
+
+Section 6 asks for the ATR percentile over "a rolling 252-session window",
+and `atr_percentile_lookback` is 252 *bars*. At the 5-minute interval these
+tests score, 252 bars is 3.2 sessions of the 78-bar RTH grid, and the whole
+291-bar warmup is 3.7 sessions. A literal 252-session window would need
+19_656 ATR values and a ~19_670-bar warmup, which is 100 sessions of a
+year's 5-minute data spent before the first label. The implemented window
+is the config's, not section 6's; the deviation is recorded here and
+measured in `test_regime.py` rather than papered over, because a vol
+percentile taken over three sessions answers "loud for this afternoon"
+while section 6's answers "loud for this year", and those are different
+features with one name.
+
+`FeatureConfig.warmup_bars` reports 253, which is short of this for the
+same reason `volatility.py` records: it omits the `atr_period` the ATR
+chain consumes before its first value exists, and it knows nothing about
+the regime config's own windows. `FeatureBundle.warmup_bars` takes the max
+over its computers, so declaring the true number here is sufficient -- but
+the config's figure is optimistic and is reported as a deviation rather
 than silently matched.
 
 ## Construction takes configuration only
@@ -322,18 +370,42 @@ def kaufman_efficiency(values: np.ndarray) -> float:
     return float(np.clip(safe_divide(displacement, travel, default=0.0), 0.0, 1.0))
 
 
+#: Smallest dispersion, relative to a window's own largest absolute return,
+#: that this module will standardize by.
+#:
+#: `sd > 0` is not a sufficient guard and the difference is not academic. A
+#: window of *identical non-zero* returns -- a tape stepping one tick a bar,
+#: or any stretch whose returns round to the same double -- has a
+#: floating-point stdev of order `sqrt(n) * eps * scale` rather than exactly
+#: zero, because the mean is computed by summation and does not land on the
+#: common value. Dividing the leftover rounding dust by that stdev yields
+#: standardized increments of order one, and the CUSUM accumulates them: 60
+#: identical returns of 0.004 produced `shift_stat = 14.5` against a
+#: threshold of 4.0, so the highest-precedence label in section 6 fired on a
+#: perfectly uniform tape, out of nothing but float error. (`np.zeros` was
+#: unaffected, which is why the degenerate case looked covered.)
+#:
+#: 1e-9 sits six orders above the rounding floor and four below any real
+#: dispersion: prices are tick-quantized, so two different returns on the
+#: same instrument differ by at least about `tick / price`, which is ~1e-5
+#: relative even on an index future.
+RELATIVE_DISPERSION_FLOOR = 1.0e-9
+
+
 def cusum_statistic(returns: np.ndarray, drift: float) -> float:
     """Two-sided CUSUM of standardized `returns`. See the module docstring.
 
-    Returns 0.0 when the window has no return dispersion: with `sd == 0`
-    there is no standardized scale, and a break in a series that never moves
-    is not a break.
+    Returns 0.0 when the window has no *resolvable* return dispersion: with
+    no standardized scale there is no statistic, and a break in a series
+    that never moves is not a break. See `RELATIVE_DISPERSION_FLOOR` for why
+    the test is relative rather than `sd > 0`.
     """
     r = np.asarray(returns, dtype=np.float64)
     if r.size < 2:
         return 0.0
     sd = float(r.std(ddof=1))
-    if not math.isfinite(sd) or sd <= 0.0:
+    floor = RELATIVE_DISPERSION_FLOOR * float(np.max(np.abs(r)))
+    if not math.isfinite(sd) or sd <= 0.0 or sd <= floor:
         return 0.0
     z = (r - float(r.mean())) / sd
     high = 0.0
@@ -396,7 +468,9 @@ def _rolling_cusum(log_returns: np.ndarray, window: int, drift: float) -> np.nda
     blocks = np.lib.stride_tricks.sliding_window_view(log_returns, w)
     sd = blocks.std(axis=1, ddof=1)
     mean = blocks.mean(axis=1)
-    usable = np.isfinite(sd) & (sd > 0.0)
+    # The same relative floor `cusum_statistic` applies, for the same reason.
+    floor = RELATIVE_DISPERSION_FLOOR * np.max(np.abs(blocks), axis=1)
+    usable = np.isfinite(sd) & (sd > 0.0) & (sd > floor)
     safe_sd = np.where(usable, sd, 1.0)
     z = (blocks - mean[:, None]) / safe_sd[:, None]
     high = np.zeros(rows, dtype=np.float64)
@@ -504,18 +578,24 @@ class RegimeDetector(FeatureComputer):
         #: Bars behind one RAW label: the instantaneous window, or the CUSUM
         #: window extended by the decay lookback when that is longer.
         self._raw_bars = max(self._inst_bars, self._cusum_window + self._decay_bars)
-        #: Bars behind one CONFIRMED label.
-        self._warmup_bars = self._raw_bars + self._min_regime_bars - 1
-        #: Bars `classify` reads. Enough raw labels for a full hysteresis
-        #: horizon (`hysteresis_search_bars`) *plus* the `min_regime_bars - 1`
-        #: behind the oldest run that horizon may select. Without those extra
-        #: raw labels the run ending at the far edge of the horizon would be
-        #: invisible to `classify` and visible to a whole-series pass, and the
-        #: two would disagree on exactly the bars where a regime had just
-        #: been confirmed.
+        #: Bars behind the FIRST raw label that could carry a confirmed one:
+        #: a confirmed label needs `min_regime_bars` raw labels behind it.
+        #: This is NOT the warmup -- see below.
+        self._first_confirmable_bars = self._raw_bars + self._min_regime_bars - 1
+        #: Bars `classify` reads, and the declared warmup. Enough raw labels
+        #: for a full hysteresis horizon (`hysteresis_search_bars`) *plus* the
+        #: `min_regime_bars - 1` behind the oldest run that horizon may
+        #: select. Without those extra raw labels the run ending at the far
+        #: edge of the horizon would be invisible to `classify` and visible to
+        #: a whole-series pass, and the two would disagree on exactly the bars
+        #: where a regime had just been confirmed.
         self._classify_bars = (
             self._raw_bars + self._search_bars + self._min_regime_bars - 2
         )
+        #: Bars behind one CONFIRMED label. Equal to `_classify_bars`, not to
+        #: `_first_confirmable_bars`, and that is the whole point: see the
+        #: module docstring on warmup.
+        self._warmup_bars = self._classify_bars
 
     # --- declared contract ---------------------------------------------
 
