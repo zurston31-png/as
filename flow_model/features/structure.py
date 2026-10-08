@@ -796,11 +796,22 @@ class StructureFeatures(FeatureComputer):
             )
 
         notes: list[str] = []
-        # True when this module asked for more bars than the view holds, so a
-        # boundary found at index 0 might be the window's edge rather than a
-        # real session start. When False, index 0 is the start of all the
-        # history there is and the boundary is as certain as anything can be.
-        window_is_cut_short = count > size
+        # True when index 0 of this window is NOT certain to be the start of a
+        # session, so a boundary found there might be the window's edge. Two
+        # separate ways that happens, and both must be caught:
+        #
+        #   size < requested -- the view held fewer bars than this module asked
+        #       for, so the window stops short of where a session boundary could
+        #       lie. This is the case that matters at warmup: `warmup_bars` is
+        #       the pivot window, which for an instrument whose session is
+        #       longer than it does not reach back over the prior session at all.
+        #   count > size -- the view held MORE bars than this module read, so
+        #       there is history before index 0 that a boundary could extend into.
+        #
+        # They are disjoint (`size == min(requested, count)`), and only
+        # `count == requested` leaves index 0 certain: the window got everything
+        # it asked for AND everything that exists.
+        window_is_cut_short = size < requested or count > size
         substituted = False
 
         # --- pivots --------------------------------------------------
@@ -949,6 +960,15 @@ class StructureFeatures(FeatureComputer):
                 f"total volume over the {size - vwap_anchor_start} bars since the "
                 "anchor is zero, so vwap is the unweighted mean typical price"
             )
+            # A VWAP that is quietly an arithmetic mean is a different
+            # statistic wearing the same name, which is the module's own
+            # definition of a substitution -- so it downgrades like every
+            # other one rather than being a note nobody reads. This is not
+            # the zero-divisor convention that `opening_range_position = 0.5`
+            # and `vwap_deviation_atr = 0.0` are: those report a defined
+            # fallback for a ratio that does not exist, while this reports a
+            # *different quantity* under the key `vwap`.
+            substituted = True
         vwap_deviation_atr = safe_divide(last_close - vwap, atr, 0.0)
 
         # --- prior session -------------------------------------------
