@@ -33,7 +33,11 @@ only evidence that the taxonomy is or is not carving the tape correctly.
   definition is reused and the deviation from section 6's wording is
   recorded here rather than resolved silently.
 * `shift_stat` -- two-sided CUSUM of standardized returns over
-  `cusum_window_bars`, with allowance `cusum_drift`.
+  `cusum_window_bars`, with allowance `cusum_drift`. `shift_peak` is its
+  maximum over the trailing `shift_decay_bars` bars, which is the quantity
+  the DIRECTIONAL_SHIFT branch actually tests: section 6's threshold check
+  and `shift_decay_bars`' persistence are one comparison,
+  `shift_peak > cusum_threshold`.
 
 Two bounded companions are emitted for the scoring layer, which may only
 read bounded quantities: `shift_score = squash(shift_stat, cusum_threshold)`
@@ -431,6 +435,7 @@ class RegimeSpan:
     realized_vol: np.ndarray
     vol_of_vol: np.ndarray
     shift_stat: np.ndarray
+    shift_peak: np.ndarray
     raw_code: np.ndarray
     code: np.ndarray
     bars_in_regime: np.ndarray
@@ -451,6 +456,7 @@ class RegimeSpan:
             "realized_vol": float(self.realized_vol[position]),
             "vol_of_vol": float(self.vol_of_vol[position]),
             "shift_stat": float(self.shift_stat[position]),
+            "shift_peak": float(self.shift_peak[position]),
         }
 
 
@@ -500,8 +506,16 @@ class RegimeDetector(FeatureComputer):
         self._raw_bars = max(self._inst_bars, self._cusum_window + self._decay_bars)
         #: Bars behind one CONFIRMED label.
         self._warmup_bars = self._raw_bars + self._min_regime_bars - 1
-        #: Bars `classify` reads: enough for a full hysteresis horizon.
-        self._classify_bars = self._raw_bars + self._search_bars - 1
+        #: Bars `classify` reads. Enough raw labels for a full hysteresis
+        #: horizon (`hysteresis_search_bars`) *plus* the `min_regime_bars - 1`
+        #: behind the oldest run that horizon may select. Without those extra
+        #: raw labels the run ending at the far edge of the horizon would be
+        #: invisible to `classify` and visible to a whole-series pass, and the
+        #: two would disagree on exactly the bars where a regime had just
+        #: been confirmed.
+        self._classify_bars = (
+            self._raw_bars + self._search_bars + self._min_regime_bars - 2
+        )
 
     # --- declared contract ---------------------------------------------
 
@@ -519,6 +533,7 @@ class RegimeDetector(FeatureComputer):
             "realized_vol",
             "vol_of_vol",
             "shift_stat",
+            "shift_peak",
             "shift_score",
             "regime_code",
             "raw_regime_code",
@@ -647,11 +662,18 @@ class RegimeDetector(FeatureComputer):
         shift_stat = shift_extended[first_inst - first_shift :]
 
         # --- raw labels, then hysteresis.
-        fired = shift_extended > self._cusum_threshold
-        decay_windows = np.lib.stride_tricks.sliding_window_view(fired, self._decay_bars)
+        #
+        # `shift_peak` is the largest CUSUM statistic in the trailing
+        # `shift_decay_bars` bars, which is how `shift_decay_bars` is applied:
+        # the trigger persists for that many bars, and a maximum over a
+        # trailing window is bounded memory computed from the visible prefix,
+        # not detector state.
+        decay_windows = np.lib.stride_tricks.sliding_window_view(
+            shift_extended, self._decay_bars
+        )
         # decay_windows[j] covers the decay_bars bars ending at
         # first_shift + j + decay_bars - 1.
-        shift_active = decay_windows.any(axis=1)
+        shift_peak_extended = decay_windows.max(axis=1)
         raw_first_bar = first_shift + self._decay_bars - 1
         raw_bar_start = max(raw_first_bar, self._raw_bars - 1)
         offset = raw_bar_start - first_inst
@@ -660,11 +682,12 @@ class RegimeDetector(FeatureComputer):
                 f"{self.name}: raw labels start at bar {raw_bar_start} but "
                 f"diagnostics start at {first_inst}; warmup is wrong"
             )
+        shift_peak_raw = shift_peak_extended[raw_bar_start - raw_first_bar :]
         raw_code = self._raw_codes(
             vol_pct=vol_pct[offset:],
             efficiency=efficiency[offset:],
             trend_tau=trend_tau[offset:],
-            shift_active=shift_active[raw_bar_start - raw_first_bar :],
+            shift_peak=shift_peak_raw,
         )
         code = self._confirm(raw_code)
         run = self._run_lengths(code)
@@ -684,6 +707,7 @@ class RegimeDetector(FeatureComputer):
             realized_vol=realized_vol[start:],
             vol_of_vol=vol_of_vol[start:],
             shift_stat=shift_stat[start:],
+            shift_peak=shift_peak_raw[label_start:],
             raw_code=raw_code[label_start:],
             code=code[label_start:],
             bars_in_regime=run[label_start:],
@@ -697,7 +721,7 @@ class RegimeDetector(FeatureComputer):
         vol_pct: np.ndarray,
         efficiency: np.ndarray,
         trend_tau: np.ndarray,
-        shift_active: np.ndarray,
+        shift_peak: np.ndarray,
     ) -> np.ndarray:
         """Section 6's table, applied in its stated order.
 
@@ -712,11 +736,11 @@ class RegimeDetector(FeatureComputer):
         a direction, and falls through to CHOP.
         """
         count = vol_pct.size
-        if not (efficiency.size == trend_tau.size == count) or shift_active.size != count:
+        if not (efficiency.size == trend_tau.size == count) or shift_peak.size != count:
             raise FeatureError(
                 f"{self.name}: misaligned raw-label inputs "
                 f"(vol={vol_pct.size} eff={efficiency.size} tau={trend_tau.size} "
-                f"shift={shift_active.size})"
+                f"shift={shift_peak.size})"
             )
         out = np.full(count, CODE_BY_REGIME[Regime.CHOP], dtype=np.int16)
         trending = efficiency >= self._trend_eff
@@ -724,7 +748,7 @@ class RegimeDetector(FeatureComputer):
         out[trending & (trend_tau < 0.0)] = CODE_BY_REGIME[Regime.TRENDING_DOWN]
         out[vol_pct <= self._low_vol] = CODE_BY_REGIME[Regime.LOW_VOL]
         out[vol_pct >= self._high_vol] = CODE_BY_REGIME[Regime.HIGH_VOL]
-        out[shift_active] = CODE_BY_REGIME[Regime.DIRECTIONAL_SHIFT]
+        out[shift_peak > self._cusum_threshold] = CODE_BY_REGIME[Regime.DIRECTIONAL_SHIFT]
         return out
 
     def _confirm(self, raw_code: np.ndarray) -> np.ndarray:
@@ -757,8 +781,17 @@ class RegimeDetector(FeatureComputer):
     def _run_lengths(self, code: np.ndarray) -> np.ndarray:
         """Consecutive identical confirmed labels ending at each position.
 
-        Censored at `hysteresis_search_bars`, so the number does not depend
-        on how much history the caller loaded. It is a floor.
+        Censored at `hysteresis_search_bars`, and a **floor** rather than an
+        exact count: it is read off the span the caller asked for, and
+        `classify` asks for a span holding one hysteresis horizon, so a
+        regime that has held longer than the horizon reports the horizon.
+        A span computed over a longer stretch of history can also report a
+        larger number for a bar near its own left edge, where `classify`
+        cannot see the markers that would extend the run. Every other field
+        of the span is exactly equal between the two paths; this one reads
+        as "at least", and `test_regime.py` asserts the inequality rather
+        than pretending to an equality that a censored statistic cannot
+        have.
         """
         count = code.size
         out = np.zeros(count, dtype=np.int64)
@@ -780,7 +813,7 @@ class RegimeDetector(FeatureComputer):
         deciding statistic past its own threshold, divided by the distance
         from that threshold to the statistic's bound, clamped to [0, 1]:
 
-            DIRECTIONAL_SHIFT  squash(shift_stat - threshold, threshold)
+            DIRECTIONAL_SHIFT  squash(shift_peak - threshold, threshold)
             HIGH_VOL           (vol_pct - high) / (1 - high)
             LOW_VOL            (low - vol_pct) / low
             TRENDING_*         (efficiency - trend_eff) / (1 - trend_eff)
@@ -789,7 +822,11 @@ class RegimeDetector(FeatureComputer):
             UNKNOWN            0.0
 
         `squash` for the shift because `shift_stat` has no upper bound to
-        normalize against; everything else divides by a real distance.
+        normalize against; everything else divides by a real distance. The
+        shift branch reads `shift_peak` -- the largest statistic inside the
+        decay window -- rather than this bar's own, because that peak is
+        what put the label there; using the current bar's value would read
+        0.0 for every bar of a decaying shift.
 
         During hysteresis the confirmed label can disagree with the current
         bar's own measurements, and the margin is then negative and clamps
@@ -800,10 +837,11 @@ class RegimeDetector(FeatureComputer):
         vol = diagnostics["vol_pct"]
         efficiency = diagnostics["efficiency"]
         shift = diagnostics["shift_stat"]
+        peak = diagnostics.get("shift_peak", shift)
         if label is Regime.UNKNOWN:
             return 0.0
         if label is Regime.DIRECTIONAL_SHIFT:
-            return squash(max(0.0, shift - self._cusum_threshold), self._cusum_threshold)
+            return squash(max(0.0, peak - self._cusum_threshold), self._cusum_threshold)
         if label is Regime.HIGH_VOL:
             return _clamp01((vol - self._high_vol) / (1.0 - self._high_vol))
         if label is Regime.LOW_VOL:
@@ -816,7 +854,7 @@ class RegimeDetector(FeatureComputer):
         half_band = 0.5 * (self._high_vol - self._low_vol)
         to_vol_edge = min(vol - self._low_vol, self._high_vol - vol) / half_band
         to_trend = (self._trend_eff - efficiency) / self._trend_eff
-        to_shift = (self._cusum_threshold - shift) / self._cusum_threshold
+        to_shift = (self._cusum_threshold - peak) / self._cusum_threshold
         return _clamp01(min(to_vol_edge, to_trend, to_shift))
 
     def classify(self, view: MarketView) -> RegimeState:
