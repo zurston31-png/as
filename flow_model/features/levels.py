@@ -374,7 +374,11 @@ class Zone(FrozenModel):
     newest_origin_age_bars: int = Field(ge=0)
     oldest_origin_age_bars: int = Field(ge=0)
     known_age_bars: int = Field(
-        ge=0, description="Age of the EARLIEST-known member: when the zone began."
+        ge=0,
+        description=(
+            "Age of the EARLIEST-known member, which is when the zone began to "
+            "exist: the MAXIMUM member `known_age_bars`, not the minimum."
+        ),
     )
     volume_weighted: bool = Field(
         description="False when `price` fell back to the member median."
@@ -461,11 +465,16 @@ def build_zone(
     `volume_weighted_average` falls back to, so its flag is consulted and its
     fallback value discarded.
 
-    The band is the specified width centred on `zone_price`, then widened if
-    necessary so that it contains every member. The widening is the one place
+    The band is the specified width centred on `zone_price`, then SHIFTED if
+    necessary so that it contains every member. The shift is the one place
     this differs from a literal reading of 14.2: a volume-weighted price can
     sit near one edge of a wide cluster, and a band centred there would
-    exclude members of the zone it was built from.
+    exclude members of the zone it was built from. It is a shift rather than
+    a widening because `width >= spread` means a band of exactly 14.2's width
+    containing every member always exists, and widening past that would
+    inflate `zone_width` by up to the spread -- which would silently loosen
+    the touch test, 14.5's rejection requirement and the `s_volume` scaling,
+    all of which read `low` and `high`.
     """
     if not members:
         raise FeatureError("build_zone needs at least one member")
@@ -483,11 +492,23 @@ def build_zone(
     )
     price = weighted_price if volume_weighted else float(np.median(prices))
 
-    spread = float(prices.max() - prices.min())
+    lowest, highest = float(prices.min()), float(prices.max())
+    spread = highest - lowest
     width = max(spread, min_width)
     half = width / 2.0
-    low = min(price - half, float(prices.min()))
-    high = max(price + half, float(prices.max()))
+    # The band is `width` wide, centred on `zone_price` and then SHIFTED (not
+    # widened) until it contains every member. `width >= spread` guarantees a
+    # band of exactly that width containing `[lowest, highest]` exists, and at
+    # most one of the two shifts can bind, so the emitted `zone_width` is
+    # exactly 14.2's `max(member spread, min_width_ticks * tick_size)`.
+    # Widening instead would inflate the band by up to the spread, which would
+    # loosen the touch test, the rejection requirement and the `s_volume`
+    # scaling that all read `zone.low`/`zone.high`.
+    low, high = price - half, price + half
+    if low > lowest:
+        low, high = lowest, lowest + width
+    elif high < highest:
+        low, high = highest - width, highest
     return Zone(
         price=price,
         low=low,
@@ -496,7 +517,7 @@ def build_zone(
         has_anchor=any(member.is_anchor for member in members),
         newest_origin_age_bars=min(member.origin_age_bars for member in members),
         oldest_origin_age_bars=max(member.origin_age_bars for member in members),
-        known_age_bars=min(member.known_age_bars for member in members),
+        known_age_bars=max(member.known_age_bars for member in members),
         volume_weighted=volume_weighted,
         origin_indices=tuple(
             sorted({member.origin_index for member in members if member.origin_index >= 0})
