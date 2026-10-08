@@ -1109,14 +1109,17 @@ class OptionsFlowScorer(ComponentScorer):
                     "intraday chain is never capped and these two flags cannot "
                     "both be set."
                 )
-            if magnitude > self.cap_fraction + BOUND_TOLERANCE:
+            if abs(magnitude - self.cap_fraction) > BOUND_TOLERANCE:
                 raise ScoringError(
                     f"{_OPTIONS_FLOW_OWNER} reported a capped magnitude "
-                    f"{magnitude!r} {where} above this scorer's configured "
-                    f"eod_degraded_cap_fraction {self.cap_fraction!r}. The two "
-                    "were built from different configurations, and a cap read "
-                    "from one config cannot describe a magnitude produced under "
-                    "another."
+                    f"{magnitude!r} {where} that is not this scorer's configured "
+                    f"eod_degraded_cap_fraction {self.cap_fraction!r}. The cap is "
+                    "applied as min(uncapped, cap) and the flag is raised only "
+                    "when it bound, so a bound cap leaves the magnitude AT the "
+                    "fraction exactly -- above it and below it are both "
+                    "mismatches. The two were built from different "
+                    "configurations, and a cap read from one config cannot "
+                    "describe a magnitude produced under another."
                 )
         elif magnitude < uncapped - BOUND_TOLERANCE:
             raise ScoringError(

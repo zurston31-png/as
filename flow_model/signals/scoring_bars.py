@@ -372,16 +372,31 @@ def unit_direction(value: float) -> int:
     """Sign of a unit-valued direction feature, as {-1, 0, +1}.
 
     Sign extraction, not a transform: the keys in `UNIT_DIRECTION_KEYS`
-    already emit exactly -1.0, 0.0 or +1.0, so nothing is lost. A value
-    outside [-1, 1] means the emitting module broke its own contract and
-    raises rather than being silently reduced to a sign.
+    already emit exactly -1.0, 0.0 or +1.0, so nothing is lost. A value that
+    is not one of the three means the emitting module broke its own contract
+    and raises rather than being silently reduced to a sign.
+
+    The in-range case raises too, which it did not originally. A fractional
+    direction -- 0.3, say -- is a magnitude wearing a direction's name,
+    exactly the conflation section 7 separates, and reducing it to a sign
+    would promote "weakly bullish" to a FULL directional vote carrying the
+    component's whole weight into `FlowScore.opposing_points` and into
+    section 3's order-flow gate, which blocks on any opposing direction
+    regardless of magnitude. The argument for sign extraction ("the keys
+    already emit exactly -1, 0 or +1") is an assumption about the producing
+    module, and this is the one place it can be checked;
+    `signals/scoring_flow.py` checks it for its own two keys.
     """
     if not math.isfinite(value):
         raise ScorerError(f"direction feature is not finite: {value}")
-    if abs(value) > 1.0 + BOUND_TOLERANCE:
+    nearest = round(value)
+    if abs(value - nearest) > BOUND_TOLERANCE or nearest not in (-1, 0, 1):
         raise ScorerError(
             f"direction feature {value} is outside {{-1, 0, +1}}; the feature "
-            "module that emitted it has broken its declared contract"
+            "module that emitted it has broken its declared contract. A "
+            "fractional direction is a magnitude wearing a direction's name, "
+            "and reducing it to a sign would cast a full-weight vote the "
+            "measurement does not support."
         )
     if abs(value) < DIRECTION_EPSILON:
         return 0
@@ -782,6 +797,22 @@ class BarsComponentScorer(ABC):
         grade = worst_quality(features, self.required_keys)
         reasons: list[str] = []
         if availability is not None and availability.quality.rank < grade.rank:
+            if availability.quality is DataQuality.MISSING:
+                # `score()` returns an UNAVAILABLE ComponentScore here (the
+                # combined grade is MISSING), so saying anything else would
+                # make `explain()` and `detail["quality_reason"]` tell two
+                # different stories about one bar. Falling through would
+                # report "magnitude/direction key(s) [] graded MISSING" --
+                # an empty key list, because the MISSING grade came from the
+                # dataset verdict and not from any key.
+                return (
+                    f"{label}: UNAVAILABLE, {REASON_TEXT[REASON_FEED_UNAVAILABLE]} "
+                    f"-- data/quality.py grades the dataset MISSING for this "
+                    f"component, so no measurement of it exists for this run "
+                    f"even though this bar's own key(s) are {grade.value}. "
+                    "Reported unavailable rather than as a zero magnitude, and "
+                    "its weight is not redistributed.",
+                )
             reasons.append(
                 f"{label}: {availability.quality.value}, data/quality.py grades "
                 f"the dataset {availability.quality.value} for this component "
