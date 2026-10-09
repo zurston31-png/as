@@ -106,6 +106,7 @@ __all__ = [
     "FlowScoreRefusal",
     "REFUSAL_WAIT_REASON",
     "ScoredComponents",
+    "WEIGHT_SUM_TOLERANCE",
     "WEIGHT_TOLERANCE",
     "aggregate",
     "all_scorers",
@@ -114,11 +115,27 @@ __all__ = [
 ]
 
 
-#: Tolerance when comparing a `ComponentScore.weight` against the configured
-#: weight, and when checking that the five weights sum to `total_points`.
-#: Tight enough that a real disagreement raises, loose enough to absorb the
-#: float error of a YAML round-trip.
+#: Tolerance when comparing a `ComponentScore.weight` against the CONFIGURED
+#: weight for that component. Tight, because the two numbers are the same
+#: number: the scorer is handed its weight out of `config.flow_score.weights`
+#: and echoes it back, so anything beyond float-identity error is a scorer
+#: that chose its own weight.
 WEIGHT_TOLERANCE = 1e-9
+
+#: Tolerance when checking that the five weights sum to `total_points`.
+#:
+#: **Deliberately the same tolerance `FlowScoreConfig` validates with, and
+#: not tighter.** That invariant is OWNED by `FlowScoreConfig._check`, which
+#: accepts `abs(total - total_points) <= 1e-6`. Re-checking it here more
+#: strictly than its owner enforces it made this function raise
+#: `FlowScoreError` on every bar for a config the config layer had already
+#: declared valid -- weights summing to 100.0000005 construct fine and then
+#: killed the run, for a discrepancy five thousand times smaller than the
+#: smallest threshold comparison in `config.setups`. The check stays (the
+#: `[0, total]` bound rests on it) but it now agrees with the layer that
+#: decides what a legal config is, so the only sums that reach the raise are
+#: sums `FlowScoreConfig` would also have refused.
+WEIGHT_SUM_TOLERANCE = 1e-6
 
 #: The `WaitReason` a refusal carries. See the module docstring on why this
 #: is not `DATA_QUALITY`.
@@ -584,6 +601,12 @@ def _check_weights(
     entirely on the weights summing to `total_points`, and a scorer that
     returned its own weight -- a cap applied to a weight rather than to a
     magnitude, say -- would rescale the whole score with nothing saying so.
+
+    The two checks use two tolerances, for two different reasons: see
+    `WEIGHT_TOLERANCE` (a scorer echoing a configured number, so float
+    identity) and `WEIGHT_SUM_TOLERANCE` (an invariant `FlowScoreConfig`
+    owns, so exactly as loose as `FlowScoreConfig` enforces it and no
+    tighter).
     """
     for component, score in scores.items():
         configured = flow_config.weights.get(component)
@@ -604,8 +627,8 @@ def _check_weights(
             )
     total = sum(float(w) for w in flow_config.weights.values())
     if not math.isclose(
-        total, float(flow_config.total_points), rel_tol=0.0, abs_tol=WEIGHT_TOLERANCE
-    ):  # pragma: no cover - FlowScoreConfig validates this
+        total, float(flow_config.total_points), rel_tol=0.0, abs_tol=WEIGHT_SUM_TOLERANCE
+    ):
         raise FlowScoreError(
             f"component weights sum to {total}, not total_points "
             f"{flow_config.total_points}; section 7 requires them to sum to the "
@@ -645,11 +668,38 @@ def summary_lines(outcome: FlowScoreOutcome) -> tuple[str, ...]:
         f"  available points: {outcome.available_points:.1f} of {outcome.max_points:.1f}"
     )
     if outcome.unavailable_components:
-        lines.append(
-            "  UNAVAILABLE: "
-            + ", ".join(c.value for c in outcome.unavailable_components)
-            + f" ({outcome.missing_points:.1f} points, weight not redistributed)"
-        )
+        named = ", ".join(c.value for c in outcome.unavailable_components)
+        if outcome.redistributed:
+            # `missing_points` is 0.0 here BY CONSTRUCTION -- redistribution
+            # scales the measured components up until the enabled weight sums
+            # to `max_points` again -- so the shortfall has to be stated from
+            # the CONFIGURED weights instead. Printing `missing_points` with
+            # the words "weight not redistributed", which is what this line
+            # used to do, told the reader "0.0 points, weight not
+            # redistributed" one line above "WEIGHT WAS REDISTRIBUTED": two
+            # adjacent lines contradicting each other, with the false one
+            # first and the 45 points that have no feed reported as none.
+            withheld = round(
+                sum(
+                    float(s.detail.get("weight_before_redistribution", s.weight))
+                    for component, s in (
+                        outcome.flow_score.components.items()
+                        if outcome.flow_score is not None
+                        else ()
+                    )
+                    if component in outcome.unavailable_components
+                ),
+                6,
+            )
+            lines.append(
+                f"  UNAVAILABLE: {named} ({withheld:.1f} configured points, "
+                "WEIGHT REDISTRIBUTED onto the measured components)"
+            )
+        else:
+            lines.append(
+                f"  UNAVAILABLE: {named} ({outcome.missing_points:.1f} points, "
+                "weight not redistributed)"
+            )
     if outcome.redistributed:
         lines.append("  WEIGHT WAS REDISTRIBUTED: not comparable to a complete dataset.")
     return tuple(lines)

@@ -71,12 +71,47 @@ and the opposition limit are declared in this file, because a test coupled to
 the YAML fails when an unrelated section is edited and silently changes its
 expected values when a default moves.
 
+A seventh thing, found on a second pass over the same two modules and kept
+as its own group at the end of the file: **a value one module calls zero and
+the other calls a vote.** `scoring_bars.unit_direction` validated a direction
+by rounding it inside `BOUND_TOLERANCE` (1e-9) and then took its SIGN, gated
+on a separate `DIRECTION_EPSILON` of 1e-12 -- so everything in the window
+`1e-12 <= |value| <= 1e-9` was accepted as the member 0 and returned as a
+full +-1 vote, while `scoring_flow` returned 0 for the identical number. A
+direction carries the component's WHOLE weight wherever it is read, and
+`level_direction` is where the pipeline takes the trade's SIDE from, so the
+cost was a manufactured side rather than a rounding error. Fixed, and the two
+constants are now the same number so they cannot disagree again.
+
 Two things this file does NOT claim. It makes no statement about predictive
 content -- the only data available at this phase is `data/synthetic.py` and
 hand-built vectors, and a magnitude measured off a generator is a measurement
 of the generator. And it does not assert that the two modules AGREE
 everywhere: two divergences were found and are pinned as divergences, with
 the reasoning in their docstrings, rather than quietly blessed.
+
+Two HONEST GAPS, stated rather than papered over with a test that asserts
+whatever the code does today:
+
+* `ComponentScore.detail["quality_reason"]` is wrong when the component's
+  grade came from the DATASET verdict rather than from any feature key. The
+  code set has no member meaning "data/quality.py graded the dataset below
+  GOOD while this bar's keys are clean", so a DEGRADED dataset verdict is
+  reported as `REASON_KEY_DEGRADED` -- "a feature key this scorer reads is
+  graded DEGRADED" -- when no key is. `explain()` now says the right thing in
+  words (see `test_a_dataset_grade_is_never_reported_as_a_key_grade`); the
+  float code still does not. Choosing a new code is a design decision in a
+  module this file does not own, so it is reported and left untested rather
+  than frozen.
+* `OrderFlowScorer` does not check `magnitude <= order_flow_available_weight`,
+  so `points` can exceed the `attainable_points` ceiling the same score
+  publishes. Demonstrated in
+  `test_an_impossible_order_flow_ceiling_is_accepted_without_complaint` and
+  bounded by a real-computer regression net; not fixed, for the same reason.
+
+The long-run bounds tests sample every `RUN_STRIDE`-th bar, not every bar.
+That is a deliberate cost tradeoff and a stated limit on their reach: a
+violation confined to bars the stride skips would not be seen.
 
 Builders are local, as in `tests/unit/test_levels.py` and
 `tests/unit/test_structure.py`: file ownership, and a failure localizes here
@@ -2364,3 +2399,349 @@ def test_a_degraded_dataset_verdict_reaches_the_bars_scorer_but_not_the_flow_sco
     assert options.quality is DataQuality.GOOD, (
         "the dataset grade is NOT consumed here -- the divergence this pins"
     )
+
+
+# ---------------------------------------------------------------------------
+# risk 1 again: a direction the bound check accepted AS zero
+# ---------------------------------------------------------------------------
+
+#: Values inside `scoring_bars.BOUND_TOLERANCE` of zero but not equal to it.
+#: Nothing in the real feature layer emits one -- every direction key is an
+#: exact -1.0, 0.0 or +1.0, asserted over a long run elsewhere in this file --
+#: so these exercise the enforcement layer, which is the layer whose whole job
+#: is to catch a producing module that stopped honouring that.
+NEAR_ZERO_DIRECTIONS = (1e-10, -1e-10, 5e-10, 1e-9, -1e-9)
+
+
+@pytest.mark.parametrize("component", DIRECTIONAL, ids=lambda c: c.value)
+@pytest.mark.parametrize("value", NEAR_ZERO_DIRECTIONS, ids=repr)
+def test_a_near_zero_direction_reads_as_zero_in_both_modules(component, value):
+    """FIXED BUG: `scoring_bars` signed a value its own check accepted as 0.
+
+    `unit_direction` validates a direction by rounding it and requiring the
+    deviation to be inside `BOUND_TOLERANCE` (1e-9). For 1e-10 that check
+    passes with `nearest == 0` -- the value IS the member 0 as far as the
+    validation is concerned. The function then ignored `nearest` and took the
+    sign instead, gated on a separate `DIRECTION_EPSILON` of 1e-12, so
+    everything in the window
+
+        1e-12 <= |value| <= 1e-9
+
+    was validated as zero and returned as a FULL +-1 vote. One function, two
+    disagreeing definitions of zero, three orders of magnitude apart.
+
+    `signals/scoring_flow.py` returns `int(nearest)` for the identical input,
+    so the two halves of ONE five-component set answered differently about the
+    same number: measured, STRUCTURE and VOL_MOMENTUM said +1 while
+    ORDER_FLOW and OPTIONS_FLOW said 0.
+
+    Consequence, and the reason this is not cosmetic. A direction is a
+    three-valued vote that carries the component's WHOLE weight wherever it is
+    read -- `FlowScore.opposing_points` sums `points`, not direction times
+    magnitude -- and section 3's order-flow gate "blocks on any opposing
+    direction regardless of magnitude". Worse for STRUCTURE specifically:
+    `level_direction` is where the pipeline takes the trade's SIDE from
+    (14.6, and `StructureGate`), so a 1e-10 would have manufactured a LONG
+    out of a number that is zero to every other part of the system.
+
+    Fixed by returning the member the bound check already accepted, and
+    `DIRECTION_EPSILON` is now `BOUND_TOLERANCE` so the two cannot draw the
+    line in different places again.
+    """
+    config = root_config()
+    score = component_score(
+        scorer_for(component, config),
+        vector(full_values(**direction_kwargs(component, value))),
+    )
+    assert score.direction == 0, "a value inside the zero tolerance is not a vote"
+    assert not score.opposes(Side.LONG)
+    assert not score.opposes(Side.SHORT)
+    assert not score.agrees_with(Side.LONG)
+    assert not score.agrees_with(Side.SHORT)
+    # The magnitude is untouched: this is a direction bug, and a fix that
+    # reached the magnitude would be the section 7 conflation all over again.
+    assert score.magnitude == pytest.approx(BIG)
+    assert score.points == pytest.approx(BIG * PRIOR_WEIGHTS[component])
+
+
+def test_a_near_zero_direction_casts_no_weighted_vote_at_the_aggregate():
+    """The bug's cost, in points, at the only place it would have been felt.
+
+    One component's `direction` set to 1e-10 and every other direction left
+    at 0. Hand-computed against the locally-declared weights:
+
+        magnitude 0.9 everywhere  ->  score = 0.9 * 100 = 90.0
+        opposing points for either side = 0.0, because nothing votes
+
+    Under the bug VOL_MOMENTUM read +1, so `opposing_points(SHORT)` was its
+    full 0.9 * 20 = 18.0 points -- above the locally-declared
+    `max_opposing_points` of 12.0 -- and the entry filter would have refused
+    a short on the strength of a value numerically indistinguishable from
+    zero. The magnitude aggregate is asserted first so the test cannot pass
+    by the components having collapsed instead.
+    """
+    config = root_config()
+    components = {}
+    for component in EVERY_COMPONENT:
+        kwargs = dict(direction_kwargs(component, 0.0))
+        if component is Component.VOL_MOMENTUM:
+            kwargs = dict(direction_kwargs(component, 1e-10))
+        components[component] = component_score(
+            scorer_for(component, config), vector(full_values(**kwargs))
+        )
+    flow = FlowScore(symbol=SYMBOL, ts=TS, components=components, max_points=100.0)
+
+    # premise: nothing was suppressed, so the aggregate is the full 0.9 * 100
+    assert flow.available_points == pytest.approx(100.0)
+    assert flow.score == pytest.approx(90.0)
+
+    assert flow.components[Component.VOL_MOMENTUM].direction == 0
+    assert flow.opposing_points(Side.LONG) == pytest.approx(0.0)
+    assert flow.opposing_points(Side.SHORT) == pytest.approx(0.0)
+    assert flow.net_direction() == 0
+    # 18.0 was the quantity the bug put here, and 12.0 is the limit it cleared.
+    assert flow.opposing_points(Side.SHORT) < MAX_OPPOSING_POINTS
+
+
+# ---------------------------------------------------------------------------
+# risk 3 again: a reason that names no key
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dataset_grade", [DataQuality.DEGRADED, DataQuality.STALE], ids=lambda g: g.value
+)
+def test_a_dataset_grade_is_never_reported_as_a_key_grade(dataset_grade):
+    """FIXED BUG: the empty key list, for the two grades the first fix missed.
+
+    `test_the_bars_scorer_explains_a_dataset_level_refusal_the_way_it_scores_it`
+    pins the same defect for a dataset verdict of MISSING, and the guard in
+    `explain()` carries a comment naming it exactly: "falling through would
+    report 'magnitude/direction key(s) [] graded MISSING' -- an empty key
+    list, because the MISSING grade came from the dataset verdict and not from
+    any key." That guard tests `availability.quality is DataQuality.MISSING`,
+    so DEGRADED and STALE fell straight through it into the branch the
+    comment describes, and `explain()` returned two lines that contradict
+    each other:
+
+        "liquidity: DEGRADED, data/quality.py grades the dataset DEGRADED
+         for this component even though this bar's keys are GOOD"
+        "liquidity: DEGRADED, magnitude/direction key(s) [] graded DEGRADED"
+
+    The first says the keys are GOOD; the second says a key is DEGRADED and
+    names none. Both go verbatim into `Signal.reasons` and from there into the
+    trade record, where section 12's rejection analysis reads them.
+
+    DEGRADED is the live half: `QualityGrader.availability()` returns
+    `computable=True, quality=DEGRADED` for LIQUIDITY on a dataset with no
+    quote feed, which is the shape the brief says real research faces. It is
+    reached only when the bar's own keys grade GOOD at the same time -- which
+    `features/liquidity.py` does not currently do, since it degrades its own
+    score on exactly that condition -- so this was latent, not firing. STALE
+    is unreachable through `availability()` at all and is parametrized here
+    because the branch does not distinguish them.
+
+    Fixed by emitting the per-key line only when a key is actually at that
+    grade. In the ordinary path `grade` IS some key's grade, so the guard
+    never fires there; the test below asserts that case too.
+    """
+    config = root_config()
+    scorer = scorer_for(Component.LIQUIDITY, config)
+    features = vector(full_values())  # every key GOOD
+    verdict = ComponentAvailability(
+        component=Component.LIQUIDITY,
+        computable=True,
+        quality=dataset_grade,
+        weight=15.0,
+        degraded_feeds=(Feed.QUOTES,),
+        note="no quote feed: spread and depth terms unavailable, volume only",
+    )
+
+    score = component_score(scorer, features, verdict)
+    reasons = scorer.explain(features, verdict)
+
+    # premise: the dataset grade IS consumed, so there is something to explain
+    assert score.quality is dataset_grade
+    assert score.enabled is True, "a grade below GOOD is not an unavailability"
+
+    assert len(reasons) == 1, f"one fact, one line; got {reasons}"
+    assert "data/quality.py grades the dataset" in reasons[0]
+    assert "[]" not in reasons[0], "a reason must not name an empty key list"
+    assert "this bar's keys are GOOD" in reasons[0]
+
+
+def test_a_real_key_grade_is_still_named_in_the_reason():
+    """The guard above must not have silenced the ordinary path.
+
+    A fix that stopped naming keys would make every DEGRADED component report
+    its grade with no reason attached, which is most of the bars in this
+    project. Here the DEGRADED grade comes from the magnitude key itself, so
+    the key list is non-empty and must be printed -- and the test states which
+    key it expects by name rather than only that something was printed.
+    """
+    config = root_config()
+    scorer = scorer_for(Component.LIQUIDITY, config)
+    features = vector(
+        full_values(), grades={"liquidity_score": DataQuality.DEGRADED}
+    )
+    score = component_score(scorer, features)
+    reasons = scorer.explain(features)
+
+    assert score.quality is DataQuality.DEGRADED
+    assert len(reasons) == 1
+    assert "liquidity_score" in reasons[0]
+    assert "[]" not in reasons[0]
+
+
+# ---------------------------------------------------------------------------
+# an invariant one module checks and the other does not
+# ---------------------------------------------------------------------------
+
+
+def test_the_order_flow_ceiling_is_never_below_the_points_it_awards():
+    """REPORTED GAP, with a regression net where one can be built.
+
+    `features/orderflow.py` states its own ceiling: "a term whose input is
+    absent contributes nothing and its weight is NOT reallocated to the
+    others, so the attainable magnitude falls to
+    `order_flow_available_weight`". `OrderFlowScorer` publishes that ceiling
+    as `detail["attainable_points"] = weight * order_flow_available_weight`
+    and lists "verify the feature layer's own stated invariants and raise a
+    `ScoringError` naming the producing module when one is broken" as item 5
+    of its job -- but it never checks `magnitude <= available_weight`.
+    `OptionsFlowScorer` checks five analogous invariants about its cap and
+    raises on each.
+
+    So a producing module that broke the ceiling would emit a
+    `ComponentScore` whose `points` exceed the reachable ceiling the same
+    score reports, silently: a hand-built vector with magnitude 0.9 and
+    available_weight 0.5 gives 22.5 points against a declared ceiling of
+    12.5, and nothing objects. NOT FIXED here, because adding the raise is a
+    design decision in a module this file does not own and the honest report
+    is the asymmetry itself.
+
+    What IS testable is that the real computer does not violate it, on both
+    feed shapes, so a regression in `features/orderflow.py` is caught
+    somewhere even while the scorer declines to catch it. Checked on every
+    sampled bar of the long run rather than at one chosen instant.
+    """
+    checked = 0
+    for feeds in ("all", "bars"):
+        for ts, scores in scored_run(feeds=feeds):
+            score = scores[Component.ORDER_FLOW]
+            if not score.enabled:
+                continue
+            available_weight = score.detail["order_flow_available_weight"]
+            assert score.magnitude <= available_weight + 1e-12, (feeds, ts)
+            assert score.points <= score.detail["attainable_points"] + 1e-12, (
+                feeds,
+                ts,
+            )
+            checked += 1
+    assert checked > 0, "the run never produced a measured order-flow bar"
+
+
+def test_an_impossible_order_flow_ceiling_is_accepted_without_complaint():
+    """The gap above, demonstrated rather than described.
+
+    Hand-built: magnitude 0.9 with `order_flow_available_weight` 0.5. The
+    arithmetic is exact by design -- 0.9 * 25 = 22.5 points awarded against a
+    declared ceiling of 25 * 0.5 = 12.5 -- and the scorer raises nothing. This
+    asserts the CONTRADICTION is reachable, which is a statement about the
+    missing guard; it is deliberately not written as `points == 22.5` alone,
+    which would read as blessing the behaviour.
+
+    If someone later adds the symmetric check to `OrderFlowScorer`, this test
+    fails and should be rewritten as a `pytest.raises` -- that is the intended
+    outcome, and the failure is the notification.
+    """
+    config = root_config()
+    score = component_score(
+        scorer_for(Component.ORDER_FLOW, config),
+        vector(
+            full_values(
+                order_flow_magnitude=0.9, order_flow_available_weight=0.5
+            )
+        ),
+    )
+    assert score.points == pytest.approx(22.5)
+    assert score.detail["attainable_points"] == pytest.approx(12.5)
+    assert score.points > score.detail["attainable_points"], (
+        "a score above its own declared reachable ceiling, reported as a gap"
+    )
+
+
+# ---------------------------------------------------------------------------
+# risk 5 again: two axes besides the value
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("component", EVERY_COMPONENT, ids=lambda c: c.value)
+def test_no_scorer_is_moved_by_an_undeclared_key_changing_GRADE(component):
+    """`reads` has to be the whole truth about the grades too, not just values.
+
+    `test_no_scorer_is_moved_by_a_key_it_does_not_declare` perturbs each of
+    the 96 keys' VALUES. A scorer can depend on a key without reading its
+    value: `worst_quality` consults `quality_of` per key, and
+    `LiquidityScorer._derived_detail` decides `spread_measured` and
+    `profile_measured` purely from two keys' GRADES. So the grade is a second,
+    independent channel through which an undeclared dependency can enter, and
+    one where the mistake is easy -- grading on `features.quality` instead of
+    per key is the specific trap `worst_quality`'s own docstring warns about,
+    and it would make every bars-only bar MISSING for reasons having nothing
+    to do with the component.
+
+    Every undeclared key is re-graded MISSING, STALE and DEGRADED in turn and
+    the `ComponentScore` must be byte-identical each time. Measured: zero
+    movements across all five scorers, which is why this is a pin and not a
+    bug report.
+    """
+    config = root_config()
+    scorer = scorer_for(component, config)
+    declared = set(scorer.reads)
+    baseline_values = full_values()
+    baseline = component_score(scorer, vector(baseline_values))
+
+    undeclared = [key for key in sorted(baseline_values) if key not in declared]
+    assert undeclared, "the premise: there ARE keys this scorer does not declare"
+
+    for key in undeclared:
+        for grade in (DataQuality.MISSING, DataQuality.STALE, DataQuality.DEGRADED):
+            after = component_score(
+                scorer, vector(baseline_values, grades={key: grade})
+            )
+            assert after == baseline, (
+                f"{type(scorer).__name__} moved when undeclared key {key!r} was "
+                f"re-graded {grade.value}"
+            )
+
+
+def test_a_component_quotes_only_its_own_computers_notes():
+    """`FeatureVector.notes` is bundle-merged, so a filter that is too loose
+    attributes another computer's words to this component.
+
+    `ComponentScoring.notes` is the producing module's own reasons, and it
+    reaches `Signal.reasons`. "orderflow: tick feed absent" appearing under
+    OPTIONS_FLOW would be a sentence about a feed that component does not use,
+    in a trade record read by section 12's rejection analysis.
+
+    The two prefixes are near-neighbours (`orderflow:` and `options_flow:`),
+    so two imposters are included that share a prefix up to the colon --
+    `orderflow_extra:` and `options_flowX:`. A filter written as a substring
+    match, or one that dropped the colon, picks those up.
+    """
+    config = root_config()
+    notes = (
+        "orderflow: tick feed absent",
+        "options_flow: end-of-day chain",
+        "liquidity: no quote feed",
+        "orderflow_extra: imposter",
+        "options_flowX: imposter",
+    )
+    features = vector(full_values(), notes=notes)
+
+    order_flow = scorer_for(Component.ORDER_FLOW, config).score(features)
+    options_flow = scorer_for(Component.OPTIONS_FLOW, config).score(features)
+
+    assert order_flow.notes == ("orderflow: tick feed absent",)
+    assert options_flow.notes == ("options_flow: end-of-day chain",)

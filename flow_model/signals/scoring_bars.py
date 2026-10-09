@@ -277,7 +277,15 @@ BOUND_TOLERANCE = 1e-9
 #: against a hand-built vector carrying a denormal; it is not a dead band,
 #: and the dead band that matters lives in `features/momentum.py` where the
 #: move it suppresses can be measured in ATR.
-DIRECTION_EPSILON = 1e-12
+#:
+#: It is `BOUND_TOLERANCE` and not a tighter number, because the two have to
+#: agree about which values count as zero. They did not: at 1e-12 the window
+#: `1e-12 <= |value| <= 1e-9` was accepted by the bound check as the member
+#: 0 -- `round(value)` is 0 and the deviation is inside tolerance -- and then
+#: returned as a FULL +-1 directional vote. `unit_direction` now reads the
+#: member the bound check accepted, so this constant and that check cannot
+#: draw the line in two different places.
+DIRECTION_EPSILON = BOUND_TOLERANCE
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +406,13 @@ def unit_direction(value: float) -> int:
             "and reducing it to a sign would cast a full-weight vote the "
             "measurement does not support."
         )
-    if abs(value) < DIRECTION_EPSILON:
-        return 0
-    return 1 if value > 0.0 else -1
+    # The member of {-1, 0, +1} the check above already accepted this value
+    # AS, and not an independent sign reading of it. Taking the sign instead
+    # disagreed with the check in the window `DIRECTION_EPSILON <= |value| <=
+    # BOUND_TOLERANCE`: a 1e-10 was validated as the member 0 and then
+    # returned as a full +1 vote, which `signals/scoring_flow.py` reads as 0
+    # on the identical input. See `DIRECTION_EPSILON`.
+    return int(nearest)
 
 
 def _bounded_magnitude_input(key: str, value: float) -> float:
@@ -821,10 +833,19 @@ class BarsComponentScorer(ABC):
             grade = availability.quality
         if grade is not DataQuality.GOOD:
             hit = _keys_at_grade(features, self.required_keys, grade)
-            reasons.append(
-                f"{label}: {grade.value}, magnitude/direction key(s) "
-                f"{_named(hit)} graded {grade.value}"
-            )
+            # Only when a key is actually AT this grade. When `grade` came
+            # from the dataset verdict a line above, no key is, and this
+            # reported "magnitude/direction key(s) [] graded DEGRADED" -- the
+            # same empty key list the MISSING branch was written to prevent,
+            # for the two grades that branch does not cover, contradicting
+            # the line that just said the keys are GOOD. In the ordinary path
+            # `grade` IS some key's grade, so `hit` is non-empty and this
+            # guard never fires.
+            if hit:
+                reasons.append(
+                    f"{label}: {grade.value}, magnitude/direction key(s) "
+                    f"{_named(hit)} graded {grade.value}"
+                )
         for worse in (DataQuality.MISSING, DataQuality.STALE, DataQuality.DEGRADED):
             if worse.rank >= grade.rank:
                 continue

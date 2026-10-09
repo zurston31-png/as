@@ -173,6 +173,25 @@ SIZING_WAIT_REASONS: Mapping[str, WaitReason] = {
 }
 
 
+def _measured_atr(features: FeatureVector) -> float | None:
+    """ATR as a MEASUREMENT, or None.
+
+    None for an absent key, a key graded MISSING (the not-ready path writes a
+    0.0 placeholder at that grade), a non-finite value, or a non-positive one.
+    Mirrors `signals/gates.py`'s `_measured`, which the gates use for the same
+    reason: reading a placeholder at MISSING would read a value nobody
+    measured.
+    """
+    if "atr" not in features.values:
+        return None
+    if features.quality_of("atr") is DataQuality.MISSING:
+        return None
+    value = float(features.values["atr"])
+    if not math.isfinite(value) or value <= 0.0:
+        return None
+    return value
+
+
 class EngineError(RuntimeError):
     """Raised when the engine's declared contract is violated.
 
@@ -631,7 +650,23 @@ class SignalEngine:
         feature layer passes a `PrecomputedInputs`. One sequence, two
         front doors, so the backtest and a hand-built test exercise the same
         gate order.
+
+        The per-symbol contract is enforced HERE as well as in `decide`,
+        because this is the other public door and both lead to the same
+        `InstrumentSpec`. Without the check, stage inputs for another symbol
+        produced a `Signal` carrying that symbol priced with this engine's
+        tick size and point value -- a plan whose risk_dollars was wrong by
+        the ratio of the two contracts' point values, which is exactly the
+        error `decide`'s message says the check exists to prevent.
         """
+        if inputs.symbol != self.symbol:
+            raise EngineError(
+                f"this engine is built for {self.symbol!r} and was handed stage "
+                f"inputs for {inputs.symbol!r}. The feature computers, the gates "
+                "and the risk layer all carry that symbol's InstrumentSpec, so "
+                "the trade would be sized with the wrong tick size and point "
+                "value. A multi-symbol run holds one engine per symbol."
+            )
         account_equity = (
             float(self.config.risk.starting_equity) if equity is None else float(equity)
         )
@@ -877,15 +912,35 @@ class _Run:
                 reasons=("risk: WAIT -- no structural stop, so R is undefined",),
             )
 
-        atr = features.get("atr")
-        atr_value = (
-            float(atr) if atr is not None and math.isfinite(atr) and atr > 0 else None
-        )
-        max_stop_distance = (
-            float(setup_config.max_stop_atr_multiple) * atr_value
-            if atr_value is not None
-            else None
-        )
+        atr_value = _measured_atr(features)
+        if atr_value is None:
+            # Section 0.4: "Missing data produces WAIT, never a guess." The
+            # setup's `max_stop_atr_multiple` is the ONLY bound on how wide
+            # 14.6's determined stop may be, and without an ATR it cannot be
+            # evaluated. Sizing with `max_stop_distance=None` does not degrade
+            # the cap, it REMOVES it: a 20x-ATR stop was accepted by a setup
+            # that caps the stop at 2x, with nothing in the record saying the
+            # check had not run. `MomentumGate` and `signals/setups.py` both
+            # decline a bar whose `atr_percentile` was never measured "rather
+            # than admitted on an unmeasured quantity"; this is the same
+            # quantity and gets the same answer.
+            return GateResult(
+                stage=GateStage.RISK,
+                passed=False,
+                wait_reason=WaitReason.RISK_LIMIT,
+                detail=(
+                    "atr is absent or graded MISSING, so this setup's "
+                    f"max_stop_atr_multiple ({setup_config.max_stop_atr_multiple:g}) "
+                    "cannot be turned into a stop-width cap. The bar is declined "
+                    "rather than sized with the only bound on the stop width "
+                    "silently not applied"
+                ),
+                reasons=(
+                    "risk: WAIT -- no ATR measurement, so the setup's stop-width "
+                    "cap is unevaluable and the stop is not admitted uncapped",
+                ),
+            )
+        max_stop_distance = float(setup_config.max_stop_atr_multiple) * atr_value
         sizing = size_position(
             spec=engine.spec,
             side=side,
@@ -1113,6 +1168,30 @@ class _Run:
         return DataQuality.worst(*grades)
 
     def _component_points(self) -> dict[Component, float]:
+        """The points that produced `Signal.flow_score`, so the record adds up.
+
+        The aggregate may hand back components that are not the ones it was
+        given: with `redistribute_disabled_weight` on, the enabled components'
+        weights are scaled up to `total_points`, so their points are larger
+        than the scorers' own. Reporting the scorers' points beside the
+        redistributed score put two numbers on one record that did not add up
+        -- 22.31 of component points beside a reported 40.57 -- and a record
+        whose parts do not sum to its total cannot audit the total.
+
+        So the aggregate's components win whenever a Flow Score exists. On
+        every other path -- including both non-redistributing ones -- the
+        aggregate passes the same `ComponentScore` objects through unchanged,
+        so this is identical to reading them here. When the aggregate REFUSED
+        there is no score to be consistent with, and the scorers' own points
+        are the right thing to report: they are what was measured, and the
+        shortfall is what the refusal is about.
+        """
+        flow = self._flow
+        if flow is not None and flow.flow_score is not None:
+            return {
+                component: score.points
+                for component, score in flow.flow_score.components.items()
+            }
         return {
             component: score.points for component, score in self._components.items()
         }
@@ -1126,12 +1205,17 @@ class _Run:
         return float(price)
 
     def _atr(self) -> float | None:
+        """ATR at this bar, or None when it was not measured.
+
+        The grade is consulted, not just the value: `FeatureComputer`'s
+        not-ready path writes a 0.0 placeholder alongside a MISSING grade, and
+        reporting that as `atr=0.0` would read downstream as a measurement of
+        zero volatility. None is "not evaluated", which is the distinction
+        `EngineDecision`'s docstring insists on everywhere else.
+        """
         if self._features is None:
             return None
-        atr = self._features.get("atr")
-        if atr is None or not math.isfinite(atr):
-            return None
-        return float(atr)
+        return _measured_atr(self._features)
 
     # --- invariants -----------------------------------------------------
 

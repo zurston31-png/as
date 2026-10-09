@@ -67,7 +67,25 @@ other four hold 76. `FlowScore.net_direction()` is `+1` on that aggregate and no
 trade is taken, which is the "quietly takes the majority direction" bug the
 section warns about.
 
-Two findings this file REPORTS rather than repairs, each at its test:
+Two bugs this file FOUND AND FIXED in `signals/flow_score.py`, each argued at
+its test:
+
+* `test_a_weight_sum_the_config_accepts_cannot_crash_the_aggregate`. The
+  aggregate re-checked "the weights sum to `total_points`" at 1e-9 while
+  `FlowScoreConfig`, which OWNS that invariant, enforces it at 1e-6. Weights
+  summing to 100.0000005 therefore constructed and then raised `FlowScoreError`
+  on every bar -- an exception, not a refusal, so a run died rather than
+  recording a WAIT -- over 5e-7 points out of 100. The sum check now uses
+  `WEIGHT_SUM_TOLERANCE`, equal to its owner's; the per-component check stays at
+  1e-9, where the two numbers compared really are one number.
+* `test_the_summary_of_a_redistributed_outcome_does_not_deny_the_redistribution`.
+  `summary_lines` printed "`(0.0 points, weight not redistributed)`" directly
+  above "`WEIGHT WAS REDISTRIBUTED`" -- the shortfall reading zero because
+  redistribution restores `available_points` to `max_points`, and the words
+  denying the thing the next line announced. The one report whose job is to be
+  loud about an inflated score led with a denial of it.
+
+Six findings this file REPORTS rather than repairs, each at its test:
 
 * `test_three_of_the_entry_filter_s_five_declared_reasons_are_unreachable`.
   `WAIT_REASONS_BY_STAGE[ENTRY_FILTER]` declares five reasons. `ORDER_FLOW`
@@ -76,9 +94,20 @@ Two findings this file REPORTS rather than repairs, each at its test:
   no direction keys; `STRUCTURE` cannot, because `StructureScorer` reads its
   direction from `level_direction`, the same key the structure gate reads the
   side from. `gates.py` documents only the `LIQUIDITY` case.
-* `test_the_aggregate_s_weight_sum_check_is_reachable_despite_its_pragma`. The
-  branch is marked `# pragma: no cover - FlowScoreConfig validates this`, but
-  the two checks use tolerances three orders of magnitude apart.
+* `test_two_of_the_setup_stage_s_declared_reasons_are_unreachable_as_shipped`.
+  The same shape at the setup stage, for `NO_STRUCTURE` and `COMPONENT_DISABLED`.
+* `test_nothing_validates_the_options_limit_against_the_options_weight`. A
+  Phase 8 weight sweep can silently retire the options-contradiction gate.
+* `test_redistribution_puts_the_two_point_based_gates_on_different_scales`. The
+  options gate sees unscaled points and the entry filter sees redistributed
+  ones, inside one bar.
+* `test_a_selection_that_never_measured_reward_risk_still_prints_zero`. An
+  unmeasured `achievable_rr` records as 0.000 in the summary and in the gate's
+  diagnostics, because the field is a plain float.
+* `test_a_bare_signal_cannot_tell_a_partial_fifty_five_from_a_complete_one`.
+  With strict mode off, a 55-of-55 and a 55-of-100 produce the same
+  `Signal.flow_score` AND the same `data_quality`; `confidence` is the only
+  structured field that separates them.
 
 Builders are local on purpose, and none of them reads
 `flow_model/config/defaults.yaml`: every weight, threshold and band edge under
@@ -87,6 +116,15 @@ an expected value silently. The two numbers the shipped config does own and
 these tests do assert against -- `max_opposing_points` 12.0 and
 `options_contradiction_points` 14.0 -- are declared as module constants below
 and used by name.
+
+**The last two sections exist because a line trace said so.** After the scenes
+above were written, every statement of the three modules was traced while this
+file ran, and the branches that never executed were collected. Several were
+stated rules nothing checked -- `Regime.UNKNOWN` is never tradable, a view that
+serves no bars is WARMUP, a setup absent from `config.setups` declines rather
+than raising -- and two were published functions no test had ever called.
+`flow_score.summary_lines` was one of them, and the redistribution
+contradiction above was living inside it.
 
 **The scorers are fixed by the test.** Section 7's separation is enforced in
 `signals/scoring_bars.py` and `signals/scoring_flow.py`, which have their own
@@ -147,6 +185,8 @@ from flow_model.features.levels import (
 from flow_model.signals.engine import PrecomputedInputs, SignalEngine
 from flow_model.signals.flow_score import (
     REFUSAL_WAIT_REASON,
+    WEIGHT_SUM_TOLERANCE,
+    WEIGHT_TOLERANCE,
     FlowScoreError,
     FlowScoreOutcome,
     FlowScoreRefusal,
@@ -167,17 +207,20 @@ from flow_model.signals.gates import (
     StructureGate,
     WarmupReport,
     assess_warmup,
+    pipeline_gates,
 )
 from flow_model.signals.scoring_bars import LiquidityScorer, StructureScorer, VolMomentumScorer
 from flow_model.signals.setups import (
     SETUP_BY_RR_CLASS,
     SetupError,
+    SetupSelection,
     min_flow_score_required,
     min_reward_risk_floor,
     select,
     tradable_regimes,
     vol_percentile_band,
 )
+from flow_model.signals.setups import summary_lines as setup_summary_lines
 
 SYMBOL = "NQ"
 TS = datetime(2021, 6, 15, 15, 30, tzinfo=timezone.utc)
@@ -698,29 +741,88 @@ def test_an_unavailable_component_may_not_have_its_weight_zeroed():
         aggregate(flow_score_config(), scored(table))
 
 
-def test_the_aggregate_s_weight_sum_check_is_reachable_despite_its_pragma():
-    """REPORTED FINDING: the branch marked unreachable is reachable.
+def test_a_weight_sum_the_config_accepts_cannot_crash_the_aggregate():
+    """BUG FOUND AND FIXED: the aggregate was stricter than its own gatekeeper.
 
-    `_check_weights`'s total check carries `# pragma: no cover - FlowScoreConfig
-    validates this`, but the two checks use different tolerances:
-    `FlowScoreConfig` allows `abs(total - total_points) <= 1e-6` and
-    `WEIGHT_TOLERANCE` is 1e-9. Weights summing to 100.0000005 therefore
-    construct and then raise in the aggregate. Severity is low -- the aggregate
-    is the stricter of the two, which is the direction a safety check should
-    err -- but the comment is wrong, and a `pragma: no cover` on a reachable
-    branch hides whatever else walks through it.
+    Two places check section 7's "weights must sum to 100".
+    `FlowScoreConfig._check` OWNS the invariant and accepts
+    `abs(total - total_points) <= 1e-6`; `flow_score._check_weights`
+    re-checked it, and used to do so at `WEIGHT_TOLERANCE` (1e-9) under a
+    `# pragma: no cover - FlowScoreConfig validates this` comment that was
+    simply false.
+
+    Consequence, before the fix: weights summing to 100.0000005 -- which the
+    config layer constructs without complaint -- made `aggregate` raise
+    `FlowScoreError` on EVERY BAR. Not a refusal, which the engine records as a
+    WAIT, but an exception out of `decide()`, so a ten-year run died on bar one
+    with a message about a config the config layer had already blessed. And the
+    discrepancy at stake is 5e-7 points out of 100: six orders of magnitude
+    below `min_flow_score`'s smallest increment, so it cannot move a single
+    threshold comparison. Severity MEDIUM: it needs a hand-edited weight (or a
+    Phase 8 sweep writing weights back as floats), but when it fires it takes
+    the whole run with it and the error text blames the wrong layer.
+
+    Fixed in `flow_score.py` by giving the sum check its own constant,
+    `WEIGHT_SUM_TOLERANCE = 1e-6`, equal to what `FlowScoreConfig` enforces. The
+    per-component comparison stays at 1e-9, because that one compares a scorer's
+    weight against the configured number it was handed -- the same number, so
+    float identity is the right test. The three tolerances now agree: a config
+    the schema accepts aggregates, and a full-magnitude bar on it still clears
+    `FlowScore._check_bounds`, which allows the same 1e-6.
     """
     drifted = dict(WEIGHTS)
     drifted[Component.VOL_MOMENTUM] = 20.0000005
-    cfg = FlowScoreConfig(weights=drifted, total_points=100.0)  # 1e-6 tolerance: fine
+    cfg = FlowScoreConfig(weights=drifted, total_points=100.0)  # 1e-6: accepted
+    assert sum(cfg.weights.values()) == pytest.approx(100.0, abs=1e-6)
     assert sum(cfg.weights.values()) != pytest.approx(100.0, abs=1e-9)
+    assert WEIGHT_SUM_TOLERANCE == 1e-6
+    assert WEIGHT_TOLERANCE == 1e-9
 
     table = all_bullish(0.5)
     table[Component.VOL_MOMENTUM] = component(
         Component.VOL_MOMENTUM, 0.5, 1, weight=20.0000005
     )
+    # 0.5 * 100.0000005 = 50.00000025, which rounds to 50.0 at six places
+    outcome = aggregate(cfg, scored(table))
+    assert not outcome.refused
+    assert outcome.score == 50.0
+
+    # and the full-magnitude bar, where the drift lands on the bound itself
+    full = {
+        c: component(c, 1.0, 1, weight=w) for c, w in drifted.items()
+    }
+    assert aggregate(cfg, scored(full)).score == pytest.approx(100.0, abs=1e-6)
+
+
+def test_a_weight_sum_the_config_would_refuse_still_raises_in_the_aggregate():
+    """The sum check is loosened, not removed: the `[0, total]` bound rests on it.
+
+    A `FlowScoreConfig` cannot be built with weights summing to 90, so the only
+    way to reach `aggregate` with such a config is to bypass the constructor --
+    which is exactly what a `model_construct` does, and what a future refactor
+    that assembles the config differently would do. The aggregate must still
+    refuse, because a 90-point weight sum against `total_points=100` means
+    `FlowScore.max_points` is a bound the score can never approach and every
+    `min_flow_score` is being compared against the wrong scale.
+    """
+    bad = dict(WEIGHTS)
+    bad[Component.VOL_MOMENTUM] = 10.0  # 90, not 100
+    smuggled = FlowScoreConfig.model_construct(
+        weights=bad,
+        total_points=100.0,
+        strict_component_availability=True,
+        redistribute_disabled_weight=False,
+        enabled_components={c: True for c in Component},
+        max_opposing_points=MAX_OPPOSING_POINTS,
+        options_contradiction_points=OPTIONS_CONTRADICTION_POINTS,
+        feed_requirements={},
+    )
+    table = all_bullish(0.5)
+    table[Component.VOL_MOMENTUM] = component(
+        Component.VOL_MOMENTUM, 0.5, 1, weight=10.0
+    )
     with pytest.raises(FlowScoreError, match="not total_points"):
-        aggregate(cfg, scored(table))
+        aggregate(smuggled, scored(table))
 
 
 def test_a_total_below_one_hundred_bounds_the_score_at_that_total():
@@ -989,6 +1091,98 @@ def test_no_default_in_this_project_turns_redistribution_on():
     shipped = FlowScoreConfig(weights=dict(WEIGHTS), total_points=100.0)
     assert shipped.strict_component_availability is True
     assert shipped.redistribute_disabled_weight is False
+
+
+def test_the_summary_of_a_redistributed_outcome_does_not_deny_the_redistribution():
+    """BUG FOUND AND FIXED: two adjacent report lines contradicted each other.
+
+    `summary_lines` is the human-readable face of the outcome -- what a CLI dump
+    or a report prints -- and on a redistributed outcome it used to emit, in
+    this order:
+
+        UNAVAILABLE: options_flow, order_flow (0.0 points, weight not redistributed)
+        WEIGHT WAS REDISTRIBUTED: not comparable to a complete dataset.
+
+    Both numbers on the first line are wrong, and wrong in the direction that
+    reassures. The shortfall reads 0.0 because `missing_points` is
+    `max_points - available_points` and redistribution scales the measured
+    components back up until the enabled weight sums to `max_points` again --
+    so the 45 points that have no feed report as none missing. And the words say
+    "weight not redistributed" on an outcome whose very next line says it was.
+
+    Consequence: the one place the architecture insists on being loud --
+    "redistribution inflates every component that did have data" -- printed a
+    denial of it first. A reader skimming a bars-only report would conclude the
+    weights were untouched and the 100.00 was out of a real 100. Severity MEDIUM
+    even though it is presentation only: the whole defence against the
+    redistributed score being mistaken for a complete one is that the record
+    says so, and here the record said the opposite. Survived because no test
+    called `summary_lines` on a redistributed outcome at all.
+
+    Fixed in `flow_score.py`: under redistribution the line reports the
+    CONFIGURED weight that was withheld (read back from each unavailable
+    component's own weight, which redistribution leaves alone) and says the
+    weight WAS redistributed.
+    """
+    cfg = flow_score_config(
+        strict_component_availability=False, redistribute_disabled_weight=True
+    )
+    outcome = aggregate(cfg, scored(bars_only_components(1.0)))
+    assert outcome.redistributed is True
+    # the premise: the shortfall genuinely vanishes from `missing_points`
+    assert outcome.available_points == 100.0
+    assert outcome.missing_points == 0.0
+    assert set(outcome.unavailable_components) == {
+        Component.OPTIONS_FLOW,
+        Component.ORDER_FLOW,
+    }
+
+    text = "\n".join(summary_lines(outcome))
+    assert "WEIGHT WAS REDISTRIBUTED" in text
+    assert "weight not redistributed" not in text
+    # the withheld weight is the configured 20 + 25, named rather than zeroed
+    assert "45.0 configured points" in text
+    assert "0.0 points, weight" not in text
+
+
+def test_the_summary_of_an_unredistributed_shortfall_still_reports_it_as_missing():
+    """The other branch of the same line, so the fix did not just delete a case.
+
+    With redistribution OFF, `missing_points` IS the shortfall (45.0 of 100.0)
+    and "weight not redistributed" is the true statement. Both branches are
+    pinned so a later edit cannot collapse them into one wrong sentence.
+    """
+    outcome = aggregate(
+        flow_score_config(strict_component_availability=False),
+        scored(bars_only_components(1.0)),
+    )
+    assert outcome.redistributed is False
+    assert outcome.available_points == 55.0
+    assert outcome.missing_points == 45.0
+
+    text = "\n".join(summary_lines(outcome))
+    assert "45.0 points, weight not redistributed" in text
+    assert "WEIGHT WAS REDISTRIBUTED" not in text
+
+
+def test_the_summary_of_a_refusal_names_the_refusal_and_prints_no_score():
+    """A refusal's report must not have a score-shaped line anywhere in it.
+
+    `summary_lines` is what a reader sees; if it printed a component table for a
+    refused bar, the partial sum would be right there to be read off even though
+    the aggregate declined to produce it.
+    """
+    outcome = aggregate(flow_score_config(), scored(bars_only_components(1.0)))
+    assert outcome.refused is True
+    lines = summary_lines(outcome)
+    text = "\n".join(lines)
+    assert "REFUSED -- no Flow Score was produced." in text
+    assert REFUSAL_WAIT_REASON.value in text
+    assert "55.0 of 100.0" in text
+    assert "45.0 points, weight not redistributed" in text
+    # no component table, so no partial sum to misread as a score
+    assert not any("magnitude" in line for line in lines)
+    assert not any(line.strip().startswith("score ") for line in lines)
 
 
 def test_redistribution_puts_the_two_point_based_gates_on_different_scales():
@@ -2624,3 +2818,711 @@ def test_assess_warmup_reads_only_bar_counts_and_feed_presence():
     assert report.computers[0].absent_feeds == (Feed.TICK_AGGREGATE,)
     assert report.blocking == ()
     assert set(view.calls) == {"bar_count", "has_feed"}
+
+
+# ---------------------------------------------------------------------------
+# paths no scene above reaches
+#
+# A line-by-line trace of the three modules under this file showed the
+# branches below never executing. Each one is a stated rule or a published
+# function, so an unexecuted branch here is either a rule nothing checks or a
+# report nobody has read. `summary_lines` was one of them, and the
+# contradiction the redistribution test above reports was living in it.
+# ---------------------------------------------------------------------------
+
+
+class OpenCalendar:
+    """A calendar that accepts every timestamp, with its own reason string."""
+
+    def __init__(self, reason: str = "rth") -> None:
+        self.reason = reason
+
+    def is_tradable(self, ts, instrument, session_cfg) -> tuple[bool, str]:
+        return True, self.reason
+
+    def session_date(self, ts, instrument) -> date:
+        return ts.date()
+
+
+def test_the_session_gate_distinguishes_an_open_market_from_an_unevaluated_one():
+    """Three outcomes, not two, and the difference has to be visible.
+
+    A session filter that defaulted to "open" with no calendar would hide that
+    `config.session` was never applied; one that defaulted to "closed" would
+    make every bar of a calendar-less dataset a WAIT. The gate's answer is a
+    third thing: it PASSES and says in words that it did not evaluate. Both
+    passing branches are asserted here, because only the no-calendar one is
+    exercised by the peel and a pass that reports the wrong reason is a pass
+    that lies about which configuration ran.
+    """
+    cfg = config()
+    table = all_bullish(0.9)
+
+    evaluated = decide(cfg, table, calendar=OpenCalendar())
+    assert evaluated.signal.action is SignalAction.LONG
+    session = evaluated.gate_results[0]
+    assert session.stage is GateStage.SESSION
+    assert session.passed is True
+    assert any("inside the tradable session" in r for r in session.reasons)
+
+    unevaluated = decide(cfg, table, calendar=None)
+    assert unevaluated.signal.action is SignalAction.LONG
+    assert any(
+        "not evaluated" in r and "no trading calendar" in r
+        for r in unevaluated.gate_results[0].reasons
+    )
+
+    # and the calendar's OWN reason string survives into the WAIT's detail,
+    # so a calendar bug and a correctly-configured open skip stay apart
+    closed = decide(cfg, table, calendar=ClosedCalendar("within_open_skip"))
+    assert closed.signal.wait_reason is WaitReason.SESSION_CLOSED
+    assert "within_open_skip" in closed.signal.wait_detail
+
+
+def test_an_unknown_regime_is_never_traded_whatever_the_setups_allow():
+    """`SetupConfig` cannot list UNKNOWN, so the union can never contain it --
+    which means the gate's explicit UNKNOWN branch is the only thing standing
+    between "no regime is established" and a trade.
+
+    Untested until now: the peel blocks the regime stage with CHOP, which takes
+    the "allowed by no enabled setup" branch instead. The two are different
+    conditions with one reason, and conflating them would let an UNKNOWN bar
+    through any config that happened to enable a setup allowing every named
+    regime. That config is built here -- all six real regimes allowed -- and the
+    UNKNOWN bar is still refused.
+    """
+    every_named = tuple(r for r in Regime if r is not Regime.UNKNOWN)
+    with pytest.raises(ValueError):
+        setup_config(SetupType.SCALP_1R, allowed_regimes=(Regime.UNKNOWN,))
+
+    cfg = config(
+        setups=setup_table(
+            SCALP_1R={"allowed_regimes": every_named},
+            SETUP_2R={"allowed_regimes": every_named},
+            DIRECTIONAL_3R={"allowed_regimes": every_named},
+        )
+    )
+    assert tradable_regimes(cfg) == frozenset(every_named)
+    assert Regime.UNKNOWN not in tradable_regimes(cfg)
+
+    unknown = regime_state(Regime.UNKNOWN, confidence=0.0, bars_in_regime=0)
+    assert unknown.is_tradable is False
+    decision = decide(cfg, all_bullish(0.9), regime=unknown)
+    assert decision.signal.action is SignalAction.WAIT
+    assert decision.gate_results[-1].stage is GateStage.REGIME
+    assert decision.signal.wait_reason is WaitReason.REGIME_BLOCKED
+    assert "UNKNOWN" in decision.signal.wait_detail
+    assert decision.signal.regime is Regime.UNKNOWN
+
+    # the same config trades a named regime, so the refusal is about UNKNOWN
+    # and not about this config refusing everything
+    assert decide(cfg, all_bullish(0.9), regime=Regime.CHOP).signal.action is (
+        SignalAction.LONG
+    )
+
+
+@pytest.mark.parametrize("absent_key", ["structure_gate_passed", "level_direction", "level_gate_reason"])
+def test_a_bar_the_level_engine_never_judged_is_no_structure(absent_key):
+    """The structure gate is a pure consumer, so a missing verdict is a WAIT.
+
+    If any of 14.6's three verdict keys is absent the engine has no structural
+    opinion at all, and the gate must say NO_STRUCTURE rather than read a
+    default. The hazard is specific: `level_direction` absent and defaulted to 0
+    would be "no side", `structure_gate_passed` absent and defaulted to 0 would
+    be "gate failed" -- both plausible-looking WAITs for the wrong reason -- and
+    `level_gate_reason` absent would make the RR_TOO_LOW mapping silently
+    unreachable. All three are asserted to name the absent key in the detail, so
+    a report says which output went missing.
+    """
+    vector = features(drop=(absent_key,))
+    assert absent_key not in vector.values
+    result = StructureGate().check(vector)
+    assert result.passed is False
+    assert result.wait_reason is WaitReason.NO_STRUCTURE
+    assert absent_key in result.detail
+    assert result.side is None
+
+    decision = decide(config(), all_bullish(0.9), vector=vector)
+    assert decision.gate_results[-1].stage is GateStage.STRUCTURE
+    assert decision.signal.wait_reason is WaitReason.NO_STRUCTURE
+
+
+def test_a_structure_verdict_graded_missing_is_not_read_as_a_failed_gate():
+    """MISSING is the grade a computer writes beside its placeholder zeros.
+
+    `structure_gate_passed = 0.0` graded MISSING is not "14.6's gates failed";
+    it is "no measurement was made". Both are NO_STRUCTURE, but the detail has
+    to distinguish them or rejection analysis cannot tell a market that offered
+    no level from a feature layer that produced nothing -- and `_measured`'s
+    whole reason for existing is that reading a placeholder as a measurement of
+    zero is the bug.
+    """
+    vector = features(
+        structure_gate_passed=0.0,
+        level_gate_reason=GATE_PASSED,
+        missing=("structure_gate_passed",),
+    )
+    result = StructureGate().check(vector)
+    assert result.passed is False
+    assert result.wait_reason is WaitReason.NO_STRUCTURE
+    assert "graded MISSING" in result.detail
+    assert "made no" in result.detail
+
+    # the same value at GOOD grade reports 14.6's own gate code instead
+    judged = StructureGate().check(
+        features(structure_gate_passed=0.0, level_gate_reason=GATE_CLEANLINESS)
+    )
+    assert judged.wait_reason is WaitReason.NO_STRUCTURE
+    assert "level_gate_reason=4" in judged.detail
+    assert "graded MISSING" not in judged.detail
+
+
+def test_a_view_that_serves_no_bars_reports_warmup_and_not_a_vacuous_pass():
+    """Zero bars is the one case where no computer can block but nothing is ready.
+
+    `WarmupReport.blocking` is empty when every computer's feed is absent OR
+    when there are no computers, so a report built from an empty view has
+    nothing to report -- and the gate would pass on a bar where not a single
+    observation exists. The explicit `bars_available <= 0` branch is what stops
+    that, and it was never executed.
+    """
+    gate = pipeline_gates(config(), spec())[GateStage.WARMUP]
+    empty = WarmupReport(bars_available=0, computers=())
+    assert empty.blocking == ()
+    assert empty.bars_required == 0
+    result = gate.check(empty)
+    assert result.passed is False
+    assert result.wait_reason is WaitReason.WARMUP
+    assert "no bars" in result.detail
+
+    # one bar, no computers: nothing is filling, so nothing blocks
+    one = WarmupReport(bars_available=1, computers=())
+    assert gate.check(one).passed is True
+
+
+def test_a_setup_type_absent_from_the_config_declines_rather_than_raising():
+    """`config.setups` is a plain dict and `FlowModelConfig` requires only that
+    ONE setup be enabled, so a config can simply not mention SETUP_2R.
+
+    A 2.0R measurement then names a setup that does not exist. `select` must
+    report NO_SETUP_MATCH -- the brief's "NO setup matches" -- and must not
+    raise, must not fall through to SCALP_1R, and must still record the absent
+    setup in `rejections` so a report can say the configuration, not the market,
+    is why that band never trades.
+    """
+    partial = {
+        setup: cfg
+        for setup, cfg in setup_table().items()
+        if setup is not SetupType.SETUP_2R
+    }
+    cfg = config(setups=partial)
+    assert SetupType.SETUP_2R not in cfg.setups
+    assert min_reward_risk_floor(cfg) == 1.0
+
+    selection = selection_for(cfg, achievable_rr=2.00)
+    assert selection.matched is False
+    assert selection.setup is None
+    assert selection.wait_reason is WaitReason.NO_SETUP_MATCH
+    assert "is not configured" in selection.detail
+    assert "not retargeted" in selection.detail
+
+    by_setup = {r.setup: r for r in selection.rejections}
+    assert by_setup[SetupType.SETUP_2R].gate == "configured"
+    assert by_setup[SetupType.SETUP_2R].detail == "not present in config.setups"
+    assert by_setup[SetupType.SETUP_2R].selected_by_band is True
+
+    decision = decide(cfg, all_bullish(0.9), vector=features(achievable_rr=2.00))
+    assert decision.signal.action is SignalAction.WAIT
+    assert decision.gate_results[-1].stage is GateStage.SETUP
+    assert decision.signal.wait_reason is WaitReason.NO_SETUP_MATCH
+
+
+def test_a_setup_whose_own_reward_risk_floor_exceeds_its_band_declines_the_bar():
+    """14.6's band floors sit BELOW the setups' own `reward_risk`, and a config
+    may make `min_reward_risk` match the plan instead of the band.
+
+    The module docstring names this tension: the band selects DIRECTIONAL_3R
+    from `achievable_rr >= 2.7` while that setup plans 3.0R. A configuration
+    that resolves it by demanding `min_reward_risk = 3.0` -- i.e. "do not take
+    this setup unless the measured distance supports the R it will be labelled
+    with" -- makes every measurement in [2.7, 3.0) select a setup that then
+    refuses itself.
+
+    What must happen: RR_TOO_LOW at the SETUP stage, naming DIRECTIONAL_3R. What
+    must NOT happen: 2.80R handed to SETUP_2R, which would accept it (its band
+    floor is 1.8 and it plans 2.0R against a measured 2.80). That demotion is
+    the "do not force every trade into the same target" failure, and it is the
+    one place two separate mechanisms -- the band and the setup's own floor --
+    could disagree and be reconciled by picking the convenient one.
+
+    Shipped config note: `min_reward_risk` ships at 0.95 / 1.8 / 2.7, which
+    matches the band floors, so this gate cannot bind as shipped. This test asks
+    what happens at a different value; it does not change one.
+    """
+    cfg = config(setups=setup_table(DIRECTIONAL_3R={"min_reward_risk": 3.0}))
+    assert min_reward_risk_floor(cfg) == 1.0  # the global floor is unmoved
+
+    # the premise: SETUP_2R would have taken this bar, so a demotion was available
+    assert setup_class_for(2.80, 1.0) == 3.0
+    assert SETUP_BY_RR_CLASS[3.0] is SetupType.DIRECTIONAL_3R
+    standing_in = cfg.setups[SetupType.SETUP_2R]
+    assert 2.80 >= standing_in.min_reward_risk
+
+    selection = selection_for(cfg, achievable_rr=2.80)
+    assert selection.matched is False
+    assert selection.setup is None
+    assert selection.wait_reason is WaitReason.RR_TOO_LOW
+    assert "DIRECTIONAL_3R" in selection.detail
+    assert "Not substituted with another setup" in selection.detail
+    assert selection.achievable_rr == 2.80
+    # SETUP_2R's near-miss is recorded, and it is a near-miss and not a choice
+    by_setup = {r.setup: r for r in selection.rejections}
+    assert by_setup[SetupType.DIRECTIONAL_3R].gate == "min_reward_risk"
+    assert by_setup[SetupType.DIRECTIONAL_3R].selected_by_band is True
+    assert SetupType.SETUP_2R not in by_setup  # it would have accepted the bar
+
+    # 3.00R clears its own floor and the same config trades it, so the refusal
+    # above is about the measurement and not about this config refusing all
+    cleared = selection_for(cfg, achievable_rr=3.00)
+    assert cleared.setup is SetupType.DIRECTIONAL_3R
+    assert cleared.plans_beyond_measured_target is False
+
+
+def test_an_unmeasured_atr_percentile_declines_the_determined_setup_too():
+    """The momentum gate and `select` both guard the same unmeasured quantity.
+
+    Section 3's volatility gate runs at stage 9 against the UNION band, and the
+    determined setup's own band is re-applied in `select`. The union check would
+    catch an absent `atr_percentile` first in the pipeline, so this path is only
+    reachable by calling `select` directly -- which Phase 7 and Phase 8 will do.
+    It must decline rather than treat an absent percentile as inside the band,
+    because "admitted on an unmeasured quantity" is the failure both guards
+    exist for.
+    """
+    cfg = config()
+    for vector_kwargs in ({"drop": ("atr_percentile",)}, {"missing": ("atr_percentile",)}):
+        selection = select(
+            cfg,
+            features(achievable_rr=1.50, **vector_kwargs),
+            side=Side.LONG,
+            regime=regime_state(),
+            flow_score=90.0,
+            components=all_bullish(0.9),
+        )
+        assert selection.matched is False
+        assert selection.wait_reason is WaitReason.VOLATILITY_BAND
+        assert "absent or graded MISSING" in selection.detail
+        assert "rather than admitted on an unmeasured quantity" in selection.detail
+
+
+def test_an_unmeasured_structure_component_declines_a_setup_that_requires_it():
+    """`require_structure_confirmation` has two failure modes and they differ.
+
+    The component NEVER MEASURED is COMPONENT_DISABLED -- there is nothing to
+    confirm with. The component measured and DISAGREEING is NO_STRUCTURE. Only
+    the second is reachable through the engine (see
+    `test_two_of_the_setup_stage_s_declared_reasons_are_unreachable_as_shipped`
+    on why neither is, with strict mode on), and neither was executed. They are
+    pinned apart here because collapsing them would report "the structure
+    disagreed" about a structure nobody scored, which is the invented-data
+    failure the brief forbids.
+    """
+    cfg = config()
+    absent = dict(all_bullish(0.9))
+    absent[Component.STRUCTURE] = unavailable(Component.STRUCTURE)
+    selection = selection_for(cfg, achievable_rr=1.50, table=absent)
+    assert selection.wait_reason is WaitReason.COMPONENT_DISABLED
+    assert "never measured" in selection.detail
+
+    disagreeing = dict(all_bullish(0.9))
+    disagreeing[Component.STRUCTURE] = component(Component.STRUCTURE, 0.9, -1)
+    selection = selection_for(cfg, achievable_rr=1.50, table=disagreeing)
+    assert selection.wait_reason is WaitReason.NO_STRUCTURE
+    assert "does not agree with a LONG" in selection.detail
+
+    # and a setup that does not require it takes the same bar
+    relaxed = config(
+        setups=setup_table(
+            SCALP_1R={"require_structure_confirmation": False},
+            SETUP_2R={"require_structure_confirmation": False},
+            DIRECTIONAL_3R={"require_structure_confirmation": False},
+        )
+    )
+    assert selection_for(relaxed, achievable_rr=1.50, table=disagreeing).setup is (
+        SetupType.SCALP_1R
+    )
+
+
+def test_the_aggregate_takes_a_bare_mapping_when_handed_a_symbol_and_a_timestamp():
+    """The documented second call form, whose failure is tested and whose
+    success was not.
+
+    `aggregate(config, mapping, symbol=..., ts=...)` exists so a caller holding
+    five `ComponentScore`s need not build a `ScoredComponents` first. The
+    outcome must be identical to the `ScoredComponents` form, including the
+    symbol and timestamp landing on the `FlowScore` -- a mapping form that
+    silently produced a score stamped with the wrong instrument would attribute
+    one symbol's bar to another.
+    """
+    table = all_bullish(0.5)
+    cfg = flow_score_config()
+    from_mapping = aggregate(cfg, table, symbol="ES", ts=TS)
+    assert from_mapping.symbol == "ES"
+    assert from_mapping.ts == TS
+    assert from_mapping.require().symbol == "ES"
+    assert from_mapping.require().ts == TS
+    assert from_mapping.score == 50.0  # 0.5 * 100
+
+    from_scored = aggregate(cfg, scored(table))
+    assert from_scored.score == from_mapping.score
+    assert from_scored.available_points == from_mapping.available_points
+    # the two forms differ only in the symbol/ts the test chose
+    assert from_scored.require().components == from_mapping.require().components
+
+
+def test_a_setup_summary_names_the_band_the_plan_and_every_near_miss():
+    """`setups.summary_lines` is exported and was never called by a test.
+
+    It is the human-readable account of a selection, and the thing a researcher
+    reads when asking why a bar did not trade. Three properties matter: the
+    MEASURED achievable R:R and the PLANNED R are both printed (the 14.6 gap is
+    the whole point of carrying both), a declined selection prints its reason
+    rather than an empty slot, and the `<-- band` marker points at the setup the
+    structure named.
+
+    MY EXPECTATION WAS WRONG about the marker, and the correction is worth
+    recording. I asserted `<-- band` appears on a SUCCESSFUL selection's row for
+    the chosen setup. It does not, and cannot: the rows come from
+    `selection.rejections`, which holds only setups that FAILED a gate, so a
+    setup that was selected has no row to mark. The marker is there for the
+    declined case, where it says which of several failing rows was the one the
+    band actually chose -- which is the only case where that is ambiguous. The
+    implementation is right and the assertion was a guess about a detail the
+    docstrings do not claim.
+
+    A second thing the rows do not say, asserted here so it is not mistaken for
+    completeness later: a setup that would have ACCEPTED the bar produces no row
+    either. On this 1.85R bar SCALP_1R would have taken it (its own
+    `min_reward_risk` is 1.0) and it appears nowhere in the summary. The rows are
+    first-failing gates, not a verdict per setup.
+    """
+    cfg = config()
+    taken = selection_for(cfg, achievable_rr=1.85)
+    assert taken.setup is SetupType.SETUP_2R
+    lines = setup_summary_lines(taken)
+    text = "\n".join(lines)
+    assert "achievable R:R (measured): 1.850" in text
+    assert "selected: SETUP_2R" in text
+    assert "plans:    2.00R" in text
+    # 1.85 measured against a 2.00R plan: the band floor is below the plan
+    assert taken.plans_beyond_measured_target is True
+    assert "NOTE: the planned target is beyond the measured opposing zone" in text
+    # the selected setup has no rejection row, so nothing is marked
+    assert "<-- band" not in text
+    assert {r.setup for r in taken.rejections} == {SetupType.DIRECTIONAL_3R}
+    assert "SCALP_1R" not in text  # it would have accepted, and says nothing
+
+    declined = selection_for(cfg, achievable_rr=0.90)
+    declined_text = "\n".join(setup_summary_lines(declined))
+    assert "declined: rr_too_low" in declined_text
+    assert "achievable R:R (measured): 0.900" in declined_text
+    assert "selected:" not in declined_text
+
+    # and where the determined setup IS the failing one, exactly its row is marked
+    strict_3r = selection_for(
+        config(setups=setup_table(DIRECTIONAL_3R={"min_reward_risk": 3.0})),
+        achievable_rr=2.80,
+    )
+    marked = [line for line in setup_summary_lines(strict_3r) if "<-- band" in line]
+    assert len(marked) == 1
+    assert "DIRECTIONAL_3R" in marked[0]
+
+
+def test_a_selection_that_never_measured_reward_risk_still_prints_zero():
+    """REPORTED FINDING, not fixed: an unmeasured R:R reports as 0.000.
+
+    `SetupSelection.achievable_rr` is a plain float defaulting to 0.0, and the
+    two branches that fire before any measurement is read -- `achievable_rr`
+    absent from the vector, and `achievable_rr` graded MISSING -- construct the
+    selection without it. So `summary_lines` prints "achievable R:R (measured):
+    0.000" and `GateResult.diagnostics["achievable_rr"]` records 0.0 for a bar
+    where the structure layer measured nothing. That reads as "the next level is
+    at the entry", which is a measurement, rather than "no measurement exists".
+
+    NOT FIXED, and the reason is a contract this phase does not own:
+    `GateResult.diagnostics` is `Mapping[str, float]` and cannot hold None, and
+    `planned_reward_risk`, `plans_beyond_measured_target` and
+    `EntryPlan.achievable_rr` all read the field as a float. Severity LOW: the
+    `wait_reason` is NO_SETUP_MATCH and the `detail` says in words that the
+    measurement "was never made", so no decision is taken on the 0.0 -- what is
+    affected is a diagnostics column a Phase 8 report might average. Pinned so
+    the zero is known to be a placeholder rather than discovered as one.
+    """
+    cfg = config()
+    for vector in (
+        features(drop=("achievable_rr",)),
+        features(missing=("achievable_rr",)),
+    ):
+        selection = select(
+            cfg,
+            vector,
+            side=Side.LONG,
+            regime=regime_state(),
+            flow_score=90.0,
+            components=all_bullish(0.9),
+        )
+        assert selection.matched is False
+        assert selection.wait_reason is WaitReason.NO_SETUP_MATCH
+        assert selection.achievable_rr == 0.0
+        assert "never made" in selection.detail or "no measurement" in selection.detail
+        assert "achievable R:R (measured): 0.000" in "\n".join(
+            setup_summary_lines(selection)
+        )
+        assert selection.rejections == ()
+
+    decision = decide(
+        cfg, all_bullish(0.9), vector=features(drop=("achievable_rr",))
+    )
+    blocking = decision.gate_results[-1]
+    assert blocking.stage is GateStage.SETUP
+    assert blocking.diagnostics["achievable_rr"] == 0.0
+
+
+def test_the_liquidity_gate_rejects_a_floor_outside_the_magnitude_range():
+    """`min_liquidity_score` is compared against a bounded magnitude, so a floor
+    of 1.5 is a gate that can never pass and a floor of -1 one that can never
+    fire. Both are configuration errors worth catching at construction rather
+    than at bar one of a sweep -- the override exists precisely so a Phase 8
+    sweep can move it without a code change."""
+    for bad in (-0.01, 1.01, 1.5):
+        with pytest.raises(ValueError, match="must lie in"):
+            LiquidityGate(config(), spec(), min_liquidity_score=bad)
+    # the two ends of the legal range construct
+    for good in (0.0, 1.0):
+        assert LiquidityGate(config(), spec(), min_liquidity_score=good) is not None
+
+
+# ---------------------------------------------------------------------------
+# the result types' own validators
+#
+# `FlowScoreOutcome`, `FlowScoreRefusal` and `SetupSelection` are the records
+# Phase 7 reads and Phase 12 counts. Each carries a validator whose job is to
+# make a self-contradicting record impossible to construct -- a score stamped
+# with the wrong symbol, a selection that names both a setup and a reason not
+# to trade. None of those branches had ever run.
+# ---------------------------------------------------------------------------
+
+
+def test_an_outcome_may_not_carry_a_score_for_a_different_bar():
+    """A `FlowScore` stamped with another symbol or instant inside an outcome
+    would attribute one instrument's measurement to another, and the outcome's
+    own `symbol`/`ts` are what a record keyed by bar would use.
+
+    Both halves are checked -- a wrong symbol and a wrong timestamp -- and for
+    the refusal branch as well, because a refusal is the thing that gets counted
+    in a rejection histogram and a misattributed refusal moves a count from one
+    symbol to another.
+    """
+    table = all_bullish(0.5)
+    flow = FlowScore(symbol=SYMBOL, ts=TS, components=table, max_points=100.0)
+    other_ts = TS.replace(hour=16)
+
+    with pytest.raises(FlowScoreError, match="disagree on symbol/ts"):
+        FlowScoreOutcome(
+            symbol="ES", ts=TS, flow_score=flow,
+            available_points=100.0, max_points=100.0,
+        )
+    with pytest.raises(FlowScoreError, match="disagree on symbol/ts"):
+        FlowScoreOutcome(
+            symbol=SYMBOL, ts=other_ts, flow_score=flow,
+            available_points=100.0, max_points=100.0,
+        )
+
+    refusal = FlowScoreRefusal(
+        symbol=SYMBOL, ts=TS, available_points=55.0, max_points=100.0,
+        detail="hand-built by the test",
+    )
+    with pytest.raises(FlowScoreError, match="disagree on symbol/ts"):
+        FlowScoreOutcome(
+            symbol="ES", ts=TS, refusal=refusal,
+            available_points=55.0, max_points=100.0,
+        )
+    # and the matching pair constructs, so the guard is not refusing everything
+    good = FlowScoreOutcome(
+        symbol=SYMBOL, ts=TS, flow_score=flow,
+        available_points=100.0, max_points=100.0,
+    )
+    assert good.score == 50.0
+    assert good.quality is DataQuality.GOOD  # the non-refusal branch
+    assert good.require() is flow
+
+
+def test_the_aggregate_refuses_a_config_object_that_is_neither_config():
+    """`aggregate` takes a `FlowModelConfig` or a `FlowScoreConfig`.
+
+    Anything else is a caller error and must raise rather than be duck-typed:
+    a `SetupConfig` also has thresholds on it, and reading `min_flow_score`
+    where `total_points` was meant would silently rescale every score.
+    """
+    with pytest.raises(FlowScoreError, match="FlowModelConfig or a FlowScoreConfig"):
+        aggregate(setup_config(SetupType.SCALP_1R), scored(all_bullish(0.5)))
+    with pytest.raises(FlowScoreError, match="FlowModelConfig or a FlowScoreConfig"):
+        aggregate(dict(WEIGHTS), scored(all_bullish(0.5)))
+
+
+def test_a_config_missing_a_component_weight_is_named_rather_than_defaulted():
+    """`FlowScoreConfig` cannot omit a weight, so this needs a smuggled config --
+    and the point is what happens then: the aggregate must name the component,
+    not read a missing weight as 0 and quietly drop a fifth of the scale."""
+    short = {c: w for c, w in WEIGHTS.items() if c is not Component.LIQUIDITY}
+    smuggled = FlowScoreConfig.model_construct(
+        weights=short,
+        total_points=100.0,
+        strict_component_availability=True,
+        redistribute_disabled_weight=False,
+        enabled_components={c: True for c in Component},
+        max_opposing_points=MAX_OPPOSING_POINTS,
+        options_contradiction_points=OPTIONS_CONTRADICTION_POINTS,
+        feed_requirements={},
+    )
+    with pytest.raises(FlowScoreError, match="carries no weight for liquidity"):
+        aggregate(smuggled, scored(all_bullish(0.5)))
+
+
+def test_a_selection_names_a_setup_or_a_reason_and_never_both_or_neither():
+    """The invariant that makes `SetupSelection.matched` meaningful.
+
+    A selection with both would let a caller read a setup off a bar that was
+    declined; one with neither would be a record that says nothing at all. And a
+    selection whose `setup` and `setup_config` disagree is the mislabelled trade
+    `TradeRecord.r_label_is_honest()` exists to catch, one layer earlier -- a
+    DIRECTIONAL_3R carrying SCALP_1R's config would plan 1.0R and be recorded as
+    a 3R.
+    """
+    cfg = setup_config(SetupType.SCALP_1R)
+    with pytest.raises(SetupError, match="never both"):
+        SetupSelection(
+            symbol=SYMBOL, setup=SetupType.SCALP_1R, setup_config=cfg,
+            wait_reason=WaitReason.RR_TOO_LOW,
+        )
+    with pytest.raises(SetupError, match="never both"):
+        SetupSelection(symbol=SYMBOL)
+    with pytest.raises(SetupError, match="must carry its SetupConfig"):
+        SetupSelection(symbol=SYMBOL, setup=SetupType.SCALP_1R)
+    with pytest.raises(SetupError, match="carries the config for"):
+        SetupSelection(
+            symbol=SYMBOL, setup=SetupType.DIRECTIONAL_3R, setup_config=cfg,
+        )
+
+
+def test_a_declined_selection_claims_no_planned_r_and_no_target_gap():
+    """With no setup there is no plan, so both derived numbers must read zero
+    and false rather than carrying the last setup's R.
+
+    `planned_reward_risk` feeds `EntryPlan` and `plans_beyond_measured_target`
+    is the flag that reports 14.6's band/plan gap. On a declined bar neither has
+    a meaning, and a non-zero value there would show up in a Phase 8 report as a
+    planned trade that never existed.
+    """
+    declined = selection_for(config(), achievable_rr=0.90)
+    assert declined.matched is False
+    assert declined.setup_config is None
+    assert declined.planned_reward_risk == 0.0
+    assert declined.plans_beyond_measured_target is False
+
+
+def test_a_bare_signal_cannot_tell_a_partial_fifty_five_from_a_complete_one():
+    """REPORTED FINDING: the refusal is distinguishable; the partial sum is not.
+
+    The focus of this file is that a refusal must never be confusable with a
+    genuine score of 55, and it is not: a refusal carries `flow_score=None`. But
+    the NON-STRICT partial sum is a third thing, and it is the one that looks
+    like a score. Two bars are built here that are completely different facts:
+
+    * five components measured at magnitude 0.55 -- a complete, mediocre bar,
+      55.00 out of a real 100;
+    * three components measured at FULL magnitude with 45 points of feed
+      missing -- 55.00 out of 55, which is a maximal reading of everything that
+      could be seen.
+
+    Both emit a LONG whose `Signal.flow_score` is exactly 55.0. Field by field,
+    what a Phase 7 consumer holding only the `Signal` can see:
+
+    * `flow_score`  -- 55.0 for both. No scale travels with it.
+    * `data_quality` -- GOOD for both. `_data_quality` takes the worst of the
+      feed report and `FlowScore.quality`, and `FlowScore.quality` is the worst
+      over ENABLED components, so 45 points of absent feed do not darken it.
+    * `component_points` -- 0.0 for the two unmeasured components, which is the
+      same number a component measured at magnitude 0 would report.
+    * `confidence` -- 0.55 against 1.0. THIS is the one structured field that
+      separates them, because it is `score / available_points`, so a consumer
+      can recover `available_points = flow_score / confidence` and see 55 rather
+      than 100. That is a real discriminator and it is why the normalization
+      `_confidence` chose matters more than its docstring claims.
+    * `reasons` -- says it in words: "a number out of 55.0, not out of 100.0".
+
+    NOT FIXED. `Signal` is a Phase 1 contract and widening it with
+    `available_points` is a change to `core/contracts.py`, which this phase does
+    not own; and the reason the hazard stays theoretical is that reaching this
+    scene needs TWO safety features switched off deliberately --
+    `strict_component_availability` (which would refuse the bar) and every
+    setup's `require_orderflow_confirmation` (which would decline it for the
+    unmeasured tape). Severity LOW as shipped, worth knowing before Phase 8
+    turns strict mode off for an ablation sweep and starts comparing scores
+    across runs with different feed coverage.
+    """
+    thresholds = {
+        "min_flow_score": 10.0,  # low, so both bars trade and can be compared
+        "require_orderflow_confirmation": False,
+    }
+    table = setup_table(
+        SCALP_1R=dict(thresholds),
+        SETUP_2R=dict(thresholds),
+        DIRECTIONAL_3R=dict(thresholds),
+    )
+
+    # the premise: 0.55 magnitude on all five weights is exactly 55.00 points
+    complete = components(
+        options_flow=component(Component.OPTIONS_FLOW, 0.55, 1),
+        order_flow=component(Component.ORDER_FLOW, 0.55, 1),
+        structure=component(Component.STRUCTURE, 0.55, 1),
+        liquidity=component(Component.LIQUIDITY, 0.55, 0),
+        vol_momentum=component(Component.VOL_MOMENTUM, 0.55, 1),
+    )
+    assert sum(c.points for c in complete.values()) == pytest.approx(55.0, abs=1e-9)
+    # and full magnitude on the bars-only 55 is also exactly 55.00
+    partial = bars_only_components(1.0)
+    assert sum(c.points for c in partial.values()) == pytest.approx(55.0, abs=1e-9)
+
+    genuine = decide(config(setups=table), complete).signal
+    relaxed_cfg = config(
+        flow_score=flow_score_config(strict_component_availability=False),
+        setups=table,
+    )
+    incomplete = decide(relaxed_cfg, partial).signal
+
+    assert genuine.action is SignalAction.LONG
+    assert incomplete.action is SignalAction.LONG
+    # identical where it matters most, and in the grade a consumer would filter on
+    assert genuine.flow_score == incomplete.flow_score == 55.0
+    assert genuine.data_quality is DataQuality.GOOD
+    assert incomplete.data_quality is DataQuality.GOOD
+    # an unmeasured component and one measured at zero report the same points
+    assert incomplete.component_points[Component.ORDER_FLOW] == 0.0
+
+    # the one field that separates them, and the scale it lets a caller recover
+    assert genuine.confidence == pytest.approx(0.55, abs=1e-9)
+    assert incomplete.confidence == pytest.approx(1.0, abs=1e-9)
+    assert genuine.flow_score / genuine.confidence == pytest.approx(100.0, abs=1e-6)
+    assert incomplete.flow_score / incomplete.confidence == pytest.approx(55.0, abs=1e-6)
+
+    # and the prose, which is what actually says so
+    assert "not out of 100.0" in " ".join(incomplete.reasons)
+    assert "not out of 100.0" not in " ".join(genuine.reasons)
+
+    # the refusal, by contrast, needs no arithmetic to tell apart: strict mode
+    # on the same components produces no score at all
+    refused = decide(config(setups=table), partial).signal
+    assert refused.action is SignalAction.WAIT
+    assert refused.flow_score is None
+    assert refused.wait_reason is REFUSAL_WAIT_REASON
