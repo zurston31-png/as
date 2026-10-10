@@ -29,6 +29,8 @@ from flow_model.core.enums import (
     Component,
     DataQuality,
     Feed,
+    KronosContamination,
+    KronosMode,
     MonteCarloMethod,
     Regime,
     SetupType,
@@ -1695,6 +1697,183 @@ class LoggingConfig(FrozenModel):
 # ---------------------------------------------------------------------------
 
 
+class KronosConfig(FrozenModel):
+    """The Kronos candlestick foundation model, as an OPTIONAL feature source.
+
+    Kronos (github.com/shiyu-coder/Kronos, MIT) is a decoder-only transformer
+    pre-trained on K-line sequences from "over 45 global exchanges". It is
+    wired in here because the researcher asked for it, and it is wired in
+    QUARANTINED, because of one fact that governs everything else about it.
+
+    **The model publishes no training-data cutoff.** This project's research
+    window is 2015-01-01 to 2023-01-01 with a sealed holdout from 2023-01-01
+    to 2025-01-01. A model released in 2025 and trained on recent data from
+    global exchanges has, in all likelihood, already seen every bar of both.
+    Features derived from it during a historical backtest are therefore
+    informed by the outcome they are being used to predict.
+
+    That is lookahead, and it is a KIND of lookahead this project's defences
+    cannot see. `validation/lookahead.py` checks truncation invariance,
+    future-mutation invariance, warmup honesty and determinism; a pre-trained
+    model passes all four trivially, because the leak is in the WEIGHTS and
+    not in the data-access pattern. `MarketView` can guarantee that no future
+    bar was read at bar t. It cannot guarantee that no future bar was read in
+    2024 by whoever trained the checkpoint. `tests/unit/test_kronos.py`
+    demonstrates that blindness on purpose, so a passing audit is never
+    mistaken for evidence of no contamination.
+
+    The consequence is a clean line rather than a ban:
+
+    * **Live and paper-forward signals are sound.** A bar that has not
+      happened yet cannot have been in anyone's training set, so a forecast
+      for it carries no leakage.
+    * **Historical backtesting is not sound** while the cutoff is unknown.
+      `contamination_policy` defaults to REFUSE, so the feature computer
+      declines rather than quietly producing a number that would flatter
+      every metric downstream.
+
+    Set `pretrain_cutoff` if a cutoff is ever published or a checkpoint is
+    trained in-house: bars strictly after it are then clean, and the guard
+    permits them automatically.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Off by default. Enabling it adds a torch dependency and a learned "
+            "component to a system whose premise is explicit rules, so it is an "
+            "opt-in experiment rather than part of the baseline."
+        ),
+    )
+
+    # --- what to load -------------------------------------------------
+    model_repo: str = Field(
+        default="NeoQuasar/Kronos-small",
+        description="Hugging Face repo for the predictor. small=24.7M, base=102.3M.",
+    )
+    tokenizer_repo: str = Field(
+        default="NeoQuasar/Kronos-Tokenizer-base",
+        description=(
+            "Hugging Face repo for the tokenizer. Must match the model: the base "
+            "tokenizer pairs with small/base, Tokenizer-2k pairs with mini."
+        ),
+    )
+    module_path: str = Field(
+        default="",
+        description=(
+            "Directory holding Kronos's own `model` package, for a source checkout. "
+            "Empty means it is expected to be importable already. Kronos is not on "
+            "PyPI, so one of the two must hold."
+        ),
+    )
+    device: str = Field(
+        default="cpu",
+        description=(
+            "cpu or cuda:N. cpu is the default because CUDA kernel selection is a "
+            "second source of run-to-run variation on top of sampling."
+        ),
+    )
+
+    # --- the forecast -------------------------------------------------
+    max_context: int = Field(
+        default=512, gt=0,
+        description=(
+            "Bars fed to the model. 512 for small/base, 2048 for mini; the "
+            "predictor truncates beyond its own limit, so a larger value here "
+            "silently does nothing."
+        ),
+    )
+    pred_len: int = Field(
+        default=12, gt=0,
+        description=(
+            "Forecast horizon in bars. Defaults to 12, which is SCALP_1R's "
+            "max_hold_bars, so the forecast covers the trade it would inform "
+            "rather than an arbitrary distance."
+        ),
+    )
+    sample_count: int = Field(
+        default=32, gt=0,
+        description=(
+            "Sampled paths per bar. The features are statistics OF this sample, "
+            "so a path count this low is itself a source of variance; it is the "
+            "denominator of kronos_up_probability and is reported as such."
+        ),
+    )
+    temperature: float = Field(
+        default=1.0, gt=0.0,
+        description="Sampling temperature T. Lower concentrates the paths.",
+    )
+    top_p: float = Field(
+        default=0.9, gt=0.0, le=1.0, description="Nucleus-sampling cutoff.",
+    )
+    seed: int = Field(
+        default=DEFAULT_SEED,
+        description=(
+            "Seeds torch before every forecast, so the same view gives the same "
+            "paths. Without it the computer would fail the lookahead audit's "
+            "determinism check -- which is the one of the four checks that a "
+            "sampling model can genuinely fail."
+        ),
+    )
+
+    # --- the quarantine -----------------------------------------------
+    pretrain_cutoff: date | None = Field(
+        default=None,
+        description=(
+            "The last date the checkpoint's training data covers. None means "
+            "UNKNOWN, which is Kronos's published state and is treated as "
+            "contaminating every historical bar."
+        ),
+    )
+    mode: KronosMode = Field(
+        default=KronosMode.RESEARCH,
+        description=(
+            "RESEARCH (a replay over history) or LIVE (forward signals). It cannot "
+            "be inferred from a MarketView -- in a backtest the view's cutoff IS the "
+            "simulated present, so a frontier test is true on every bar of a replay "
+            "and proves nothing. RESEARCH is the default because it is the "
+            "conservative reading and because a backtest is the dangerous case."
+        ),
+    )
+    contamination_policy: KronosContamination = Field(
+        default=KronosContamination.REFUSE,
+        description=(
+            "What to do for a bar that the checkpoint may have trained on. "
+            "REFUSE declines it (the default). FLAG computes it and marks the "
+            "vector DEGRADED, for deliberately studying the contaminated "
+            "signal. ALLOW computes it silently and is never appropriate for a "
+            "reported backtest."
+        ),
+    )
+    include_in_flow_score: bool = Field(
+        default=False,
+        description=(
+            "Off by default, and not merely as caution. Section 7 requires the "
+            "component weights to sum to 100 and every setup threshold was "
+            "calibrated against that scale, so admitting a sixth component "
+            "silently rescales every gate. Phase 8 can sweep an alternative "
+            "weighting that includes it; the baseline does not."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> "KronosConfig":
+        if self.contamination_policy is KronosContamination.ALLOW and self.pretrain_cutoff is None:
+            raise ValueError(
+                "contamination_policy=ALLOW with pretrain_cutoff=None would compute "
+                "forecasts from a checkpoint of unknown provenance and report them "
+                "as clean. If you mean to study the contaminated signal, use FLAG, "
+                "which produces the same numbers and marks them DEGRADED."
+            )
+        if "mini" in self.model_repo.lower() and "2k" not in self.tokenizer_repo.lower():
+            raise ValueError(
+                f"model_repo {self.model_repo!r} is a mini checkpoint but "
+                f"tokenizer_repo {self.tokenizer_repo!r} is not the 2k tokenizer; "
+                "a mismatched tokenizer produces tokens the model never saw"
+            )
+        return self
+
+
 class FlowModelConfig(FrozenModel):
     """Root configuration. `config_hash` identifies it in the experiment log."""
 
@@ -1710,6 +1889,7 @@ class FlowModelConfig(FrozenModel):
     options_flow: OptionsFlowConfig = Field(default_factory=OptionsFlowConfig)
     flow_score: FlowScoreConfig = Field(default_factory=FlowScoreConfig)
     levels: StructureLevelConfig = Field(default_factory=StructureLevelConfig)
+    kronos: KronosConfig = Field(default_factory=KronosConfig)
     setups: dict[SetupType, SetupConfig] = Field(default_factory=dict)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

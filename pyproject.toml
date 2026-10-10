@@ -24,6 +24,12 @@ dependencies = [
 dev = ["pytest>=8.0", "pytest-cov>=4.1", "pyarrow>=14.0"]
 api = ["fastapi>=0.110", "uvicorn>=0.27"]
 parquet = ["pyarrow>=14.0"]
+# Kronos is NOT on PyPI: clone github.com/shiyu-coder/Kronos and point
+# config.kronos.module_path at the checkout. This extra covers only what its
+# `model` package imports. It is deliberately not in `dev`: the baseline system
+# is rules-based, torch is a large dependency, and the Kronos tests are written
+# to exercise the unavailable path when it is absent.
+kronos = ["torch>=2.2", "huggingface-hub>=0.23", "safetensors>=0.4", "einops>=0.7"]
 
 [project.scripts]
 flow-model = "flow_model.cli:main"

@@ -671,3 +671,106 @@ it is testable, not because it is plausible. A symmetric 1R system at that
 rate implies an annualized Sharpe far outside anything documented. A refuted
 hypothesis recorded in advance is a real research result; a confirmed
 hypothesis chosen in arrears is not a result at all.
+
+---
+
+## 16. Kronos: a pre-trained model, quarantined
+
+Added at the researcher's request. Kronos (github.com/shiyu-coder/Kronos,
+MIT) is a decoder-only transformer pre-trained on K-line sequences from "over
+45 global exchanges": a tokenizer quantizes OHLCV bars into discrete tokens
+and an autoregressive model samples forecast paths. Three checkpoints are
+open: mini (4.1M, 2048 context), small (24.7M, 512), base (102.3M, 512).
+
+It is the first component here whose correctness is not decidable from the
+code, and one fact governs the whole design.
+
+### 16.1 The problem the audit cannot see
+
+**Kronos publishes no training-data cutoff.** The research window is
+2015-01-01 to 2023-01-01, with the sealed holdout running to 2025-01-01. A
+checkpoint released in 2025 and trained on recent global-exchange data has
+almost certainly seen every bar of both. A forecast it makes for 2017 may be
+informed by what happened in 2018.
+
+That is lookahead, and it is a kind this project's defences are structurally
+blind to. `validation/lookahead.py` runs four checks — truncation invariance,
+future-mutation invariance, warmup honesty, determinism — and a pre-trained
+model passes all four **trivially**:
+
+| check | why a memorising model passes |
+|---|---|
+| truncation invariance | truncating the dataset does not change the weights |
+| future-mutation invariance | mutating future bars does not change the weights |
+| warmup honesty | the context length is declared correctly |
+| determinism | seeded sampling is reproducible |
+
+`MarketView` can prove that no future bar was read at bar *t*. It cannot
+prove that no future bar was read last year by whoever produced the
+checkpoint. The leak is in the weights, not the data access.
+
+`tests/unit/test_kronos.py::test_the_lookahead_audit_passes_a_deliberate_oracle`
+demonstrates this rather than asserting it: an adapter that ignores its input
+and returns a future it was handed at construction passes the audit with no
+findings. While that test passes, a green audit on `KronosFeatures` says
+nothing about contamination — and the test exists so nobody concludes
+otherwise.
+
+### 16.2 The quarantine
+
+`ContaminationGuard` is the actual defence. It turns on a **declared mode**,
+because the thing that makes a bar safe is not its timestamp relative to the
+view but whether it had happened when the checkpoint was trained — and only
+the caller knows which situation this is:
+
+| mode | cutoff | verdict |
+|---|---|---|
+| RESEARCH | unknown | contaminated — a replay is entirely history |
+| RESEARCH | declared | contaminated at or before the cutoff (inclusive) |
+| LIVE | unknown | **clean** — the bar has not happened, so nothing trained on it |
+| LIVE | declared | contaminated at or before the cutoff |
+
+`contamination_policy` then decides what a contaminated bar gets: REFUSE (the
+default) declines it; FLAG computes it and marks the vector DEGRADED; ALLOW
+computes it silently and is refused outright by a validator unless a cutoff is
+declared.
+
+**A bug worth recording, because the fix is the design.** The guard's first
+version compared the bar against the *view's* cutoff and called a bar at the
+frontier clean. That is vacuous in exactly the case that matters: in a
+backtest the view's cutoff **is** the current bar, so the test was true on
+every bar of a replay and the guard would have waved through every
+contaminated historical bar while appearing to work. The mode is now declared
+rather than inferred, and RESEARCH is the default because it is both the
+conservative reading and the dangerous case.
+
+### 16.3 What this leaves, which is not nothing
+
+- **Live and paper-forward signals are sound.** This is the clean line, and
+  it is why the integration is usable at all.
+- **The contaminated signal is measurable on purpose.** Policy FLAG makes
+  performance-with-the-answers computable, which is an **upper bound no clean
+  model can beat** — a reference point rather than a result.
+  `H-KRONOS-CONTAMINATION-MATTERS` pre-registers the gap between the two as
+  the measured value of the leakage.
+
+### 16.4 Features, and what they are not
+
+Ten keys, all bounded or explicitly unbounded-and-labelled, derived from the
+sampled terminal closes: `kronos_up_probability`, `kronos_direction` (dead
+band ±0.05, because a 32-path sample has a standard error near 0.09 at even
+money), `kronos_expected_move_atr` and its signed squash,
+`kronos_path_dispersion_atr`, `kronos_agreement`, plus `kronos_available`,
+`kronos_contaminated`, and the horizon and **sample count** — the last because
+every other key is a statistic *of* that sample, and a reader who cannot see
+the denominator cannot judge it.
+
+`include_in_flow_score` is **off by default**, and not merely out of caution:
+section 7 fixes the five component weights at a sum of 100 and every setup
+threshold was calibrated on that scale, so admitting a sixth component
+silently rescales every gate. Phase 8 may sweep an alternative weighting.
+
+Nothing in the module claims the forecast is skilful, and nothing has been
+measured against held-out data by this project. The one number that would
+settle it — out-of-sample forecast accuracy on bars the checkpoint provably
+never saw — cannot be computed until a cutoff is known.

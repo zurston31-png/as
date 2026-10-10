@@ -184,3 +184,44 @@ class Session(StrEnum):
     RTH_CLOSE = "RTH_CLOSE"
     POST_RTH = "POST_RTH"
     CLOSED = "CLOSED"
+
+
+class KronosContamination(StrEnum):
+    """What to do with a bar a pre-trained checkpoint may have trained on.
+
+    Separate from `DataQuality` because this is not a property of the DATA --
+    the bars are fine. It is a property of the model reading them, and it is
+    unobservable from the data itself, which is exactly why it needs its own
+    declared policy rather than a quality grade.
+    """
+
+    REFUSE = "refuse"
+    """Decline the bar. The default, and the only honest setting for a
+    reported backtest against a checkpoint of unknown provenance."""
+
+    FLAG = "flag"
+    """Compute it and mark the vector DEGRADED, for deliberately measuring how
+    much the contaminated signal is worth -- which is itself a useful number,
+    as an upper bound no clean model could beat."""
+
+    ALLOW = "allow"
+    """Compute it silently. Only defensible when `pretrain_cutoff` is known
+    and the bars genuinely postdate it."""
+
+
+class KronosMode(StrEnum):
+    """Whether a pre-trained model is being run over history or over the present.
+
+    This cannot be inferred from a `MarketView`. In a backtest the view's
+    cutoff IS the simulated present, so "is this bar at the frontier?" is true
+    on every bar of a replay and tells you nothing. Only the caller knows
+    which it is, so the caller declares it.
+    """
+
+    RESEARCH = "research"
+    """A replay over history. Every bar already happened, so a checkpoint of
+    unknown provenance may have trained on all of them."""
+
+    LIVE = "live"
+    """Paper or live forward signals. The bar has not happened yet, so no
+    training set can contain it, whatever the checkpoint's cutoff."""

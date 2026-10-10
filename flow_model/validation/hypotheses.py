@@ -311,6 +311,60 @@ HYPOTHESES: tuple[Hypothesis, ...] = (
         ),
         expected_to_hold=False,
     ),
+    # --- the Kronos overlay, registered when it was added -----------------
+    Hypothesis(
+        hypothesis_id="H-KRONOS-ADDS-EDGE",
+        source="ARCHITECTURE.md 16",
+        claim=(
+            "Adding the Kronos forecast overlay to the rules-based signal raises "
+            "out-of-sample expectancy on bars the checkpoint provably never trained "
+            "on. Registered when the integration was added, before any forecast was "
+            "scored, so the comparison is not chosen after seeing it."
+        ),
+        metric="expectancy",
+        driver="kronos_enabled",
+        direction=Direction.ORDERED_GROUPS,
+        groups=("kronos_on", "kronos_off"),
+        refuted_when=(
+            "Expectancy with the overlay does not exceed expectancy without it, on "
+            "bars strictly after a declared pretrain_cutoff, with adequate sample "
+            "size in both arms."
+        ),
+        consequence=(
+            "Report that the overlay adds nothing and REMOVE it from the candidate "
+            "configuration. Do not retune its horizon, path count or dead band "
+            "against the same data -- that is the overfitting loop, and it is worse "
+            "here than elsewhere because a learned component has far more capacity "
+            "to absorb a tuning signal than a bounded rule does."
+        ),
+        expected_to_hold=False,
+    ),
+    Hypothesis(
+        hypothesis_id="H-KRONOS-CONTAMINATION-MATTERS",
+        source="ARCHITECTURE.md 16",
+        claim=(
+            "The contaminated signal outperforms the clean one. If a checkpoint that "
+            "may have trained on the test bars scores no better than one evaluated "
+            "only after its cutoff, then contamination was not doing any work and the "
+            "quarantine costs nothing. If it scores much better, the gap IS the "
+            "leakage, measured."
+        ),
+        metric="expectancy",
+        driver="kronos_contaminated",
+        direction=Direction.ORDERED_GROUPS,
+        groups=("contaminated", "clean"),
+        refuted_when=(
+            "Expectancy under contamination_policy=FLAG over the research window does "
+            "not exceed expectancy on post-cutoff bars by more than sampling error."
+        ),
+        consequence=(
+            "Report the gap as the measured value of the leakage, whichever way it "
+            "goes. A large gap is the strongest possible argument for the quarantine; "
+            "a null gap is evidence the overlay is weak rather than evidence it is "
+            "safe, and must never be reported as the latter."
+        ),
+        expected_to_hold=True,
+    ),
     Hypothesis(
         hypothesis_id="H-CONSISTENCY-OVER-PEAK",
         source="ARCHITECTURE.md 10 / the brief",
