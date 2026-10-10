@@ -744,6 +744,39 @@ contaminated historical bar while appearing to work. The mode is now declared
 rather than inferred, and RESEARCH is the default because it is both the
 conservative reading and the dangerous case.
 
+### 16.2a The cutoff investigation, and why it settles the question
+
+I went looking for a published cutoff, so the guard could open up. The paper
+is [arXiv 2508.02739](https://arxiv.org/abs/2508.02739) (AAAI 2026); the
+corpus is "over 12 billion K-line records from 45 global exchanges" across 7
+temporal granularities. **Neither the paper page, the repository, nor the
+model cards publish a training-data cutoff.** A third-party paper claims the
+corpus ends June 2024; I could not verify that from this container, since
+arxiv.org and huggingface.co are both refused by its network policy. The
+authors' own finetune config loads Qlib data to `2025-06-05` and holds out
+`2024-07-01` onward for backtesting — circumstantial support for a mid-2024
+corpus end, and no more than that.
+
+**The exact date turns out not to matter.** The research window here ends
+2023-01-01. For Kronos to be clean across it, its corpus would have to end
+before **2015-01-01** — and a model released in 2025, trained on 12 billion
+recent K-lines from 45 exchanges, cannot have a pre-2015 cutoff. Every
+candidate date leaves 100% of the research window contaminated:
+
+| candidate cutoff | source | clears the 2015-01-01 research start? |
+|---|---|---|
+| 2024-06-30 | third-party claim, unverified | no |
+| 2025-06-05 | the authors' own finetune data end | no |
+| 2014-12-31 | hypothetical | yes — and implausible |
+
+So the quarantine is **permanent for backtesting**, not provisional pending a
+date, and `mode=LIVE` is the only clean path. `pretrain_cutoff` stays `None`
+by default: setting it from an unverified secondhand claim would convert a
+rumour into a licence to backtest, which is precisely what the guard exists
+to stop. `test_no_credible_cutoff_clears_this_project_research_window` pins
+the arithmetic, so if the research window ever moves the conclusion gets
+redone rather than assumed.
+
 ### 16.3 What this leaves, which is not nothing
 
 - **Live and paper-forward signals are sound.** This is the clean line, and

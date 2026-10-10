@@ -526,3 +526,72 @@ def test_nothing_in_the_module_claims_the_forecast_works():
     # matching structure instead of text).
     for claim in ("proven", "profitable", "outperforms", "beats the market"):
         assert not re.search(rf"\b{re.escape(claim)}\b", text), f"module asserts {claim!r}"
+
+
+# ---------------------------------------------------------------------------
+# the cutoff question, settled by arithmetic rather than by a date
+# ---------------------------------------------------------------------------
+
+
+def test_no_credible_cutoff_clears_this_project_research_window():
+    """The decisive result of the cutoff investigation, and the reason the
+    quarantine is permanent for backtesting rather than provisional.
+
+    I went looking for Kronos's training-data cutoff: the paper is arXiv
+    2508.02739 (AAAI 2026), the corpus is "over 12 billion K-line records from
+    45 global exchanges", and NEITHER the paper page, the repo, nor the model
+    cards publish a cutoff. A third-party paper claims the corpus ends June
+    2024, which I could not verify from this container. The authors' own
+    finetune config loads Qlib data to 2025-06-05 and holds out 2024-07-01
+    onward for backtesting -- circumstantial support for a mid-2024 corpus
+    end, and no more than that.
+
+    But the exact date turns out not to matter, which is why this test is
+    arithmetic rather than a lookup. This project's research window ends
+    2023-01-01. For Kronos to be clean across it, its corpus would have to end
+    BEFORE 2015-01-01 -- and a model released in 2025, trained on 12 billion
+    recent K-lines from 45 exchanges, cannot have a pre-2015 cutoff.
+
+    So every candidate cutoff leaves 100% of the research window
+    contaminated, and the only clean path is mode=LIVE. If this test ever
+    fails it means the research window moved, and the conclusion needs
+    redoing rather than assuming.
+    """
+    from flow_model.config.loader import load_config
+
+    config = load_config()
+    research_start = config.backtest.start
+    guard_cutoffs = (
+        date(2024, 6, 30),   # the third-party claim
+        date(2025, 6, 5),    # the authors' own finetune data end
+        date(2023, 12, 31),  # a generously early alternative
+    )
+    for cutoff in guard_cutoffs:
+        assert cutoff >= research_start, (
+            f"cutoff {cutoff} predates the research window start {research_start}; "
+            "the arithmetic in this test's docstring needs redoing"
+        )
+        guard = ContaminationGuard(pretrain_cutoff=cutoff, mode=KronosMode.RESEARCH)
+        first_bar = datetime(
+            research_start.year, research_start.month, research_start.day, 15, 0, tzinfo=UTC
+        )
+        assert guard.verdict(first_bar).contaminated is True
+
+
+def test_the_live_path_is_the_only_clean_one_and_it_works():
+    """The complement: having established that no cutoff rescues the backtest,
+    confirm the path that IS sound is not also blocked. Otherwise the
+    integration would be unusable rather than merely restricted."""
+    guard = ContaminationGuard(pretrain_cutoff=None, mode=KronosMode.LIVE)
+    verdict = guard.verdict(datetime(2026, 6, 1, 14, 35, tzinfo=UTC))
+    assert verdict.permitted is True
+    assert verdict.contaminated is False
+    assert verdict.quality is DataQuality.GOOD
+
+
+def test_the_default_cutoff_stays_unknown_despite_the_third_party_claim():
+    """Deliberate. Setting pretrain_cutoff=2024-06-30 on an unverified
+    secondhand claim would convert a rumour into a license to backtest, and
+    the guard exists to stop exactly that. It stays None until someone
+    verifies a cutoff or trains a checkpoint whose cutoff they know."""
+    assert KronosConfig().pretrain_cutoff is None
