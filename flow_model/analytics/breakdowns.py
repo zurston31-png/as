@@ -532,7 +532,11 @@ def _build(
         spans_phases=spans_phases,
         min_sample_n=policy.min_sample_n,
         metric_names=tuple(metrics),
-        n_trades=sum(c.n for c in cells),
+        # The INPUT count, not the sum over the cells. Deriving it from the
+        # cells would make the validator below a tautology, and the invariant
+        # it exists for -- a dimension may not drop a trade -- is exactly the
+        # one that cannot be checked against its own output.
+        n_trades=len(trades),
         cells=cells,
     )
 

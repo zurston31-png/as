@@ -40,6 +40,7 @@ rows, and reads back as exactly that.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -98,6 +99,31 @@ def _enum(value) -> str | None:
     return None if value is None else value.value
 
 
+def _reject_non_finite(values: dict[str, Any], *, kind: str, identity: str) -> None:
+    """Refuse a NaN or an infinity before it reaches a column.
+
+    SQLite has no NaN: binding one to a `DOUBLE PRECISION` column stores
+    NULL. So a `TradeRecord` carrying `volatility=nan` -- which the contract
+    permits, since `volatility` is an optional float with no finiteness
+    bound -- writes without complaint and reads back with `volatility=None`,
+    unequal to the record that was written and claiming "no ATR was supplied"
+    where the truth is "the ATR was not a number". That is a silent change of
+    value by the storage layer, which is the one thing storage may not do (see
+    this module's docstring on `canonical_json`). Refused, with the field
+    named, so the caller fixes the measurement instead of discovering later
+    that a column went quietly empty.
+    """
+    for name, value in values.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise DatabaseError(
+                f"{kind} {identity!r}: field {name!r} is {value!r}, which SQLite cannot "
+                "store -- it binds a non-finite double as NULL, so the row would read "
+                f"back with {name}=None and would not equal the record written. A "
+                "non-finite measurement is not a measurement; fix it upstream rather "
+                "than storing a silent NULL"
+            )
+
+
 def trade_row(record: TradeRecord) -> tuple[Any, ...]:
     """One `trades` row, in `TRADE_COLUMNS + TRADE_DERIVED_COLUMNS` order."""
     costs = record.costs
@@ -150,6 +176,7 @@ def trade_row(record: TradeRecord) -> tuple[Any, ...]:
     }
     for field in _COST_FIELDS:
         values[f"cost_{field}"] = getattr(costs, field)
+    _reject_non_finite(values, kind="trade", identity=record.trade_id)
     return tuple(values[name] for name in TRADE_COLUMNS + TRADE_DERIVED_COLUMNS)
 
 
@@ -190,6 +217,9 @@ def signal_row(record: SignalRecord) -> tuple[Any, ...]:
         "limit_breach": record.limit_breach,
         "split_label": _enum(record.split_label),
     }
+    _reject_non_finite(
+        values, kind="signal", identity=f"{record.symbol}@{record.ts.isoformat()}"
+    )
     return tuple(values[name] for name in SIGNAL_COLUMNS)
 
 
@@ -227,6 +257,9 @@ def order_row(record: OrderRecord) -> tuple[Any, ...]:
     }
     for field in _COST_FIELDS:
         values[f"cost_{field}"] = getattr(record.costs, field)
+    _reject_non_finite(
+        values, kind="order", identity=f"{record.symbol}@{record.signal_ts.isoformat()}"
+    )
     return tuple(values[name] for name in ORDER_COLUMNS)
 
 
@@ -249,6 +282,9 @@ def equity_row(run_id: str, point: EquityPoint) -> tuple[Any, ...]:
         "high_water_mark": point.high_water_mark,
         "drawdown_pct": point.drawdown_pct,
     }
+    _reject_non_finite(
+        values, kind="equity point", identity=f"{run_id}@{point.ts.isoformat()}"
+    )
     return tuple(values[name] for name in EQUITY_COLUMNS)
 
 
@@ -408,12 +444,27 @@ class Database:
         return run_id
 
     def write_trades(self, trades: Iterable[TradeRecord]) -> int:
-        """Insert trade rows on their own, for a caller holding records only."""
+        """Insert trade rows on their own, for a caller holding records only.
+
+        Raises `DatabaseError` on a key collision, like `write_run`: a caller
+        that catches `DatabaseError` around one write and a bare
+        `sqlite3.IntegrityError` around the other will catch neither
+        reliably, and the condition is the same one -- this trade is already
+        stored, and the alternative to raising would be doubling it.
+        """
         rows = [trade_row(t) for t in trades]
-        with self._conn:
-            self._conn.executemany(
-                _insert_sql("trades", TRADE_COLUMNS + TRADE_DERIVED_COLUMNS), rows
-            )
+        try:
+            with self._conn:
+                self._conn.executemany(
+                    _insert_sql("trades", TRADE_COLUMNS + TRADE_DERIVED_COLUMNS), rows
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseError(
+                f"{len(rows)} trade row(s) could not be written: {exc}. (run_id, "
+                "trade_id) is the natural primary key, so a collision means this trade "
+                "is already stored; inserting it again would double its PnL in every "
+                "aggregate computed from this table"
+            ) from exc
         return len(rows)
 
     def delete_run(self, run_id: str) -> int:

@@ -194,6 +194,18 @@ class NonChronologicalEquityError(AnalyticsError):
     """
 
 
+class NonFiniteEquityError(AnalyticsError):
+    """A NaN or an infinity reached the equity series.
+
+    Refused at the door for the same reason a backwards series is. Every
+    comparison against NaN is false, so a NaN mark walks through the drawdown
+    scan as "not below the running peak" and then surfaces as a non-finite
+    `MetricValue` -- a validation error raised far from its cause -- while
+    `total_return` and `cagr`, which read only the endpoints, would still
+    report a number computed across a corrupted curve.
+    """
+
+
 class UndefinedMetricError(AnalyticsError):
     """`MetricValue.require()` was called on a metric that has no value."""
 
@@ -250,6 +262,18 @@ class Undefined(StrEnum):
 
     NO_ANNUALIZATION = "no_annualization"
     """The sampling frequency of the equity series could not be measured."""
+
+    ZERO_AVERAGE_LOSS = "zero_average_loss"
+    """Losers are present but their mean R is exactly zero, so a ratio taken
+    against it has no denominator. Distinct from `NO_LOSSES`: there were
+    losses, they were just smaller than the 1e-6 R the record stores. A
+    `breakeven_win_rate` of 0.0 ("profitable at a 0% win rate") is the single
+    most flattering number this module could print, so it is refused."""
+
+    NOT_REPRESENTABLE = "not_representable"
+    """The quantity is mathematically defined but overflows a float -- e.g.
+    compounding a few minutes of return into an annual growth rate. Reported
+    as undefined rather than as a crash or an infinity."""
 
 
 class SampleStatus(StrEnum):
@@ -739,8 +763,19 @@ def win_loss_ratio(
         return MetricValue.undefined_because(
             "win_loss_ratio", Undefined.NO_LOSSES, n=len(t)
         )
+    avg_win, avg_loss = _mean(wins), abs(_mean(losses))
+    if avg_loss == 0.0:
+        return MetricValue.undefined_because(
+            "win_loss_ratio",
+            Undefined.ZERO_AVERAGE_LOSS,
+            n=len(wins) + len(losses),
+            note=(
+                "losses are present but their mean R rounds to zero at the "
+                "record's precision, so the ratio has no denominator"
+            ),
+        )
     return MetricValue.measured(
-        "win_loss_ratio", _mean(wins) / abs(_mean(losses)), n=len(wins) + len(losses)
+        "win_loss_ratio", avg_win / avg_loss, n=len(wins) + len(losses)
     )
 
 
@@ -806,6 +841,18 @@ def breakeven_win_rate(
             "breakeven_win_rate", Undefined.NO_LOSSES, n=len(t), unit="fraction"
         )
     avg_win, avg_loss = _mean(wins), abs(_mean(losses))
+    if avg_loss == 0.0:
+        return MetricValue.undefined_because(
+            "breakeven_win_rate",
+            Undefined.ZERO_AVERAGE_LOSS,
+            n=len(wins) + len(losses),
+            unit="fraction",
+            note=(
+                "losses are present but their mean R rounds to zero at the "
+                "record's precision; the identity would read as a 0% breakeven "
+                "win rate, which is not a measurement of anything"
+            ),
+        )
     return MetricValue.measured(
         "breakeven_win_rate",
         avg_loss / (avg_win + avg_loss),
@@ -1270,6 +1317,14 @@ def _ordered_equity(equity: Iterable[EquityPoint]) -> tuple[EquityPoint, ...]:
     plausible drawdown number.
     """
     points = tuple(equity)
+    for point in points:
+        if not math.isfinite(point.equity) or not math.isfinite(point.high_water_mark):
+            raise NonFiniteEquityError(
+                f"equity mark at {point.ts.isoformat()} is not finite "
+                f"(equity={point.equity}, high_water_mark={point.high_water_mark}). "
+                "A non-finite mark is an upstream bug; computing from it would "
+                "report a number for some metrics and raise for others."
+            )
     for earlier, later in zip(points, points[1:]):
         if later.ts < earlier.ts:
             raise NonChronologicalEquityError(
@@ -1891,9 +1946,30 @@ def cagr(
         return MetricValue.undefined_because(
             "cagr", Undefined.ZERO_ELAPSED_TIME, n=len(points), unit="fraction/year"
         )
+    try:
+        growth = (end / start) ** (1.0 / years) - 1.0
+    except OverflowError:
+        growth = math.inf
+    if not math.isfinite(growth):
+        # A few minutes of gain compounded over a year leaves the float range
+        # entirely. The arithmetic is not wrong, the quantity is simply not
+        # representable, and a crash deep in a report is the worst of the
+        # three possible outcomes.
+        return MetricValue.undefined_because(
+            "cagr",
+            Undefined.NOT_REPRESENTABLE,
+            n=len(points),
+            unit="fraction/year",
+            note=(
+                f"compounding a {end / start - 1.0:.6g} return over "
+                f"{years:.6g} calendar years overflows a float; the span is "
+                "too short for an annual growth rate to mean anything. Read "
+                "total_return over the stated span instead."
+            ),
+        )
     return MetricValue.measured(
         "cagr",
-        (end / start) ** (1.0 / years) - 1.0,
+        growth,
         n=len(points),
         unit="fraction/year",
         note=f"over {years:.6g} calendar years",
@@ -2027,6 +2103,10 @@ def compute_trade_metrics(
 ) -> dict[str, MetricValue]:
     """Run named registry metrics over one trade set, in the given order."""
     pol = _policy(policy)
+    # The section 0.8 refusal belongs to this entry point too, not only to the
+    # metrics it happens to call: `names=()` would otherwise accept a
+    # mixed-phase set and return an empty dict without consulting a metric.
+    assert_single_phase(tuple(trades), split_label)
     unknown = [name for name in names if name not in TRADE_METRICS]
     if unknown:
         raise KeyError(f"unknown metric name(s): {unknown}")

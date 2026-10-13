@@ -611,6 +611,20 @@ class Ledger:
         return self._append_equity(ts)
 
     def _append_equity(self, ts: datetime) -> EquityPoint:
+        # The high-water mark is raised HERE as well as in `mark_to_market`,
+        # because an equity sample may be taken after equity moved without a
+        # mark: `record_equity_point` closes the curve on the run's last bar,
+        # and the exits of that bar are resolved AFTER it was marked (section
+        # 9's order). A trade that exits at its target above that bar's close
+        # leaves the final sample above the mark it was taken from, and a point
+        # whose `high_water_mark` is below its own `equity` reports
+        # `drawdown_pct` as a POSITIVE number -- which `EquityPoint` defines as
+        # the fraction BELOW the peak, and which no drawdown series can
+        # contain. `mark_to_market` keeps its own update because it must raise
+        # the mark on bars it does not sample.
+        equity = self.equity
+        if equity > self._high_water_mark:
+            self._high_water_mark = equity
         point = EquityPoint(
             ts=ts,
             equity=self.equity,

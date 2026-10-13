@@ -1043,6 +1043,7 @@ class BacktestLoop:
         )
         self.atr_median_window = atr_median_window
         self.tracker = _PhaseTracker()
+        self._has_run = False
 
     # --- run id --------------------------------------------------------
 
@@ -1070,7 +1071,29 @@ class BacktestLoop:
     # --- the loop ------------------------------------------------------
 
     def run(self, source, *, clock_ns: Sequence[int] | None = None) -> RunResult:
-        """Walk the clock. Returns a `RunResult`, empty trade list included."""
+        """Walk the clock. Returns a `RunResult`, empty trade list included.
+
+        ONE LOOP, ONE RUN. A second `run()` on the same instance is refused
+        rather than served, because `RiskLimitManager` is the one object here
+        that accumulates across bars and it is built in the constructor: a
+        second run would start with the first run's realized session PnL, its
+        consecutive-loss streak, its armed cooldowns and -- worst -- its
+        kill-switch flag. The second run would then be gated by losses that
+        are not in its own trade list, which is the determinism requirement
+        ("two runs of the same config over the same data produce
+        byte-identical trades") failing silently in the direction of fewer
+        trades. Refused here so that it cannot happen, in the same spirit as
+        the source cursor that will not rewind.
+        """
+        if self._has_run:
+            raise BacktestError(
+                f"{self.symbol}: this BacktestLoop has already run. Its "
+                "RiskLimitManager carries the realized session and weekly PnL, the "
+                "consecutive-loss streak, any armed cooldown and the kill-switch flag "
+                "from that run, so a second run would be gated by the first run's "
+                "losses and would not reproduce it. Build one BacktestLoop per run"
+            )
+        self._has_run = True
         backtest = self.config.backtest
         data_hash = source.data_hash()
         run_id = self.run_id_for(data_hash)
@@ -1195,22 +1218,20 @@ class BacktestLoop:
                 )
             # An order in flight is risk the limit manager cannot see: it
             # learns about a position at the FILL, and between submission and
-            # fill `max_open_positions` is satisfied by a book that is about
-            # to grow. Two signals on consecutive bars therefore both pass the
-            # limit and both fill, and the account carries double the intended
-            # size for as long as they both live. The count is enforced here,
-            # against the same `config.risk.max_open_positions` the manager
-            # reads, counting live orders alongside open positions.
-            live = len(pending) + len(ledger.open_positions)
-            declined = intent is not None and live >= int(
-                self.config.risk.max_open_positions
+            # fill the book it checked is one that is about to grow. See
+            # `_in_flight_breach`.
+            in_flight_breach = (
+                ""
+                if intent is None
+                else self._in_flight_breach(intent, pending=pending, ledger=ledger)
             )
+            declined = bool(in_flight_breach)
             if declined:
                 submissions_declined += 1
             blocking = decision.blocking
             limit_breach = "" if decision.limits is None else decision.limits.breach
             if declined:
-                limit_breach = "max_open_positions_in_flight"
+                limit_breach = in_flight_breach
             journal.record_signal(
                 decision.signal,
                 blocking_stage="" if blocking is None else blocking.stage.value,
@@ -1299,8 +1320,10 @@ class BacktestLoop:
         if submissions_declined:
             notes.append(
                 f"{submissions_declined} intent(s) were built and NOT submitted because "
-                f"max_open_positions={self.config.risk.max_open_positions} was already "
-                "committed to open positions or orders in flight. The signal rows carry "
+                "a section 8 limit on the BOOK -- the position count, the per-symbol "
+                "count or the portfolio heat -- was already committed to open positions "
+                "or to orders in flight, which the limit manager cannot see until they "
+                "fill. The signal rows name which one in `limit_breach` and carry "
                 "intent_built=True with order_submitted=False, so these are "
                 "distinguishable from bars that produced no intent at all"
             )
@@ -1379,6 +1402,42 @@ class BacktestLoop:
             entry_delay_bars=int(execution.entry_delay_bars),
         )
         return offset + int(execution.max_entry_wait_bars) + 2
+
+    def _in_flight_breach(
+        self, intent: TradeIntent, *, pending: Sequence["_PendingEntry"], ledger: Ledger
+    ) -> str:
+        """The section 8 limit this submission breaches once orders IN FLIGHT count.
+
+        `RiskLimitManager` learns of a position at the FILL. Between submission
+        and fill, the book it checked is one that is about to grow, so two
+        signals on consecutive bars both pass and both fill and the account
+        carries more than the configuration allows for as long as both live.
+        The three limits that are statements about the BOOK -- the position
+        count, the per-symbol count and the portfolio heat -- are therefore
+        compared again here against live orders plus open positions, using the
+        same `config.risk` fields the manager reads. A duplicated COMPARISON,
+        not a duplicated threshold; the manager remains the sole authority over
+        whether a position may open at all.
+
+        Heat counts each pending order at its REQUESTED risk: a partial fill
+        commits less, so counting the request is the conservative direction.
+        """
+        risk = self.config.risk
+        open_positions = ledger.open_positions
+        if len(pending) + len(open_positions) >= int(risk.max_open_positions):
+            return "max_open_positions_in_flight"
+        same_symbol = sum(
+            1 for entry in pending if entry.order.symbol == intent.symbol
+        ) + sum(1 for position in open_positions if position.symbol == intent.symbol)
+        if same_symbol >= int(risk.max_positions_per_symbol):
+            return "max_positions_per_symbol_in_flight"
+        committed = ledger.open_risk_dollars() + sum(
+            entry.order.intent.risk_dollars for entry in pending
+        )
+        cap = ledger.equity * float(risk.max_portfolio_heat_pct)
+        if committed + intent.risk_dollars > cap * (1.0 + 1e-9):
+            return "max_portfolio_heat_in_flight"
+        return ""
 
     def _submit(
         self,
@@ -1469,28 +1528,44 @@ class BacktestLoop:
             if not fill.filled:
                 continue
             position = manager.open_from_fill(entry.order.intent, fill, entry.context)
-            # The entry bar is a bar the position was open for: the fill
-            # printed at its OPEN, so the stop and the target genuinely came
-            # afterwards within it. `resolve_exit` permits an exit on the entry
-            # bar for that reason, and skipping the check would let a stop that
-            # was hit on the entry bar exit later, at a price the market never
-            # offered the position. Only the bar the fill landed on is
-            # inspected, and only if the loop has already stepped past it.
-            fill_bar = next(
-                (b for b in candidates if b.close_ts == fill.fill_ts), None
-            )
-            if fill_bar is not None:
-                manager.resolve_one(
+            # EVERY bar from the fill onward is a bar the position was open
+            # for, and the loop has already stepped past all of them. An order
+            # whose wait horizon spans several bars can fill on the FIRST of
+            # them while the loop is standing on the LAST -- a resting limit
+            # with `max_entry_wait_bars=3` fills at offset 1 and is not
+            # resolved until offset 3 has closed -- so the bars in between are
+            # bars the position held and nothing else would ever inspect. A
+            # stop hit there would go unseen and the position would exit on a
+            # later bar instead, at a price the market never offered it: a
+            # realized loss reported as a win, which is the flattering
+            # direction. They are replayed here, in order, FOR THIS POSITION
+            # ONLY -- re-running the whole book would count these bars a second
+            # time against every other open position and fire their time stops
+            # early.
+            #
+            # The fill bar comes first and does not advance the holding time:
+            # the fill printed inside it, so `resolve_exit` permits an exit
+            # there, and the bar is not one that closed after the entry. Each
+            # later bar advances it exactly as `update_open_positions` would
+            # have, had the position existed when the loop stood on that bar.
+            for index, held in enumerate(
+                b for b in candidates if b.close_ts >= fill.fill_ts
+            ):
+                if index:
+                    manager.ledger.advance_bar(position, held.close_ts)
+                record = manager.resolve_one(
                     position,
-                    fill_bar.close_ts,
-                    bar=fill_bar,
-                    quote=source.quote(fill_bar.close_ts),
+                    held.close_ts,
+                    bar=held,
+                    quote=source.quote(held.close_ts),
                     intrabar=(
                         intrabar
-                        if bar is not None and fill_bar.close_ts == bar.close_ts
-                        else source.intrabar(fill_bar)
+                        if bar is not None and held.close_ts == bar.close_ts
+                        else source.intrabar(held)
                     ),
                 )
+                if record is not None:
+                    break
         pending[:] = still
 
     # --- provenance ----------------------------------------------------
