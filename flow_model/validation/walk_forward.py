@@ -17,8 +17,8 @@ reader to guess which one a number is, and a 36 that means sessions where days
 were meant is a nine-fold error in the window width with no other symptom.
 `WindowSpec.from_config` resolves the committed `walk_forward.*_months` values
 against one date by true calendar arithmetic, so the month counts in
-`config/defaults.yaml` keep their meaning without a days-per-month constant
-being invented anywhere.
+`config/defaults.yaml` keep their meaning with no days-per-month constant
+invented anywhere.
 
 PURGE IS NOT EMBARGO
 --------------------
@@ -43,10 +43,9 @@ Inside a fold both apply at each interior boundary, so the gap between
 consecutive windows is `purge_days + embargo_days` (`WindowSpec.gap_days`), and
 a `Fold` whose own ranges do not honour it raises at construction:
 `PurgeViolationError` when the gap is short of the purge alone,
-`EmbargoViolationError` when the purge fits and the embargo does not. The same
-gap is checked again through `splits.SplitRegistry.assert_embargo`, which
-section 10 names as Phase 8's job -- it is available there and deliberately
-not automatic.
+`EmbargoViolationError` when the purge fits and the embargo does not. The gap
+is checked again through `splits.SplitRegistry.assert_embargo`, which section
+10 names as Phase 8's job -- available there and deliberately not automatic.
 
 Across folds the embargo is the span `Fold.embargo_after_test`, and the rule is
 that no later fold's train window may BEGIN inside it. It is not a ban on a
@@ -54,7 +53,7 @@ later train window spanning an earlier test window: `splits.py` records that a
 rolling walk-forward legitimately reuses an earlier fold's test range as later
 training data, and that reuse is the mechanism of a rolling study. What the
 rule forbids is a train window whose earliest observation is drawn from an
-evaluation window's correlation shadow, with nothing before it to dilute.
+evaluation window's correlation shadow with nothing before it to dilute.
 
 WHY THERE IS NO AGGREGATE-ONLY OUTPUT
 -------------------------------------
@@ -68,10 +67,10 @@ spread.
 So the aggregate is not a number this module stores. `CrossFoldStatement` takes
 the per-fold `MetricValue`s as a REQUIRED constructor field and exposes `mean`,
 `stdev`, `spread`, `minimum`, `maximum`, `n_folds` and `n_folds_defined` only
-as computed projections of that vector. There is no setter, no cached scalar
-and no constructor accepting a mean, so keeping the mean while dropping the
-folds is not something a caller can do -- including in `model_dump()`, where
-the vector is serialized alongside. `describe()` prints every fold first.
+as computed projections of that vector -- no setter, no cached scalar, no
+constructor accepting a mean. Keeping the mean while dropping the folds is not
+something a caller can do, `model_dump()` included, and `describe()` prints
+every fold first.
 
 ZERO TRADES IS THE LIVE CASE
 ----------------------------
@@ -82,11 +81,9 @@ which every rate and ratio is `Undefined.NO_TRADES`. A `CrossFoldStatement`
 over folds that are all empty is undefined with n=0 -- n on an aggregate counts
 the FOLDS that contributed -- with the per-fold reasons listed, never 0.0.
 
-DETERMINISM
------------
-`generate_folds` is a pure function of the data range and the spec. It reads no
-clock and draws nothing, so `FoldSet.fingerprint()` is stable across processes
-and `fold_set.folds` is byte-identical for identical inputs.
+`generate_folds` is a pure function of the data range and the spec: no clock
+read, nothing drawn, so `FoldSet.fingerprint()` is stable across processes and
+`fold_set.folds` is byte-identical for identical inputs.
 """
 
 from __future__ import annotations
@@ -165,6 +162,18 @@ class FoldMode(StrEnum):
 
 def _shift(day: date, days: int) -> date:
     return date.fromordinal(day.toordinal() + days)
+
+
+#: The only arithmetic `CrossFoldStatement` does. Keyed by the suffix each one
+#: appends to the metric name, so an aggregate cannot be computed under a name
+#: that does not describe it.
+_AGGREGATORS: dict[str, Any] = {
+    "mean": lambda v: np.mean(v),
+    "stdev": lambda v: np.std(v, ddof=STDEV_DDOF),
+    "min": min,
+    "max": max,
+    "spread": lambda v: max(v) - min(v),
+}
 
 
 def _add_months(day: date, months: int) -> date:
@@ -352,10 +361,10 @@ class Fold(FrozenModel):
         if gap < self.purge_days:
             raise PurgeViolationError(
                 f"{self.fold_id} {label}: {earlier} then {later}, a gap of {gap} "
-                f"day(s), below purge_days={self.purge_days}. A position opened in "
-                f"the earlier window and still open when the later one begins has its "
-                f"outcome set by the later window's prices, so the purge must come "
-                f"off the earlier window's end"
+                f"day(s), below purge_days={self.purge_days}. A position opened in the "
+                f"earlier window and still open when the later one begins has its "
+                f"outcome set by the later window's prices, so the purge comes off the "
+                f"earlier window's end"
             )
         required = self.purge_days + self.embargo_days
         if gap < required:
@@ -363,9 +372,8 @@ class Fold(FrozenModel):
                 f"{self.fold_id} {label}: {earlier} then {later}, a gap of {gap} "
                 f"day(s). The purge of {self.purge_days} fits, the embargo of "
                 f"{self.embargo_days} that must follow it does not ({required} "
-                f"required). Returns in the days after a window are partly "
-                f"predictable from it, so the later window may not begin in that "
-                f"shadow"
+                f"required). Days after a window are partly predictable from it, so "
+                f"the later window may not begin in that shadow"
             )
 
     @model_validator(mode="after")
@@ -811,11 +819,10 @@ class CrossFoldStatement(FrozenModel):
     def _coverage_note(self) -> str:
         """Fold accounting, carried on every aggregate this class returns.
 
-        The `n` on an aggregate is the number of FOLDS behind it, not the
-        number of trades: the sample a cross-fold mean is a mean over is the
-        folds. The trade count goes in here instead, because dropping it would
-        let "mean win rate over 4 folds" stand without saying that the four
-        folds hold two trades between them.
+        The `n` on an aggregate counts FOLDS, not trades: the sample a
+        cross-fold mean is taken over is the folds. The trade count goes here
+        instead, because dropping it would let "mean win rate over 4 folds"
+        stand without saying the four folds hold two trades between them.
         """
         reasons = self.undefined_reasons
         head = (
@@ -842,16 +849,7 @@ class CrossFoldStatement(FrozenModel):
             return MetricValue.undefined_because(
                 name, reason, n=len(values), unit=self.unit, note=self._coverage_note()
             )
-        if suffix == "mean":
-            number = float(np.mean(values))
-        elif suffix == "stdev":
-            number = float(np.std(values, ddof=STDEV_DDOF))
-        elif suffix == "min":
-            number = float(min(values))
-        elif suffix == "max":
-            number = float(max(values))
-        else:
-            number = float(max(values) - min(values))
+        number = float(_AGGREGATORS[suffix](values))
         if not math.isfinite(number):
             return MetricValue.undefined_because(
                 name,
@@ -1020,15 +1018,19 @@ def evaluate_folds(
 ) -> WalkForwardReport:
     """Run `runner(config, split)` once per fold window and report each.
 
-    `runner` is the `robustness.Runner` protocol -- `(config, Split) ->
-    RunResult` -- so this module drives folds without owning data loading, and
-    `robustness.StoreRunner` is the implementation that builds a FRESH
-    `BacktestLoop` per call. That freshness matters and is not this module's to
-    fake: a second `run()` on one loop raises, because `RiskLimitManager`
-    accumulates, and reusing a loop across folds would carry one fold's
-    daily-loss and consecutive-loss state into the next. This function calls
-    `runner` exactly once per (fold, phase) and refuses duplicate `run_id`s,
-    which is the symptom a reused loop or a mis-clipped clock would produce.
+    `runner` is any `(config, Split) -> RunResult` callable, injected so this
+    module drives folds without owning data loading and so the n=0 path is
+    testable without a data store. `validation/robustness.py` declares the same
+    shape as `Runner` and ships a `StoreRunner` for it; this module does not
+    import either, so a fold study runs whether or not that module is present.
+
+    Whatever the runner is, it must build a FRESH `BacktestLoop` per call. That
+    is not this module's to fake: a second `run()` on one loop raises, because
+    `RiskLimitManager` accumulates, and reusing a loop across folds would carry
+    one fold's daily-loss and consecutive-loss state into the next. This
+    function calls `runner` exactly once per (fold, phase) and refuses
+    duplicate `run_id`s, which is the symptom a reused loop or a mis-clipped
+    clock would produce.
 
     Every window is written to the experiment log when one is supplied, with
     its own `split_id` and phase, so section 10's overfitting report is
