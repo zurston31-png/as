@@ -210,30 +210,48 @@ Per mandate A. These are the live hazards:
 
 ---
 
-## 4. The R definition — unresolved, and it scales §2.5 and §2.6
+## 4. The R definition — RESOLVED 2026-10-17
 
-Four sources, **three distinct definitions** of `TradeRecord.risk_dollars`, the
-denominator of every R above:
+Four sources carried **three distinct definitions** of `TradeRecord.risk_dollars`,
+the denominator of every R in §2. Nothing validated the field, which is why they
+coexisted undetected.
 
-| Source | Stop distance from | Size |
-|---|---|---|
-| `ARCHITECTURE.md` §0.2 (binding) | `entry_price` (realized) | `size` (requested) |
-| `tests/unit/test_contracts.py` | planned | requested |
-| `tests/unit/test_execution.py` | planned | requested |
-| `flow_model/backtest/ledger.py` (sole producer) | realized | **filled** |
+| Source | Stop distance from | Size | Verdict |
+|---|---|---|---|
+| `ARCHITECTURE.md` §0.2 (as written) | `entry_price` (realized) | `size` (requested) | ambiguous wording, rewritten |
+| `tests/unit/test_contracts.py` | planned | requested | **correct** |
+| `tests/unit/test_execution.py` | planned | requested | **correct** |
+| `flow_model/backtest/ledger.py` | realized | filled | **the defect** |
 
-`TradeRecord` validates `gross_pnl` against the price path and
-`pnl == gross − costs`, but **does not validate `risk_dollars` at all**, which is
-why three definitions coexisted undetected. A record claiming `risk_dollars=40`
-on a 10-point, 2-lot, $20 trade (true risk $400) validates today and reports
-`r_multiple = 10.0` for a 1R trade.
+**The resolution.** `TradeIntent._check_geometry` already enforced
+`risk_dollars == |entry_price − stop_price| * point_value * size` on the
+**planned** entry and **requested** size — at the point R is actually decided.
+The ledger then silently re-derived it from the fill, which is exactly the
+revision §0.2 forbids. So the ledger was the defect, not the doc.
 
-Consequence for this document: **every R figure in §2.5 and §2.6 is denominated
-in a unit that is currently ambiguous.** On a 2-point entry slip the realized
-denominator gives exactly −1.0000R on every stop; the planned denominator gives
-−1.1000R, and the difference *is* the entry slippage. Resolution is in flight.
+Now:
 
----
+- `risk_dollars` is **carried** from the intent, never recomputed. `TradeRecord`
+  validates the identity, so a wrong value is a construction error rather than a
+  plausible number in a report.
+- `OpenPosition.carried_risk_dollars` (realized entry, filled size) is a
+  **separate** field, and `Ledger.open_risk_dollars()` sums that for §8's
+  portfolio heat. One field could not serve both: R against the realized entry
+  erases execution quality, and a hard limit on planned risk understates the
+  money at risk.
+
+**Effect on the figures in §2: none.** Phase 7a already used the planned
+denominator — $47.74 / $400 = 0.119350R against 0.1194 published, and
+$21.49 / $400 = 0.053725R against 0.0537. The three breakeven rates in §2.5
+therefore stand unchanged. Had the ledger's convention been the one adopted,
+every stop would have reported exactly −1.00R and entry slippage would have
+vanished from the R distribution.
+
+**Reachability of the old defect:** it affected any trade whose fill differed
+from plan. At the committed default (market entry, `max_entry_wait_bars=1`,
+`size=1`) the realized entry still differs from the planned entry whenever the
+bar's open is not the planned price, so this was live — but zero trades have
+ever been taken, so no published figure was computed through it.
 
 ## 5. Corrections to previously published figures
 

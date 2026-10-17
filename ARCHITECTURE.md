@@ -14,11 +14,45 @@ reviewed against them.
    DataFrame it can index past `now`. It receives a `MarketView` that is
    physically incapable of returning future data. This is the structural
    defence against lookahead bias (section 4).
-2. **R is defined once, at entry, and never revised.**
-   `R = |entry_price - stop_price| * point_value * size`. Realized R is
-   `pnl_after_costs / R`. A "1R target" means `|target - entry| == |entry - stop|`
-   within a configured tolerance. The engine refuses to label a trade "1R"
-   otherwise.
+2. **R is defined once, at SIGNAL time, and never revised.**
+
+   ```
+   R = |planned_entry - stop_price| * point_value * size      # requested size
+   ```
+
+   Realized R is `pnl_after_costs / R`. Both inputs are known when the trade is
+   sized and are immutable, so R cannot be re-derived later. `TradeIntent` and
+   `TradeRecord` each validate this identity; `backtest/ledger.py` **carries**
+   the intent's value through and never recomputes it.
+
+   This wording is precise because it was previously ambiguous — it named
+   `entry_price` (the realized-fill field) alongside `size` (the requested-size
+   field), and three different formulas for `risk_dollars` coexisted in the
+   repository undetected, because nothing validated the field.
+
+   Two consequences, both deliberate, because they keep execution quality
+   visible in the R distribution instead of normalizing it away:
+
+   - An entry that triggers worse than planned realizes **more than 1R of
+     loss** on a stop, not a tidy `-1.00R`. A backtest reporting exactly
+     `-1.00R` on every stop has quietly re-derived R from the realized fill.
+   - A **partial fill scales reported R down by the fill fraction**, which is
+     the honest statement that only part of the intended risk unit was
+     captured. `fill_fraction` must be read alongside R on a partial.
+
+   There is no double-count with costs: spread and slippage are charged as
+   dollars in `CostBreakdown` and are deliberately never folded into a price
+   (see `EntryFill.reference_price` and `backtest/costs.py`).
+
+   **Risk limits consume a different number.** Section 8's portfolio heat needs
+   the dollars actually at risk, so `OpenPosition.carried_risk_dollars` =
+   `|entry_price - stop_price| * point_value * filled_size` (realized entry,
+   filled size) and `Ledger.open_risk_dollars()` sums that. One field cannot
+   serve both: reporting R against the realized entry erases execution quality,
+   and sizing a hard limit on planned risk understates the money at risk.
+
+   A "1R target" means `|target - entry| == |entry - stop|` within a configured
+   tolerance. The engine refuses to label a trade "1R" otherwise.
 3. **No vague components.** Each of the five Flow Model components resolves
    to named scalar features with explicit formulas and explicit data
    requirements. "Institutional" and "smart money" appear nowhere in code.

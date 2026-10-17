@@ -710,6 +710,54 @@ class TradeRecord(FrozenModel):
             raise ValueError(
                 f"pnl {self.pnl} != gross_pnl - costs ({expected_net})"
             )
+        # R IS DEFINED ONCE, AT SIGNAL TIME, AND NEVER REVISED (section 0.2).
+        #
+        # `risk_dollars` is the denominator of every R this system reports --
+        # r_multiple, cost_drag_r, mae_r, mfe_r, expectancy, the R distribution,
+        # the breakeven win rate. Nothing validated it, and three different
+        # formulas for it coexisted in the repository undetected: a record
+        # claiming risk_dollars=40 on a 10-point, 2-lot, $20 trade (true risk
+        # $400) validated and reported r_multiple 10.0 for a 1R trade.
+        #
+        # The identity enforced here is the one `TradeIntent._check_geometry`
+        # already enforces at the point R is DECIDED, on the PLANNED entry and
+        # the REQUESTED size:
+        #
+        #     risk_dollars = |planned_entry - stop_price| * point_value * size
+        #
+        # Both inputs are known at signal time and immutable, so R cannot be
+        # revised after the fact -- which is what section 0.2 demands, and what
+        # a realized-fill denominator would silently break.
+        #
+        # Why NOT the realized entry: it would make every stop realize exactly
+        # -1.00R, which erases execution quality from the R distribution. An
+        # entry that triggered two points worse than planned is a real cost and
+        # belongs in the R, as -1.10R rather than a tidy -1.00R. There is no
+        # double-count: spread and slippage are charged as dollars in `costs`
+        # and are deliberately NOT folded into any price here (see
+        # `EntryFill.reference_price` and `backtest/costs.py`).
+        #
+        # Why NOT the filled size: a partial fill scales reported R down by the
+        # fill fraction, which is the honest statement that only part of the
+        # intended risk unit was captured. `fill_fraction` must be read
+        # alongside R on a partial, and the ledger keeps the realized exposure
+        # separately for the risk limits, which need dollars actually at risk.
+        expected_risk = (
+            abs(self.planned_entry - self.stop_price) * self.point_value * self.size
+        )
+        if not math.isclose(
+            self.risk_dollars, expected_risk, rel_tol=1e-6, abs_tol=1e-6
+        ):
+            raise ValueError(
+                f"risk_dollars {self.risk_dollars} inconsistent with the planned "
+                f"geometry (expected {expected_risk} = |planned_entry "
+                f"{self.planned_entry} - stop_price {self.stop_price}| * point_value "
+                f"{self.point_value} * size {self.size}). R is defined once at signal "
+                "time and never revised (section 0.2); every R in the performance "
+                "report is this record's pnl divided by risk_dollars, so a wrong "
+                "value here rescales expectancy, the R distribution, the excursions "
+                "and the cost hurdle together, and nothing downstream can detect it"
+            )
         return self
 
 

@@ -44,18 +44,42 @@ divergence between `equity` and `sizing_equity`, and
 `TradeIntent.equity_at_signal` on every trade, which is constant under fixed
 fractional and varies under compounding.
 
-## R, and partial fills
+## R, and partial fills -- TWO quantities, deliberately
 
-R is the risk actually committed at the entry that happened:
+This module used to compute its own `risk_dollars` from the realized entry and
+the filled size. That was a defect: it silently RE-DERIVED R, which section 0.2
+forbids ("R is defined once, at entry, and never revised"), and it disagreed
+with `TradeIntent._check_geometry` -- the validator at the point R is actually
+decided -- and with both committed test suites.
 
-    risk_dollars = |entry_price - stop_price| * point_value * filled_size
+The two quantities are now separate, because one number cannot serve both
+consumers honestly:
 
-`filled_size`, not the requested size: a half-filled order committed half the
-risk, and dividing by the requested risk would understate every R multiple on
-a partial fill. `entry_price` is the price the fill actually printed at, not
-the planned entry, because the distance from where the position really is to
-where the stop really is IS the risk. Fixed once here and never revised
-(section 0.2).
+1. `risk_dollars` -- THE R UNIT, for every performance figure. It is
+   `intent.risk_dollars`, CARRIED THROUGH untouched, never recomputed here:
+
+       risk_dollars = |planned_entry - stop_price| * point_value * size
+
+   Planned entry, requested size, both fixed at signal time. An entry that
+   triggers two points worse than planned therefore realizes about -1.10R, not
+   a tidy -1.00R, and a partial fill scales reported R down by the fill
+   fraction. Both are real execution outcomes and both stay visible in the R
+   distribution instead of being normalized away. `TradeRecord` validates this
+   identity, so a slip here is a construction error rather than a plausible
+   number in a report.
+
+2. `carried_risk_dollars` -- THE LIVE EXPOSURE, for section 8's risk limits:
+
+       carried_risk_dollars = |entry_price - stop_price| * point_value * filled_size
+
+   Realized entry, filled size: the dollars the account can actually lose from
+   where the position really is to where the stop really is. `open_risk_dollars`
+   sums THIS, because a heat limit denominated in planned risk would understate
+   the money at risk whenever an entry slipped.
+
+Reporting R against the realized entry would make every stop read exactly
+-1.00R and erase execution quality from the record; sizing the heat limit on
+planned risk would hide an overage. Hence both.
 """
 
 from __future__ import annotations
@@ -210,6 +234,18 @@ class OpenPosition:
     def notional(self) -> float:
         """Exposure at the last mark, in account currency."""
         return abs(self.size * self.point_value * self.mark_price)
+
+    @property
+    def carried_risk_dollars(self) -> float:
+        """Dollars the account can actually lose from here to the stop.
+
+        REALIZED entry, FILLED size -- deliberately not `risk_dollars`, which is
+        the planned R unit fixed at signal time (see this module's docstring).
+        Section 8's limits consume THIS: a heat limit denominated in planned
+        risk understates the money at risk whenever an entry slipped, and
+        understating exposure is the one direction a hard limit may not err in.
+        """
+        return abs(self.entry_price - self.plan.stop_price) * self.point_value * self.size
 
     # --- arithmetic ----------------------------------------------------
 
@@ -510,8 +546,12 @@ class Ledger:
         return not self._positions
 
     def open_risk_dollars(self) -> float:
-        """Sum of open R. The portfolio heat section 8 limits."""
-        return sum(position.risk_dollars for position in self._positions.values())
+        """Sum of the open positions' CARRIED exposure -- the portfolio heat
+        section 8 limits. Not a sum of R: see this module's docstring on why the
+        planned R unit and the realized exposure are different numbers."""
+        return sum(
+            position.carried_risk_dollars for position in self._positions.values()
+        )
 
     def open_notional(self) -> float:
         return sum(position.notional for position in self._positions.values())
@@ -693,14 +733,15 @@ class Ledger:
             entry_price=float(entry.reference_price),
             size=float(entry.filled_size),
         )
-        risk_dollars = (
-            abs(plan.entry_price - plan.stop_price) * intent.point_value * plan.size
-        )
+        # CARRIED, not recomputed. `intent.risk_dollars` was validated against
+        # the planned geometry by `TradeIntent._check_geometry` at the moment
+        # the trade was sized; recomputing it here from the fill is exactly the
+        # revision section 0.2 forbids, and it is what this module used to do.
+        risk_dollars = float(intent.risk_dollars)
         if not math.isfinite(risk_dollars) or risk_dollars <= 0:
             raise LedgerError(
-                f"{intent.symbol}: committed risk came out {risk_dollars!r} at an entry "
-                f"of {plan.entry_price} against a stop of {plan.stop_price}; R would be "
-                "undefined and every R multiple on this trade meaningless"
+                f"{intent.symbol}: the intent carries risk_dollars {risk_dollars!r}; R "
+                "would be undefined and every R multiple on this trade meaningless"
             )
         position = OpenPosition(
             trade_id=trade_id or self.next_trade_id(),

@@ -557,9 +557,13 @@ def _ledger(config=None, **kwargs) -> Ledger:
     return Ledger(config or default_config(), run_id="run-test", **kwargs)
 
 
-def test_r_is_the_risk_actually_committed_at_the_fill_that_happened():
-    """Half a fill commits half the risk, and the entry that happened defines
-    the distance to the stop -- not the entry that was planned."""
+def test_the_r_unit_is_carried_and_the_exposure_is_a_separate_number():
+    """R is fixed at signal time; the exposure the limits read is not.
+
+    See `ledger.py`'s docstring on the two quantities. A slipped partial fill
+    separates them: the R unit stays the intent's, and `carried_risk_dollars`
+    reports the dollars actually at risk from the fill that happened.
+    """
     ledger = _ledger()
     intent = _intent(T0)
     position = ledger.open_position(
@@ -568,8 +572,11 @@ def test_r_is_the_risk_actually_committed_at_the_fill_that_happened():
         context=_context(),
     )
     assert position.size == 1.0
-    assert position.risk_dollars == pytest.approx(abs(13001.0 - 12990.0) * 20.0 * 1.0)
-    assert position.risk_dollars != intent.risk_dollars
+    assert position.risk_dollars == pytest.approx(intent.risk_dollars)
+    assert position.carried_risk_dollars == pytest.approx(
+        abs(13001.0 - 12990.0) * 20.0 * 1.0
+    )
+    assert position.risk_dollars != pytest.approx(position.carried_risk_dollars)
 
 
 def test_entry_costs_are_realized_when_they_are_paid():

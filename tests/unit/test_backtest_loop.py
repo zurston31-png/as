@@ -1360,14 +1360,24 @@ def test_an_order_whose_horizon_outlives_the_data_is_unresolved_not_missed():
 # ---------------------------------------------------------------------------
 
 
-def test_r_is_the_risk_committed_by_the_fill_that_actually_happened():
-    """Half a fill commits half the risk, and the entry that PRINTED defines
-    the distance to the stop -- not the entry that was planned.
+def test_the_r_unit_is_carried_from_the_intent_and_exposure_is_measured_separately():
+    """TWO quantities, and this test exists to keep them apart.
 
-    Hand-computed: one contract filled at 13001 against a stop at 12990 is
-    |13001 - 12990| * 20 * 1 = 220 dollars of risk, where the intent asked for
-    two contracts from 13000 and would have committed 400. Dividing by the
-    intent's 400 would understate every R multiple on the trade by 45%.
+    Section 0.2: "R is defined once, at entry, and never revised." The ledger
+    used to recompute `risk_dollars` from the realized fill, which both revised
+    R and disagreed with `TradeIntent._check_geometry` -- the validator at the
+    point R is actually decided. That is now a carried value, and the realized
+    exposure the risk limits need lives under its own name.
+
+    Hand-computed, one contract filled at 13001 where the intent asked for two
+    from 13000 against a stop at 12990:
+      * the R unit stays |13000 - 12990| * 20 * 2 = 400, the intent's own
+        number, so a 1R loss is a 1R loss whatever the fill did;
+      * the carried exposure is |13001 - 12990| * 20 * 1 = 220, the dollars the
+        account can actually lose from here to the stop, which is what portfolio
+        heat must count.
+    The two differ here BY CONSTRUCTION -- a slipped, partial fill -- so neither
+    assertion can pass by accident if the other quantity is substituted.
     """
     ledger = ledger_of()
     intent = intent_at(T0)
@@ -1378,10 +1388,20 @@ def test_r_is_the_risk_committed_by_the_fill_that_actually_happened():
     )
     assert intent.risk_dollars == pytest.approx(400.0)
     assert position.size == 1.0
-    assert position.risk_dollars == pytest.approx(220.0)
+
+    # the R unit: carried, never re-derived
+    assert position.risk_dollars == pytest.approx(400.0)
+    assert position.risk_dollars == pytest.approx(intent.risk_dollars)
+
+    # the exposure: realized entry, filled size
+    assert position.carried_risk_dollars == pytest.approx(220.0)
     assert ledger.open_risk_dollars() == pytest.approx(220.0)
-    # One point of favourable movement is 20 dollars, which is 20/220 of R.
-    assert position.r_at(13002.0) == pytest.approx(20.0 / 220.0)
+
+    # and they are genuinely different numbers, so the test is not vacuous
+    assert position.risk_dollars != pytest.approx(position.carried_risk_dollars)
+
+    # R is reported against the planned unit: one point is 20 dollars of 400.
+    assert position.r_at(13002.0) == pytest.approx(20.0 / 400.0)
 
 
 def test_entry_costs_are_realized_when_they_are_paid_and_counted_once():
@@ -2843,10 +2863,14 @@ def test_a_partial_fill_commits_only_the_risk_it_filled():
 
     Hand-computed: `max_participation_rate=0.05` against a bar volume of 20
     caps the fill at 1 contract of the 2 requested, which is above
-    `min_partial_fraction=0.5` so the entry stands. The position is then
-    HALF the size, and R must be half too -- 10 points * 20 dollars * 1 = 200,
-    not the intent's 400. Dividing by the requested risk would understate
-    every R multiple on the trade by half.
+    `min_partial_fraction=0.5` so the entry stands.
+
+    The R unit stays the intent's 400 (10 points * 20 dollars * 2 requested),
+    because R is fixed at signal time. So capturing only half the position
+    reports about HALF an R rather than a full one -- the honest statement that
+    half the intended risk unit was captured, and the reason `fill_fraction`
+    must be read alongside R on a partial. Re-denominating to the filled size
+    would report the same R as a full fill and make the shortfall invisible.
     """
     bars = warm_bars(4)
     bars.append(
@@ -2863,7 +2887,9 @@ def test_a_partial_fill_commits_only_the_risk_it_filled():
     record = result.trades[0]
     assert record.size == 2.0                                  # what was asked
     assert record.filled_size == 1.0                           # what was filled
-    assert record.risk_dollars == pytest.approx(200.0)
+    assert record.risk_dollars == pytest.approx(400.0)         # the planned unit
     assert record.gross_pnl == pytest.approx(200.0)            # 10 * 20 * 1
-    assert record.r_multiple == pytest.approx(record.pnl / 200.0)
+    assert record.r_multiple == pytest.approx(record.pnl / 400.0)
+    # Half the position captured, so about half an R -- not a full one.
+    assert 0.0 < record.r_multiple < 0.5
     assert result.final.equity == pytest.approx(100_000.0 + record.pnl)
