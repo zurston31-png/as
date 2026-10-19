@@ -190,6 +190,11 @@ EXPECTANCY_HALF_SATURATION_R: float = 1.0
 #: drawdown is ruin and no deeper number exists.
 MAX_DRAWDOWN_RUIN_FRACTION: float = 1.0
 
+#: Float slack when checking that `PreferenceCheck`'s two axes have the shape
+#: `beta(k)` was derived for. Not a tunable: it exists only so that qualities that
+#: are equal in exact arithmetic are not split apart by representation error.
+_SHAPE_TOLERANCE: float = 1e-12
+
 #: Unit on every number here -- per-cell quality, level, worst, dispersion,
 #: stability, the composite -- all on the same bounded [0, 1] scale.
 QUALITY_UNIT: str = "quality"
@@ -378,6 +383,19 @@ class CellMeasurement(FrozenModel):
             raise ConsistencyError(
                 f"{where} holds {sorted(self.metrics)}; section 10 names "
                 f"{sorted(m.value for m in STABILITY_METRICS)}"
+            )
+        mismatched = sorted(
+            f"{m.value}<-{self.metrics[m.value].name}"
+            for m in STABILITY_METRICS
+            if self.metrics[m.value].name not in m.lookup_keys
+        )
+        if mismatched:
+            raise ConsistencyError(
+                f"{where} files metrics under names that are not their own: {mismatched}. "
+                "`StabilityMetric` is valued by the canonical `MetricValue.name`, so a "
+                "statement may not be assembled from a metric that calls itself something "
+                "else -- a Sharpe ratio filed as a win rate would be scored by the win-rate "
+                "map and clipped to quality 1.0"
             )
         if self.sample is not sample_status(self.n_trades, self.min_sample_n):
             raise ConsistencyError(
@@ -631,6 +649,34 @@ class ConsistencyReport(FrozenModel):
                 )
             if any(s.axis is not axis for s in statements):
                 raise ConsistencyError(f"{axis.value} holds a statement from another axis")
+            # An AXIS IS ONE SET OF CELLS (THE FORMULA). Four metrics measured over
+            # four different sets would let the catastrophic window be dropped from
+            # three of them while staying visible in the fourth, which is the exact
+            # "do not hide a bad period" failure this module exists to prevent.
+            reference = statements[0]
+            for statement in statements[1:]:
+                if statement.cells != reference.cells:
+                    raise ConsistencyError(
+                        f"{axis.value}/{statement.metric.value} is measured over "
+                        f"{[c.key for c in statement.cells]} but "
+                        f"{axis.value}/{reference.metric.value} over "
+                        f"{[c.key for c in reference.cells]}; an axis is one set of cells, "
+                        "and four metrics over four different sets lets a bad cell be "
+                        "dropped from three of them"
+                    )
+            # The DECLARED threshold must be the APPLIED one. `min_sample_n` is a
+            # separate argument from the cells, so a report could print
+            # `min_sample_n=30` over a score computed from one-trade cells -- the
+            # section 12 failure mode with a reassurance printed beside it.
+            wrong = sorted(
+                {cell.min_sample_n for cell in reference.cells} - {self.min_sample_n}
+            )
+            if wrong:
+                raise ConsistencyError(
+                    f"{axis.value} holds cells suppressed at min_sample_n={wrong} but the "
+                    f"report declares min_sample_n={self.min_sample_n}; the threshold a "
+                    "reader is shown must be the threshold that was applied"
+                )
         return self
 
     @property
@@ -729,6 +775,22 @@ def year_dimension(years: Sequence[int] = ()) -> Dimension:
     return replace(dimension_by_name("year"), domain=tuple(years))
 
 
+def _regime_order(regime: Regime) -> tuple[int, str]:
+    """A TOTAL order over regimes: the six declared ones first, anything else after.
+
+    `CONSISTENCY_REGIMES.index(regime)` alone raised a bare
+    `ValueError: tuple.index(x): x not in tuple` for a trade carrying
+    `Regime.UNKNOWN` -- which `TradeRecord.regime` does not forbid -- and took the
+    whole consistency report down from inside a sort key. The regime axis already
+    reports such a trade as an extra cell (its dimension has no `sort_key`), so the
+    joint grid crashing was also an inconsistency between the two. An undeclared
+    regime is now sorted last and REPORTED, not hidden and not fatal.
+    """
+    if regime in CONSISTENCY_REGIMES:
+        return (CONSISTENCY_REGIMES.index(regime), "")
+    return (len(CONSISTENCY_REGIMES), str(regime))
+
+
 def regime_year_dimension(years: Sequence[int] = ()) -> Dimension:
     """The joint grid: (year, regime) per cell, chronological then declared."""
     return Dimension(
@@ -737,7 +799,7 @@ def regime_year_dimension(years: Sequence[int] = ()) -> Dimension:
         key_of=lambda t: (t.entry_ts.year, t.regime),
         label_of=lambda k: f"{int(k[0]):04d}|{k[1]}",
         domain=tuple(product(tuple(years), CONSISTENCY_REGIMES)),
-        sort_key=lambda k: (int(k[0]), CONSISTENCY_REGIMES.index(k[1])),
+        sort_key=lambda k: (int(k[0]), *_regime_order(k[1])),
     )
 
 
@@ -878,6 +940,42 @@ class PreferenceCheck(FrozenModel):
     metric: StabilityMetric
     stable: StabilityStatement
     spiky: StabilityStatement
+
+    @model_validator(mode="after")
+    def _check_shape(self) -> "PreferenceCheck":
+        """THE GUARANTEE derives `beta(k)` for ONE shape -- `v` in every cell against
+        `p` once and `b` in the other `k - 1` -- so `boundary` is a boundary only when
+        the axes have that shape. Checked structurally rather than assumed, because a
+        DECREASING quality map inverts the two parameters: at `metric=MAX_DRAWDOWN`,
+        `peak_value=0.90` is a 90% drawdown and maps to quality 0.10 while
+        `rest_value=0.30` maps to 0.70, so the "spiky" axis becomes one BAD cell among
+        `k - 1` good ones and `beta` reported 0.2270548 about a comparison that is not
+        the one the axes express.
+        """
+        for statement, tag in ((self.stable, "stable"), (self.spiky, "spiky")):
+            if statement.n_cells_contributing < MIN_CELLS_FOR_DISPERSION:
+                raise ConsistencyError(
+                    f"the {tag} axis has {statement.n_cells_contributing} contributing "
+                    f"cell(s); this comparison is about dispersion and needs at least "
+                    f"{MIN_CELLS_FOR_DISPERSION}"
+                )
+        flat = self.stable.qualities
+        if max(flat) - min(flat) > _SHAPE_TOLERANCE:
+            raise ConsistencyError(
+                f"the stable axis is not uniform: qualities {flat}. beta(k) is derived "
+                "against 'v in every cell'"
+            )
+        spiky = self.spiky.qualities
+        peak = max(spiky)
+        rest = tuple(q for q in spiky if q != peak)
+        if len(rest) != len(spiky) - 1 or (rest and max(rest) - min(rest) > _SHAPE_TOLERANCE):
+            raise ConsistencyError(
+                f"the spiky axis is not 'one peak, the rest equal': qualities {spiky}. "
+                "beta(k) is derived for that shape only, so `boundary` would be a number "
+                "about a different comparison (a decreasing quality map such as max "
+                "drawdown inverts peak and rest)"
+            )
+        return self
 
     @computed_field  # type: ignore[prop-decorator]
     @property

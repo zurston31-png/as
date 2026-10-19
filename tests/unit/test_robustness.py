@@ -110,6 +110,7 @@ from flow_model.validation.robustness import (
     RobustnessError,
     RobustnessReport,
     StoreRunner,
+    _degradation_notes,
     _post_hoc_degradation,
     apply_overrides,
     axis_for_driver,
@@ -3613,3 +3614,732 @@ class TestModuleInvariants:
             relative_drop / step
         )
         assert math.isclose(relative_drop, 0.45)
+
+
+# ===========================================================================
+# 15. THE SECOND PASS: six defects, each pinned by the measurement that
+#     found it
+# ===========================================================================
+#
+# The module was committed untested at 2c7ca27 and a first test pass fixed
+# four defects in it whose per-defect accounting was lost (see the HEAD commit
+# message). These are the ones that survived that pass. Every test below
+# fails on the code as it stood before it, and each carries the wrong value
+# and the true value in its assertions rather than in prose.
+
+
+def coord_cell(
+    coordinates: tuple[tuple[str, float], ...],
+    *,
+    n: int,
+    expectancy: float | None = None,
+    profit_factor: float | None = 2.0,
+    split_name: str = "train_b",
+) -> CellResult:
+    """A `CellResult` on arbitrary axes. `cell()` above pins the two
+    committed axes; the hypothesis driver needs its own."""
+    metrics: dict[str, MetricValue] = {}
+    metrics["expectancy"] = (
+        MetricValue.undefined_because("expectancy_r", Undefined.NO_TRADES, n=n)
+        if expectancy is None
+        else MetricValue.measured("expectancy_r", expectancy, n=n, unit="R")
+    )
+    if profit_factor is not None:
+        metrics["profit_factor"] = MetricValue.measured("profit_factor", profit_factor, n=n)
+    return CellResult(
+        point=GridPoint(coordinates=coordinates),
+        split_name=split_name,
+        split_phase=SplitPhase.TRAIN,
+        config_hash="h",
+        n_trades=n,
+        metrics=metrics,
+    )
+
+
+def joint_axes(config) -> tuple[ParameterAxis, ...]:
+    """A grid that sweeps the c_band driver AND the score threshold.
+
+    This is the shape that exposed the defect: the hypothesis names one
+    driver, the grid moves two, and the committed cell has a neighbour on
+    each.
+    """
+    committed = float(read_path(config, HYPOTHESIS_DRIVER_PATHS["c_band"]))
+    return (
+        axis_for_driver("c_band", (committed, committed + 0.05)),
+        ParameterAxis(
+            name="flow_score_threshold",
+            paths=tuple(f"setups.{s.value}.min_flow_score" for s in sorted(config.setups)),
+            values=(70.0, 75.0),
+            mode=AxisMode.PRESERVE_OFFSETS,
+        ),
+    )
+
+
+def joint_cells(config, *, c_band_expectancy: float, score_expectancy: float):
+    """Four cells: the committed one at 1.0R, one neighbour per axis."""
+    band = float(read_path(config, HYPOTHESIS_DRIVER_PATHS["c_band"]))
+    return (
+        coord_cell((("c_band", band), ("flow_score_threshold", 70.0)), n=40, expectancy=1.0),
+        coord_cell(
+            (("c_band", band + 0.05), ("flow_score_threshold", 70.0)),
+            n=40, expectancy=c_band_expectancy,
+        ),
+        coord_cell(
+            (("c_band", band), ("flow_score_threshold", 75.0)),
+            n=40, expectancy=score_expectancy,
+        ),
+        coord_cell(
+            (("c_band", band + 0.05), ("flow_score_threshold", 75.0)),
+            n=40, expectancy=0.5,
+        ),
+    )
+
+
+class TestAPreRegisteredHypothesisIsScoredOnItsOwnDriver:
+    """HIGH. `H-SR-CBAND-ROBUST` claims expectancy survives a one-step change
+    in `c_band` within 0.30 relative. It was scored with
+    `worst_relative_drop`, which is the maximum over EVERY neighbour on EVERY
+    axis -- so on a joint grid a flow-score step supplied the number and the
+    report published a refutation the driver never produced. Section 15's
+    whole point is that the refutation condition was fixed in advance; a
+    refutation attributed to the wrong parameter is worse than none.
+    """
+
+    def test_a_joint_grid_scores_c_band_on_the_c_band_step_alone(self, config):
+        """Measured: REFUTED at 0.9000 (a flow_score_threshold step). True:
+        not refuted, the c_band step costs 0.0500 against a 0.30 bound."""
+        axes = joint_axes(config)
+        cells = joint_cells(config, c_band_expectancy=0.95, score_expectancy=0.10)
+        report = fragility_report(config, cells, axes)
+
+        # the grid's worst really is the score step, and really is past 0.30
+        assert report.worst_relative_drop.require() == pytest.approx(0.90)
+        assert "flow_score_threshold" in report.worst_relative_drop.note
+        assert 0.90 > by_id("H-SR-CBAND-ROBUST").threshold
+
+        c_band, _ = hypothesis_reports(report, axes)
+        assert c_band.comparison.measured.require() == pytest.approx(0.05)
+        assert c_band.refuted is False
+        assert "not refuted" in c_band.describe()
+
+    def test_a_real_c_band_refutation_still_lands(self, config):
+        """Non-vacuity: the fix must not have made the hypothesis
+        unrefutable. Same joint grid, the c_band step now costs 0.60."""
+        axes = joint_axes(config)
+        cells = joint_cells(config, c_band_expectancy=0.40, score_expectancy=0.95)
+        report = fragility_report(config, cells, axes)
+        assert report.worst_relative_drop.require() == pytest.approx(0.60)
+
+        c_band, _ = hypothesis_reports(report, axes)
+        assert c_band.comparison.measured.require() == pytest.approx(0.60)
+        assert c_band.refuted is True
+        assert c_band.consequence == by_id("H-SR-CBAND-ROBUST").consequence
+
+    def test_the_note_says_which_axes_were_excluded(self, config):
+        axes = joint_axes(config)
+        report = fragility_report(
+            config, joint_cells(config, c_band_expectancy=0.95, score_expectancy=0.10), axes
+        )
+        c_band, _ = hypothesis_reports(report, axes)
+        assert "c_band neighbours of the committed cell ALONE" in c_band.note
+        assert "['flow_score_threshold']" in c_band.note
+
+    def test_a_single_driver_grid_needs_no_exclusion_clause(self, config):
+        axes = (joint_axes(config)[0],)
+        band = float(read_path(config, HYPOTHESIS_DRIVER_PATHS["c_band"]))
+        cells = (
+            coord_cell((("c_band", band),), n=40, expectancy=1.0),
+            coord_cell((("c_band", band + 0.05),), n=40, expectancy=0.5),
+        )
+        report = fragility_report(config, cells, axes)
+        c_band, _ = hypothesis_reports(report, axes)
+        assert c_band.comparison.measured.require() == pytest.approx(0.5)
+        assert "the grid also swept" not in c_band.note
+
+    def test_every_supplied_axis_gets_its_own_worst_drop(self, config):
+        axes = joint_axes(config)
+        report = fragility_report(
+            config, joint_cells(config, c_band_expectancy=0.95, score_expectancy=0.10), axes
+        )
+        per_axis = report.worst_relative_drop_by_axis
+        assert set(per_axis) == {"c_band", "flow_score_threshold"}
+        assert per_axis["c_band"].require() == pytest.approx(0.05)
+        assert per_axis["flow_score_threshold"].require() == pytest.approx(0.90)
+        assert per_axis["c_band"].n == 40
+
+    def test_at_n0_every_axis_entry_is_undefined_with_the_baselines_reason(self, config):
+        """The live case. An axis with no measurement must not report 0.0,
+        and the hypothesis must stay evaluable-with-no-measurement rather
+        than silently becoming not-evaluable."""
+        axes = joint_axes(config)
+        band = float(read_path(config, HYPOTHESIS_DRIVER_PATHS["c_band"]))
+        cells = (
+            coord_cell(
+                (("c_band", band), ("flow_score_threshold", 70.0)), n=0, profit_factor=None
+            ),
+            coord_cell(
+                (("c_band", band + 0.05), ("flow_score_threshold", 70.0)),
+                n=0, profit_factor=None,
+            ),
+        )
+        report = fragility_report(config, cells, axes)
+        assert report.verdict is FragilityVerdict.UNDEFINED
+        for name, value in report.worst_relative_drop_by_axis.items():
+            assert value.is_defined is False, name
+            assert value.or_none() is None, name
+            assert value.undefined is Undefined.NO_TRADES, name
+        c_band, _ = hypothesis_reports(report, axes)
+        assert c_band.evaluable is True
+        assert c_band.refuted is None
+        assert "no measurement" in c_band.describe()
+
+    def test_an_axis_whose_name_differs_but_whose_path_matches_is_the_driver(
+        self, config
+    ):
+        """The driver is the config path, not the label a caller chose."""
+        band = float(read_path(config, HYPOTHESIS_DRIVER_PATHS["c_band"]))
+        axes = (
+            ParameterAxis(
+                name="zone_width",
+                paths=(HYPOTHESIS_DRIVER_PATHS["c_band"],),
+                values=(band, band + 0.05),
+            ),
+        )
+        cells = (
+            coord_cell((("zone_width", band),), n=40, expectancy=1.0),
+            coord_cell((("zone_width", band + 0.05),), n=40, expectancy=0.6),
+        )
+        report = fragility_report(config, cells, axes)
+        c_band, _ = hypothesis_reports(report, axes)
+        assert c_band.evaluable is True
+        assert c_band.comparison.measured.require() == pytest.approx(0.4)
+
+
+class TestABaselineCellCannotBeNominatedOnAnUnseenAxis:
+    """MEDIUM. The committed cell was matched with
+    `math.isclose(value, committed.get(name, value))` -- a coordinate for an
+    axis the call was not given compared against ITSELF and therefore always
+    matched. Hand the report one axis of a two-axis grid and a cell at twice
+    the committed risk was published as `baseline_point`, with a verdict about
+    "the committed configuration" that no committed configuration produced.
+    """
+
+    def test_a_coordinate_with_no_axis_is_refused_rather_than_assumed(self, config):
+        """Measured: baseline_point risk_per_trade_pct=0.01 against a
+        committed 0.005, verdict FRAGILE. True: refused."""
+        assert config.risk.risk_per_trade_pct == 0.005  # the committed value
+        cells = (
+            cell(score=70.0, risk=0.01, n=10, expectancy=1.0, profit_factor=2.0),
+            cell(score=75.0, risk=0.01, n=10, expectancy=0.2, profit_factor=2.0),
+        )
+        score_axis_only = (small_axes(config)[0],)
+        with pytest.raises(RobustnessError) as excinfo:
+            fragility_report(config, cells, score_axis_only)
+        message = str(excinfo.value)
+        assert "risk_per_trade_pct" in message
+        assert "flow_score_threshold" in message
+        assert "reported as the committed baseline" in message
+
+    def test_the_same_cells_report_normally_once_both_axes_are_given(self, config):
+        """Non-vacuity: with both axes supplied, the 0.01 risk cells are
+        simply NOT at the committed coordinate, so there is no baseline and
+        the verdict is UNDEFINED rather than a verdict about a config the
+        project does not run."""
+        cells = (
+            cell(score=70.0, risk=0.01, n=10, expectancy=1.0, profit_factor=2.0),
+            cell(score=75.0, risk=0.01, n=10, expectancy=0.2, profit_factor=2.0),
+        )
+        report = fragility_report(config, cells, small_axes(config))
+        assert report.baseline_point is None
+        assert report.verdict is FragilityVerdict.UNDEFINED
+        assert report.baseline.undefined is Undefined.INSUFFICIENT_OBSERVATIONS
+        assert "no cell at the committed coordinate" in report.baseline.note
+        assert any("undefined: baseline" in r for r in report.reasons)
+
+    def test_a_grid_built_by_run_grid_always_satisfies_the_check(self, config, split, log):
+        """The cells `run_grid` produces carry exactly the axes it was given,
+        so the refusal cannot fire on the module's own output."""
+        axes = small_axes(config)
+        cells = run_grid(
+            config,
+            SplitRegistry(splits=(split,)),
+            CountingRunner(),
+            log=log,
+            reason="axes agree",
+            axes=axes,
+        )
+        report = fragility_report(config, cells, axes)
+        assert report.verdict is FragilityVerdict.UNDEFINED  # n=0 everywhere
+
+
+class TestElasticityIsMeasuredFromTheBaseline:
+    """MEDIUM, and in the flattering direction. `elasticity(N)` is
+    `relative_drop(N) / step(N)` with both measured from the committed cell.
+    `max_abs_elasticity` was taken from the `DecayStep` pool, and a step
+    divides by its own LOWER cell -- so for a neighbour below the baseline on
+    an axis the reported decay per unit of parameter change was the smaller
+    of two ratios wearing one name.
+    """
+
+    @staticmethod
+    def _below_baseline_cells(config):
+        """Committed cell at 0.5R, its neighbour one step BELOW at 2.0R."""
+        return (
+            cell(score=65.0, n=10, expectancy=2.0, profit_factor=2.0),
+            cell(score=70.0, n=10, expectancy=0.5, profit_factor=2.0),
+        )
+
+    def test_the_reported_elasticity_matches_the_documented_formula(self, config):
+        """Measured: 9.75. True: 42.0 = |(0.5 - 2.0) / 0.5| / (5 / 70)."""
+        report = fragility_report(
+            config, self._below_baseline_cells(config), small_axes(config)
+        )
+        drop = report.worst_relative_drop.require()
+        assert drop == pytest.approx(-3.0)  # the neighbour is BETTER
+        step = abs(65.0 - 70.0) / 70.0
+        assert report.max_abs_elasticity.require() == pytest.approx(abs(drop) / step)
+        assert report.max_abs_elasticity.require() == pytest.approx(42.0)
+
+    def test_the_decay_step_keeps_its_own_direction(self, config):
+        """The two quantities stay distinguishable: a step is still measured
+        low-to-high in its own denominator, which is what makes
+        `decay_profile` readable when there is no baseline at all."""
+        report = fragility_report(
+            config, self._below_baseline_cells(config), small_axes(config)
+        )
+        step = next(s for s in report.decay_profile if s.from_value == 65.0)
+        assert step.is_baseline_neighbour is True
+        assert step.relative_drop.require() == pytest.approx(0.75)
+        assert step.elasticity.require() == pytest.approx(0.75 / (5.0 / 65.0))
+
+    def test_a_neighbour_above_the_baseline_is_unchanged(self, config):
+        """Non-vacuity in the other direction: where the baseline IS the
+        lower value the two ratios coincide, and the fix must not inflate
+        anything."""
+        cells = (
+            cell(score=70.0, n=10, expectancy=1.0, profit_factor=2.0),
+            cell(score=75.0, n=10, expectancy=0.6, profit_factor=2.0),
+        )
+        report = fragility_report(config, cells, small_axes(config))
+        assert report.max_abs_elasticity.require() == pytest.approx(0.4 / (5.0 / 70.0))
+
+    def test_the_fix_can_only_raise_the_reported_elasticity(self, config):
+        """Both pools are kept, so the maximum is over a superset."""
+        report = fragility_report(
+            config, self._below_baseline_cells(config), small_axes(config)
+        )
+        from_steps = [
+            abs(s.elasticity.require())
+            for s in report.decay_profile
+            if s.elasticity.is_defined
+        ]
+        assert report.max_abs_elasticity.require() >= max(from_steps)
+
+
+class TestAFlatteringRunNamesItsOwnMechanism:
+    """MEDIUM. The module tells a reader of a flattering run to "read the
+    run's own notes", and offered two mechanisms -- a skipped loser and a
+    pinned spread. A delayed or jittered fill is a THIRD: the order is priced
+    off a later bar. On the delayed-entry case below the trade set never
+    moves and no spread is pinned, so both offered mechanisms are false and
+    the run carried no note that applied.
+    """
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def flattered():
+        config = default_config()
+        store = store_of(bars_delayed_entry_is_cheaper())
+        with ExperimentLog(":memory:", repo_root="/nonexistent") as handle:
+            baseline, rows = run_degradations(
+                config,
+                one_fold(),
+                stub_runner(store),
+                "NQ",
+                log=handle,
+                reason="a flattering delayed entry must name its mechanism",
+                specs=(DegradationSpec(kind=DegradationKind.DELAYED_ENTRY, severity=1.0),),
+            )
+        return config, baseline, rows[0]
+
+    def test_the_run_really_does_come_out_ahead_with_its_trade_set_intact(
+        self, flattered
+    ):
+        _, baseline, row = flattered
+        assert row.improved_anywhere is True
+        assert row.n_trades == baseline.trade_count == 1
+        assert row.applied == {
+            "execution.entry_delay_bars": 1,
+            "execution.max_entry_wait_bars": 2,
+        }
+        assert "execution.spread_ticks_override" not in row.applied
+
+    def test_neither_offered_mechanism_applies(self, flattered):
+        """The point of the finding: the trade count is unchanged, so no
+        trade was skipped, and nothing pinned a spread."""
+        _, baseline, row = flattered
+        assert row.metrics["trade_count"].require() == float(baseline.trade_count)
+        assert not any("outranks a real quote" in note for note in row.notes)
+
+    def test_the_run_names_the_later_bar_mechanism_in_its_own_notes(self, flattered):
+        """Measured: no note on the run mentioned the fill price at all.
+        True: the run says a delayed fill is priced off a later bar."""
+        _, _, row = flattered
+        assert any("priced off a later bar" in note for note in row.notes)
+        assert any("trade set unchanged" in note for note in row.notes)
+
+    def test_the_direction_check_offers_all_three_mechanisms(self, flattered):
+        _, _, row = flattered
+        note = next(c.note for c in row.direction if c.worse_or_equal is False)
+        assert "cannot say WHICH mechanism" in note
+        assert "skipped loser" in note
+        assert "pinned spread can be tighter" in note
+        assert "which bar they fill on" in note
+
+    def test_the_assembled_report_offers_all_three_too(self, flattered):
+        config, baseline, row = flattered
+        report = robustness_report(
+            config, (), small_axes(config), degradations=(row,), baseline=baseline
+        )
+        note = next(n for n in report.notes if "came out ahead" in n)
+        assert "Not a result" in note
+        assert "pinned spread can be tighter" in note
+        assert "which bar they fill on" in note
+
+    def test_a_supra_bar_jitter_carries_the_same_warning(self, config):
+        """A random execution delay moves the fill bar for the same reason,
+        so it carries the same note -- but only when the jitter can actually
+        move it. The sub-bar case says it cannot instead."""
+        interval = int(config.data.primary_interval_seconds)
+        big = DegradationSpec(
+            kind=DegradationKind.RANDOM_EXECUTION_DELAY,
+            severity=float(interval) * 1000.0 * 2,
+            seed_name="supra",
+        )
+        notes = _degradation_notes(big, config)
+        assert any("priced off a later bar" in note for note in notes)
+        assert not any("sub-bar" in note for note in notes)
+
+        small = DegradationSpec(
+            kind=DegradationKind.RANDOM_EXECUTION_DELAY, severity=125.0, seed_name="sub"
+        )
+        notes = _degradation_notes(small, config)
+        assert any("sub-bar" in note for note in notes)
+        assert not any("priced off a later bar" in note for note in notes)
+
+
+class TestAVacuousSlippageRunSaysSo:
+    """LOW. Added slippage MULTIPLIES `base_slippage_ticks`. At a config
+    whose base slippage is zero, every severity re-runs the committed
+    configuration -- same config hash, same fills -- while `is_neutral` is
+    False, so the row read as a stress test that passed. The committed
+    default is 1.0, so this is reachable rather than live.
+    """
+
+    def test_the_override_is_a_no_op_at_zero_base_slippage(self, config):
+        zero = apply_overrides(config, {"execution.base_slippage_ticks": 0.0})
+        spec = DegradationSpec(kind=DegradationKind.ADDED_SLIPPAGE, severity=3.0)
+        assert spec.is_neutral is False
+        overrides = spec.overrides(zero, "NQ")
+        assert overrides == {"execution.base_slippage_ticks": 0.0}
+        assert apply_overrides(zero, overrides).config_hash == zero.config_hash
+
+    def test_the_run_declares_the_vacuity(self, config):
+        """Measured: notes == (). True: the row says the run is vacuous."""
+        zero = apply_overrides(config, {"execution.base_slippage_ticks": 0.0})
+        notes = _degradation_notes(
+            DegradationSpec(kind=DegradationKind.ADDED_SLIPPAGE, severity=3.0), zero
+        )
+        assert any("VACUOUS" in note for note in notes)
+        assert any("base_slippage_ticks is 0" in note for note in notes)
+
+    def test_the_committed_configuration_is_not_declared_vacuous(self, config):
+        """Non-vacuity of the guard itself: at the committed 1.0 tick the
+        run really does bite, and must not be labelled vacuous."""
+        assert config.execution.base_slippage_ticks == 1.0
+        notes = _degradation_notes(
+            DegradationSpec(kind=DegradationKind.ADDED_SLIPPAGE, severity=3.0), config
+        )
+        assert notes == ()
+
+    def test_the_vacuous_run_reaches_the_row_through_run_degradations(self, config):
+        zero = apply_overrides(config, {"execution.base_slippage_ticks": 0.0})
+        store = store_of(bars_to_target())
+        with ExperimentLog(":memory:", repo_root="/nonexistent") as handle:
+            baseline, rows = run_degradations(
+                zero,
+                one_fold(),
+                stub_runner(store),
+                "NQ",
+                log=handle,
+                reason="a vacuous slippage run",
+                specs=(
+                    DegradationSpec(kind=DegradationKind.ADDED_SLIPPAGE, severity=3.0),
+                ),
+            )
+        assert rows[0].n_trades == baseline.trade_count == 1
+        assert rows[0].metrics["total_pnl"].require() == pytest.approx(
+            compute_trade_metrics(
+                baseline.trades, split_label=SplitPhase.TRAIN, names=("total_pnl",)
+            )["total_pnl"].require()
+        )
+        assert any("VACUOUS" in note for note in rows[0].notes)
+
+
+def bars_with_the_stop_inside_the_horizon() -> list[Bar]:
+    """A resting limit that fills on the first horizon bar, is stopped on the
+    second, and would have reached its target on the third -- the bar the loop
+    stands on when the order resolves. PROVENANCE.md 2.6's shape."""
+    out = [bar_at(i) for i in range(SIGNAL_INDEX + 1)]
+    out.append(
+        bar_at(SIGNAL_INDEX + 1, open_=13001.0, high=13002.0, low=12999.0, close=13001.0)
+    )
+    out.append(
+        bar_at(SIGNAL_INDEX + 2, open_=13000.0, high=13001.0, low=12985.0, close=12995.0)
+    )
+    out.append(
+        bar_at(SIGNAL_INDEX + 3, open_=12996.0, high=13015.0, low=12995.0, close=13012.0)
+    )
+    out.append(bar_at(SIGNAL_INDEX + 4, open_=13000.0))
+    return out
+
+
+class TestTwoMoreWaitHorizonInvariants:
+    """MEDIUM, and reported as a limitation rather than a cure.
+
+    `wait_horizon_violations` says it re-checks the f44ddb9 invariant on every
+    trade. It does not: the regression understated `mae_r` BECAUSE it skipped
+    the bars, so the record it emitted was internally consistent and all of
+    the price/time invariants pass on it -- measured below. Two shapes that
+    DO survive into a record are now caught, and the honest verification of
+    the fix stays the loop-level run in `TestTheWaitHorizonFixHolds`.
+    """
+
+    @staticmethod
+    def _record(**over) -> TradeRecord:
+        base = dict(
+            trade_id="t",
+            run_id="test_run",
+            symbol="NQ",
+            config_hash="testhash",
+            signal_ts=T0,
+            entry_ts=T0 + timedelta(minutes=5),
+            exit_ts=T0 + timedelta(minutes=15),
+            bars_held=2,
+            side=Side.LONG,
+            setup=SetupType.SCALP_1R,
+            planned_entry=13000.0,
+            stop_price=12990.0,
+            target_price=13010.0,
+            entry_price=13000.0,
+            size=1.0,
+            filled_size=1.0,
+            point_value=20.0,
+            risk_dollars=200.0,
+            costs=CostBreakdown(),
+            flow_score=75.0,
+            regime=Regime.LOW_VOL,
+            split_label=SplitPhase.TRAIN,
+        )
+        base.update(over)
+        return TradeRecord(**base)
+
+    def _at_target(self, **over) -> TradeRecord:
+        return self._record(
+            exit_price=13010.0, gross_pnl=200.0, pnl=200.0,
+            exit_reason=ExitReason.TARGET, mae_r=-0.2, mfe_r=1.0, **over,
+        )
+
+    def test_an_exit_on_a_later_bar_must_have_held_at_least_one_bar(self):
+        """Measured: no finding. True: a position whose exit postdates its
+        entry was advanced over the exit bar, so bars_held cannot be 0 --
+        zero means no bar between the fill and the exit was offered to it."""
+        findings = wait_horizon_violations(run_result((self._at_target(bars_held=0),)))
+        assert len(findings) == 1
+        assert "bars_held=0" in findings[0]
+        assert "was ever inspected" in findings[0]
+
+    def test_an_entry_and_exit_in_one_bar_is_not_a_finding(self):
+        """Non-vacuity in the safe direction: both fills are stamped at their
+        bar's close, so a same-bar resolution shares a timestamp and
+        bars_held=0 is correct there."""
+        same_bar = self._at_target(
+            bars_held=0, exit_ts=T0 + timedelta(minutes=5)
+        )
+        assert same_bar.exit_ts == same_bar.entry_ts
+        assert wait_horizon_violations(run_result((same_bar,))) == ()
+
+    def test_a_stop_exit_whose_excursion_never_reached_the_stop_is_caught(self):
+        """The mirror of the excursion check. Excursions come from each held
+        bar's high and low and the stop is never moved, so a STOP exit whose
+        worst excursion stopped short of the stop was filled at a price no
+        bar the position held ever traded."""
+        fabricated = self._record(
+            exit_price=12990.0, gross_pnl=-200.0, pnl=-200.0,
+            exit_reason=ExitReason.STOP, mae_r=-0.4, mfe_r=0.1,
+        )
+        findings = wait_horizon_violations(run_result((fabricated,)))
+        assert len(findings) == 1
+        assert "the exit is STOP but mae_r=-0.400000" in findings[0]
+        assert "-1.000000R" in findings[0]
+
+    def test_an_honest_stop_at_its_own_bound_is_not_a_finding(self):
+        honest = self._record(
+            exit_price=12990.0, gross_pnl=-200.0, pnl=-200.0,
+            exit_reason=ExitReason.STOP, mae_r=-1.0, mfe_r=0.1,
+        )
+        assert wait_horizon_violations(run_result((honest,))) == ()
+
+    def test_a_slipped_stop_beyond_its_bound_is_not_a_finding_either(self):
+        """ARCHITECTURE.md 0.2: an entry that triggered worse than planned
+        realizes MORE than 1R of loss, so mae_r sits past the bound."""
+        slipped = self._record(
+            entry_price=13002.0, exit_price=12990.0, gross_pnl=-240.0, pnl=-240.0,
+            exit_reason=ExitReason.STOP, mae_r=-1.3, mfe_r=0.0,
+        )
+        assert slipped.r_multiple == pytest.approx(-1.2)
+        assert wait_horizon_violations(run_result((slipped,))) == ()
+
+    def test_the_recorded_regression_still_passes_every_record_invariant(self):
+        """THE LIMITATION, pinned so nobody reads an empty result as a proof.
+
+        PROVENANCE.md 2.6's trade: TARGET +0.9869R where the truth was STOP
+        -1.0756R, with mae_r -0.5 against a true -1.5 and bars_held 5 against
+        7. Its own stop sits at -1.1R, its excursion never reached it, and it
+        held a positive number of bars -- so the record is self-consistent
+        and this function returns nothing. What catches it is the loop-level
+        run below, not a record-level invariant.
+        """
+        fabricated = TradeRecord(
+            trade_id="f44ddb9",
+            run_id="test_run",
+            symbol="NQ",
+            config_hash="testhash",
+            signal_ts=T0,
+            entry_ts=T0 + timedelta(seconds=INTERVAL),
+            exit_ts=T0 + timedelta(seconds=INTERVAL * 3),
+            bars_held=5,
+            side=Side.LONG,
+            setup=SetupType.SCALP_1R,
+            planned_entry=13000.0,
+            stop_price=12990.0,
+            target_price=13010.0,
+            entry_price=13001.0,
+            exit_price=13001.0 + (0.9869 * R_DOLLARS) / (20.0 * 2.0),
+            size=2.0,
+            filled_size=2.0,
+            point_value=20.0,
+            exit_reason=ExitReason.TARGET,
+            risk_dollars=R_DOLLARS,
+            gross_pnl=0.9869 * R_DOLLARS,
+            costs=CostBreakdown(),
+            pnl=0.9869 * R_DOLLARS,
+            mae_r=-0.5,
+            mfe_r=0.9869,
+            flow_score=71.0,
+            regime=Regime.TRENDING_UP,
+            split_label=SplitPhase.TRAIN,
+        )
+        stop_r = -(
+            abs(fabricated.entry_price - fabricated.stop_price)
+            * fabricated.point_value
+            * fabricated.filled_size
+        ) / fabricated.risk_dollars
+        assert stop_r == pytest.approx(-1.1)
+        assert fabricated.r_multiple == pytest.approx(0.9869)
+        assert fabricated.mae_r > stop_r  # self-consistent, and wrong
+        assert fabricated.bars_held >= 1
+        assert wait_horizon_violations(run_result((fabricated,))) == ()
+
+    def test_the_function_says_what_it_cannot_see(self):
+        """The limitation is on the function, not only in a test name."""
+        assert "WHAT A RECORD CANNOT SHOW" in wait_horizon_violations.__doc__
+        assert (
+            "the absence of five specific defects" in wait_horizon_violations.__doc__
+        )
+
+    def test_the_loop_level_run_is_what_catches_it(self):
+        """The same scenario through the real loop: STOP -1.0756R, mae_r
+        -1.5, and no violation reported -- the fix holding, measured."""
+        resting = apply_overrides(
+            default_config(),
+            {"execution.entry_order_type": "limit", "execution.max_entry_wait_bars": 3},
+        )
+        result = stub_runner(store_of(bars_with_the_stop_inside_the_horizon()))(
+            resting, one_fold()
+        )
+        assert result.trade_count == 1
+        trade = result.trades[0]
+        assert trade.exit_reason is ExitReason.STOP
+        assert trade.r_multiple == pytest.approx(-1.0756)
+        assert trade.mae_r == pytest.approx(-1.5)
+        assert trade.bars_held >= 1
+        assert wait_horizon_violations(result) == ()
+
+
+class TestTheWiderSpreadRunOverTheMultiBarHorizon:
+    """The second degradation the brief names as a consumer of the
+    `max_entry_wait_bars > 1` path. A wider spread does not widen the
+    horizon, so it is run against a config that already rests its entries:
+    the horizon is three bars, the fill lands on the first, and the stop sits
+    in a bar that only the f44ddb9 replay inspects.
+    """
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def run():
+        resting = apply_overrides(
+            default_config(),
+            {"execution.entry_order_type": "limit", "execution.max_entry_wait_bars": 3},
+        )
+        store = store_of(bars_with_the_stop_inside_the_horizon())
+        with ExperimentLog(":memory:", repo_root="/nonexistent") as handle:
+            baseline, rows = run_degradations(
+                resting,
+                one_fold(),
+                stub_runner(store),
+                "NQ",
+                log=handle,
+                reason="wider spreads over the multi-bar wait horizon",
+                specs=(
+                    DegradationSpec(kind=DegradationKind.WIDER_SPREAD, severity=1.0),
+                    DegradationSpec(kind=DegradationKind.WIDER_SPREAD, severity=2.0),
+                ),
+            )
+        return resting, baseline, rows
+
+    def test_the_path_is_really_the_multi_bar_one(self, run):
+        resting, baseline, _ = run
+        assert int(resting.execution.max_entry_wait_bars) == 3
+        assert str(resting.execution.entry_order_type) == "limit"
+        order = PendingOrder(
+            intent=_intent_for(T0),
+            submitted_ts=T0,
+            order_type=resting.execution.entry_order_type,
+            latency_seconds=float(resting.execution.latency_ms) / 1000.0,
+            max_entry_wait_bars=int(resting.execution.max_entry_wait_bars),
+        )
+        assert order.wait_bars == 3
+        assert baseline.trades[0].exit_reason is ExitReason.STOP
+
+    def test_every_run_reports_the_invariant_on_a_real_trade(self, run):
+        _, _, rows = run
+        assert [row.n_trades for row in rows] == [1, 1]
+        assert all(row.wait_horizon_findings == () for row in rows)
+
+    def test_the_wider_spread_only_costs(self, run):
+        _, _, rows = run
+        assert all(
+            check.worse_or_equal is not False for row in rows for check in row.direction
+        )
+        neutral, wider = rows
+        assert neutral.spec.is_neutral is True
+        assert wider.applied["execution.spread_ticks_override"] == pytest.approx(2.0)
+        assert wider.metrics["total_pnl"].require() < neutral.metrics[
+            "total_pnl"
+        ].require()
+
+    def test_the_report_states_how_many_trades_the_invariant_saw(self, run):
+        resting, _, rows = run
+        report = robustness_report(resting, (), small_axes(resting), degradations=rows)
+        assert report.wait_horizon_findings() == ()

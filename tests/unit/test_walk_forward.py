@@ -43,10 +43,13 @@ import pytest
 from pydantic import ValidationError
 
 from flow_model.analytics.metrics import (
+    MetricPolicy,
     MetricValue,
     SampleStatus,
     SplitLabelMismatchError,
     Undefined,
+    performance_summary,
+    sample_status,
 )
 from flow_model.backtest.loop import RunProvenance, RunResult
 from flow_model.core.contracts import EquityPoint
@@ -69,6 +72,7 @@ from flow_model.validation.walk_forward import (
     FoldMode,
     FoldResult,
     FoldSet,
+    FoldWindowResult,
     InsufficientRangeError,
     PurgeViolationError,
     WalkForwardError,
@@ -381,6 +385,33 @@ class TestDayUnit:
         with pytest.raises(ValueError, match="embargo violated"):
             registry.assert_embargo(7)
 
+    def test_the_folds_two_checks_agree_on_exactly_n(self):
+        """The same boundary through `Fold`, which is the route Phase 8 uses.
+
+        `Fold._check` enforces the gap at construction and `Fold.assert_embargo`
+        re-runs it through `splits.SplitRegistry`. A fold accepted by the first
+        and refused by the second at the same gap would mean one of the two is
+        the leak, and nothing downstream would say which.
+        """
+        purge, embargo = 1, 5
+        required = purge + embargo
+        train = (date(2016, 1, 1), date(2016, 2, 1))
+        validation_start = shift(train[1], required)
+        fold = make_fold(
+            train=train,
+            validation=(validation_start, shift(validation_start, 10)),
+            test=(
+                shift(validation_start, 10 + required),
+                shift(validation_start, 20 + required),
+            ),
+            purge_days=purge,
+            embargo_days=embargo,
+        )
+        assert (fold.validation.start - fold.train.end).days == required
+        fold.assert_embargo(required)  # exactly N clears a requirement of N
+        with pytest.raises(EmbargoViolationError, match="a gap of 6"):
+            fold.assert_embargo(required + 1)
+
     def test_span_is_train_start_to_test_end_and_excludes_the_trailing_embargo(
         self, empty_folds
     ):
@@ -472,6 +503,30 @@ class TestPurge:
             assert not fold.validation.contains(shift(last_train_day, spec.purge_days))
             last_validation_day = shift(fold.validation.end, -1)
             assert not fold.test.contains(shift(last_validation_day, spec.purge_days))
+
+    def test_a_trade_from_the_end_of_train_cannot_be_open_inside_test(self, open_guard):
+        """The gate names the TEST window, and that is the longer reach.
+
+        `_check_gap` runs on adjacent boundaries, so the purge is enforced at
+        train -> validation. Test is further away by validation_days plus a
+        second gap, so stating the test case separately is stating that the
+        nearer boundary is the binding one -- and if the gaps were ever
+        rearranged so test came nearer, this is what would catch it.
+        """
+        spec = make_spec(purge_days=4, embargo_days=2)
+        folds = generate_folds(
+            rng(date(2016, 1, 1), date(2016, 6, 1)), spec, guard=open_guard
+        )
+        assert len(folds) > 1
+        for fold in folds:
+            outcome_day = shift(shift(fold.train.end, -1), spec.purge_days)
+            assert not fold.validation.contains(outcome_day)
+            assert not fold.test.contains(outcome_day)
+            assert outcome_day < fold.validation.start <= fold.test.start
+            # The nearer boundary is the one the purge has to clear.
+            assert (fold.validation.start - fold.train.end).days < (
+                fold.test.start - fold.train.end
+            ).days
 
     def test_a_negative_gap_is_a_purge_violation_even_at_purge_zero(self):
         """Overlapping windows are the shape a sign error takes, and they must
@@ -689,6 +744,56 @@ class TestPurgeIsNotEmbargo:
         """The mirror image, so neither check is doing both jobs."""
         with pytest.raises(EmbargoViolationError):
             self.fold_with_gap(gap=10, purge=10, embargo=2)
+
+    def test_the_embargo_check_on_its_own_accepts_what_the_purge_refuses(self):
+        """The classic bug, run as the bug: only the embargo check is applied.
+
+        `splits.SplitRegistry.assert_embargo` is the embargo check in the
+        module that owns the seal, and it takes ONE number. Handed the embargo
+        alone it passes this layout; `Fold` refuses the same dates. If the two
+        were one check, this layout would be in a fold set.
+        """
+        purge, embargo, gap = 10, 2, 3
+        train = rng(date(2016, 1, 1), date(2016, 2, 1))
+        validation = rng(shift(train.end, gap), shift(train.end, gap + 10))
+        embargo_only = SplitRegistry(
+            splits=(
+                Split(name="train", phase=SplitPhase.TRAIN, range=train),
+                Split(name="validation", phase=SplitPhase.VALIDATION, range=validation),
+            )
+        )
+        embargo_only.assert_embargo(embargo)  # the conflated check: passes
+        # `splits` raises its own `ValueError`; only `Fold.assert_embargo`
+        # relabels it, which is why the purge/embargo types live in this module.
+        with pytest.raises(ValueError, match="embargo violated"):
+            embargo_only.assert_embargo(purge + embargo)  # the real requirement
+        with pytest.raises(PurgeViolationError, match="purge_days=10"):
+            self.fold_with_gap(gap=gap, purge=purge, embargo=embargo)
+
+    def test_the_generator_refuses_a_later_train_start_inside_an_earlier_shadow(
+        self, open_guard
+    ):
+        """The cross-fold embargo is live inside `generate_folds`, not only on
+        hand-built sets, and whether it bites is pure arithmetic.
+
+        train 30 / validation 10 / test 10, purge 1 + embargo 9 -> gap 10 and
+        span 70. Fold k trains from day 10k, so fold 7 trains from day 70 --
+        which is exactly where fold 0's test window ends, and so the first day
+        of its embargo [70, 79). Seven folds fit in 130 days and are accepted;
+        the eighth is the one that lands in the shadow.
+        """
+        spec = make_spec(purge_days=1, embargo_days=9)
+        assert (spec.gap_days, spec.span_days) == (10, 70)
+        start = date(2016, 1, 1)
+
+        seven = generate_folds(rng(start, shift(start, 130)), spec, guard=open_guard)
+        assert len(seven) == 7  # non-vacuity: this geometry does generate folds
+        assert seven[0].embargo_after_test == rng(shift(start, 70), shift(start, 79))
+
+        with pytest.raises(EmbargoViolationError, match="fold_007 starts training") as exc:
+            generate_folds(rng(start, shift(start, 140)), spec, guard=open_guard)
+        assert not isinstance(exc.value, PurgeViolationError)
+        assert str(shift(start, 70)) in str(exc.value)
 
     def test_the_refusal_is_the_modules_own_type_not_a_pydantic_wrapper(self):
         """Regression. `Fold` checks in a `model_validator`, and pydantic
@@ -1064,6 +1169,128 @@ class TestTheSeal:
         assert config.seal.sealed_end == SEALED.end
         assert config.seal.max_opens == 1
 
+    def test_a_genuine_open_does_write_the_audit(self, sealed_guard, audit_path):
+        """Non-vacuity for every `not audit_path.exists()` above.
+
+        If an open did not write the file either, "the refusal wrote nothing"
+        would be true of a guard that never records anything, and the whole
+        seal section would pass on a broken audit log. No sealed data is read
+        here: the budget is spent and the row inspected, nothing is loaded.
+        """
+        assert not audit_path.exists()
+        with sealed_guard.unseal(
+            "non-vacuity check for the refusal tests",
+            experiment_id="exp_test",
+            approved_by="test",
+        ) as entry:
+            assert sealed_guard.is_unsealed
+            assert entry.sequence == 1
+        assert audit_path.exists()
+        assert [e.experiment_id for e in sealed_guard.audit.entries()] == ["exp_test"]
+        assert sealed_guard.opens_used() == 1
+        assert sealed_guard.opens_remaining() == 0
+        assert not sealed_guard.is_unsealed
+
+    def test_a_refused_fold_request_leaves_the_one_open_unspent(
+        self, sealed_guard, audit_path
+    ):
+        """The budget after a refusal is not merely reported as 1 -- it is
+        still usable, which is the thing "must not spend the budget" means."""
+        spec = make_spec(train_days=365, validation_days=90, test_days=90, step_days=90)
+        for _ in range(3):
+            with pytest.raises(SealedDataAccessError):
+                generate_folds(rng(date(2021, 1, 1), date(2024, 1, 1)), spec, guard=sealed_guard)
+        assert not audit_path.exists()
+        assert sealed_guard.opens_remaining() == 1
+        with sealed_guard.unseal(
+            "the single final confirmation",
+            experiment_id="exp_final",
+            approved_by="test",
+        ) as entry:
+            assert entry.sequence == 1  # the refusals consumed nothing
+        assert sealed_guard.opens_used() == 1
+
+    def test_the_last_test_window_may_not_abut_the_seal(self, sealed_guard, audit_path):
+        """Regression, and the seal boundary stated as arithmetic.
+
+        A fold set ending ON the seal's first day does not OVERLAP it --
+        `DateRange` is half-open -- so the guard's non-overlap check passes it.
+        What refuses it is the TEST-to-SEALED_OOS gap, and that gap was checked
+        only when the caller passed `sealed=`. Omitted, a last test window
+        ending 2023-01-01 was accepted with a gap of 0 against a required 6: a
+        position opened on the last test day and still open would have its
+        outcome set by sealed prices. `sealed` now defaults to the guard's own
+        range, so no caller has to remember.
+
+        train 333 -> span 365 -> gap 0, refused. train 328 -> gap 5, refused.
+        train 327 -> gap 6, which is exactly purge+embargo, accepted.
+        """
+        data_range = rng(date(2022, 1, 1), SEALED.start)
+        assert not sealed_guard.touches_seal(data_range.start, data_range.end)
+
+        def build(train_days: int) -> FoldSet:
+            spec = make_spec(
+                train_days=train_days,
+                validation_days=10,
+                test_days=10,
+                step_days=10,
+                purge_days=1,
+                embargo_days=5,
+            )
+            assert spec.gap_days == 6
+            return generate_folds(data_range, spec, guard=sealed_guard)
+
+        with pytest.raises(EmbargoViolationError, match="a gap of 0 day") as exc:
+            build(333)
+        assert "sealed_oos" in str(exc.value)
+        with pytest.raises(EmbargoViolationError, match="a gap of 5 day"):
+            build(328)
+
+        clears = build(327)
+        assert (SEALED.start - clears[-1].test.end).days == 6
+        assert not clears[-1].test.overlaps(SEALED)
+        # None of the three refusals or the acceptance touched the budget.
+        assert not audit_path.exists()
+        assert sealed_guard.opens_remaining() == 1
+
+    def test_the_guard_supplies_the_seal_to_evaluation_too(
+        self, sealed_guard, open_guard, make_trade
+    ):
+        """`evaluate_folds` takes the same default, so a fold set built
+        elsewhere is still measured against the holdout boundary."""
+        spec = make_spec(
+            train_days=333,
+            validation_days=10,
+            test_days=10,
+            step_days=10,
+            purge_days=1,
+            embargo_days=5,
+        )
+        folds = generate_folds(rng(date(2022, 1, 1), SEALED.start), spec, guard=open_guard)
+        assert folds[-1].test.end == SEALED.start  # the open guard knows no seal
+        with pytest.raises(EmbargoViolationError, match="a gap of 0 day"):
+            report_over(folds, FakeRunner(), make_trade, guard=sealed_guard)
+        # Non-vacuity: with no guard there is no seal to check against.
+        assert report_over(folds, FakeRunner(), make_trade).n_folds == len(folds)
+
+    def test_a_disabled_guard_contributes_no_seal(self, tmp_path, make_trade):
+        """`seal.enabled = false` means there is no holdout, so the gap to one
+        is not a thing to enforce. The guard's own `enabled` decides, not the
+        presence of a range on it."""
+        audit = SealAudit(tmp_path / "disabled.jsonl")
+        disabled = DataAccessGuard(sealed=SEALED, audit=audit, enabled=False)
+        assert disabled.sealed == SEALED and not disabled.enabled
+        spec = make_spec(
+            train_days=333,
+            validation_days=10,
+            test_days=10,
+            step_days=10,
+            purge_days=1,
+            embargo_days=5,
+        )
+        folds = generate_folds(rng(date(2022, 1, 1), SEALED.start), spec, guard=disabled)
+        assert folds[-1].test.end == SEALED.start
+
 
 # ---------------------------------------------------------------------------
 # n = 0 -- THE LIVE CASE
@@ -1120,6 +1347,23 @@ class TestZeroTradeFolds:
         assert statement.mean.value == pytest.approx(0.0)
         assert statement.mean.n == 4
         assert statement.spread.value == pytest.approx(0.0)
+
+    @pytest.mark.parametrize(
+        "metric",
+        ("periods_per_year", "sharpe", "sortino", "total_return", "cagr", "trades_per_year"),
+    )
+    def test_the_equity_side_metrics_are_undefined_too(self, report, metric):
+        """`cross_fold` reads `trade_metrics`, so the equity-derived numbers --
+        the ones PROVENANCE 2.6 records a defect in, a `total_return` of 0.039
+        published across a NaN curve -- are asserted on the window directly.
+        Nothing here is 0.0, and the drawdown profile is undefined with it."""
+        for phase in FOLD_PHASES:
+            for window in report.window_results(phase):
+                value = getattr(window.performance, metric)
+                assert value.value is None, f"{metric} reported a number at n=0"
+                assert value.undefined is not None
+                assert window.performance.drawdown.max_drawdown_pct.value is None
+                assert window.performance.drawdown.n_points == 0
 
     def test_the_fold_count_is_still_reported(self, report):
         statement = report.cross_fold("win_rate", SplitPhase.TEST)
@@ -1803,6 +2047,106 @@ class TestEvaluateFolds:
         statement_head = next(i for i, line in enumerate(lines) if "win_rate [" in line)
         assert any("fold_000" in line for line in lines[:statement_head])
         assert any(line.strip().startswith("win_rate_mean=") for line in lines)
+
+    def test_an_unlabelled_trade_is_refused(self, empty_folds, make_trade):
+        """Section 0.8: no performance claim without a split label. An
+        unlabelled trade filed under the fold's phase would be an unlabelled
+        number wearing an OOS label."""
+
+        class Unlabelled(FakeRunner):
+            def trades_for(self, split, mk):
+                if split.phase is not SplitPhase.TEST:
+                    return ()
+                base = datetime.combine(
+                    split.range.start, datetime.min.time(), tzinfo=timezone.utc
+                )
+                return (
+                    mk(
+                        trade_id=f"{split.name}_x",
+                        signal_ts=base + timedelta(hours=10),
+                        split_label=None,
+                    ),
+                )
+
+        with pytest.raises(SplitLabelMismatchError):
+            report_over(empty_folds, Unlabelled(), make_trade)
+
+    def test_a_window_for_a_phase_the_fold_does_not_hold_is_a_typed_refusal(
+        self, empty_folds
+    ):
+        """Regression. `FoldResult._check` indexed `fold.ranges()[phase]`
+        directly, so a window carrying SEALED_OOS -- a holdout result filed as
+        a fold's own -- was refused by a bare `KeyError` whose entire message
+        was `<SplitPhase.SEALED_OOS: 'SEALED_OOS'>`. `except WalkForwardError`
+        around report assembly did not catch it, and the message named neither
+        the fold nor what a fold actually holds. `Fold.split` already refused
+        the same phase with a `WalkForwardError`; the two now agree."""
+        sealed_window = FoldWindowResult(
+            fold_index=0,
+            phase=SplitPhase.SEALED_OOS,
+            split_id="fold_000_sealed_oos",
+            range=SEALED,
+            n_trades=0,
+            sample=sample_status(0, 1),
+            min_trades_per_fold=0,
+            performance=performance_summary((), (), split_label=SplitPhase.SEALED_OOS),
+        )
+        with pytest.raises(WalkForwardError, match="a phase fold_000 does not hold") as exc:
+            FoldResult(fold=empty_folds[0], windows=(sealed_window,))
+        assert not isinstance(exc.value, KeyError)
+        assert "SEALED_OOS" in str(exc.value)
+        # Non-vacuity: a window for a phase the fold does hold is accepted.
+        assert FoldResult(
+            fold=empty_folds[0],
+            windows=(
+                FoldWindowResult(
+                    fold_index=0,
+                    phase=SplitPhase.TEST,
+                    split_id="fold_000_test",
+                    range=empty_folds[0].test,
+                    n_trades=0,
+                    sample=sample_status(0, 1),
+                    min_trades_per_fold=0,
+                    performance=performance_summary((), (), split_label=SplitPhase.TEST),
+                ),
+            ),
+        ).window(SplitPhase.TEST).phase is SplitPhase.TEST
+
+    def test_the_log_row_grades_the_fold_against_min_trades_per_fold(
+        self, open_guard, make_trade, tmp_path
+    ):
+        """Regression. The row recorded `summary.sample`, graded against the
+        analytics `min_sample_n`, under the key `sample` on a FOLD row whose
+        own verdict comes from `min_trades_per_fold`. With min_trades_per_fold
+        5 and min_sample_n 2, a 3-trade fold the report calls INSUFFICIENT was
+        logged ADEQUATE, and neither threshold was in the row to re-derive it
+        from. Section 10 builds the overfitting report from this table."""
+        folds = generate_folds(
+            rng(date(2016, 1, 1), date(2016, 4, 1)),
+            make_spec(min_trades_per_fold=5),
+            guard=open_guard,
+        )
+        policy = MetricPolicy(
+            min_sample_n=2,
+            risk_free_rate_annual=0.0,
+            trading_days_per_year=252,
+            flow_score_buckets=(70.0, 80.0),
+        )
+        log = ExperimentLog(tmp_path / "experiments.db")
+        report = report_over(
+            folds, FakeRunner({0: (1.0, -1.0, -1.0)}), make_trade, policy=policy, log=log
+        )
+        window = report.window_results(SplitPhase.TEST)[0]
+        assert window.n_trades == 3
+        assert window.sample is SampleStatus.INSUFFICIENT
+        assert window.performance.sample is SampleStatus.ADEQUATE  # the two differ
+
+        row = next(r for r in log.query() if r.split_id == window.split_id)
+        assert row.results["sample"] == SampleStatus.INSUFFICIENT.value
+        assert row.results["min_trades_per_fold"] == 5
+        # The analytics verdict is still recorded, under a name that says so.
+        assert row.results["analytics_sample"] == SampleStatus.ADEQUATE.value
+        assert row.results["min_sample_n"] == 2
 
 
 # ---------------------------------------------------------------------------

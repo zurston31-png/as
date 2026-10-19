@@ -39,6 +39,10 @@ With P the metric named by `FRAGILITY_METRIC` (expectancy in R):
     step(N)          = |v(N) - v(B)| / |v(B)|
     elasticity(N)    = relative_drop(N) / step(N)
     worst_relative_drop = max over neighbours N of relative_drop(N)
+                       and the same maximum per AXIS, because the grid's
+                       worst can belong to a parameter the reader is not
+                       asking about -- a pre-registered hypothesis names one
+                       driver and is scored on that driver's own number
 
     FRAGILE   if worst_relative_drop > fragility_max_relative_drop, or a
               neighbour's profit factor falls below
@@ -53,11 +57,16 @@ one-step relative form is the shape of the pre-registered
 in advance rather than one invented after the fact. The elasticity is
 reported beside it to keep "per unit of parameter change" literal: a 10% drop
 across a 7% parameter move is more fragile than the same drop across a 40%
-move, and a relative drop alone cannot tell them apart. Every drop is
-measured FROM the baseline, so a step running into B uses B's denominator.
-`decay_profile` carries every adjacent pair on every axis, so the grid speaks
-even when the verdict is UNDEFINED -- which at the committed configuration it
-is, because n=0 makes every P undefined and no verdict is invented from that.
+move, and a relative drop alone cannot tell them apart. Every drop behind the
+VERDICT is measured FROM the baseline, so a step running into B uses B's
+denominator, and `max_abs_elasticity` includes those baseline-measured
+neighbour ratios: a `DecayStep` divides by its own lower cell, which for a
+neighbour below B understates the decay per unit of parameter change, and the
+reported maximum must not be the smaller of the two. `decay_profile` carries
+every adjacent pair on every axis, each measured in its own direction, so the
+grid speaks even when the verdict is UNDEFINED -- which at the committed
+configuration it is, because n=0 makes every P undefined and no verdict is
+invented from that.
 
 DEGRADATION RUNS
 ----------------
@@ -78,9 +87,13 @@ a defect here and RAISES. A RERUN degradation can genuinely come out ahead,
 because it changes which trades exist: a randomly missed trade can be a
 missed loser, and `spread_ticks_override` outranks a real quote, so a pinned
 wider spread can still be tighter than the quote it replaced.
-`DirectionCheck.worse_or_equal` records that and the report says what it
-means; asserting a monotonicity that does not hold would either crash honest
-runs or hide them.
+A delayed or jittered fill is priced off a LATER BAR, which can open more
+favourably than the one it replaced -- so that run can come out ahead with its
+trade set untouched. `DirectionCheck.worse_or_equal` records that and the
+report says what it means; asserting a monotonicity that does not hold would
+either crash honest runs or hide them. Every run that can flatter or can be
+vacuous names its own mechanism in `notes`, because "read the run's own notes"
+is only an answer if the note is there.
 
 The delayed-entry runs push `max_entry_wait_bars` past 1, the path where bars
 between an early fill and the end of the wait horizon were once uninspected
@@ -630,8 +643,10 @@ class DirectionCheck(FrozenModel):
                 else "the degraded run came out AHEAD of the baseline. Not an edge, and "
                 "this check cannot say WHICH mechanism did it -- read the run's own "
                 "notes. A RERUN degradation can change which trades exist (a skipped "
-                "trade may have been a skipped loser) or what they cost (a pinned "
-                "spread can be tighter than the quote it replaced). Compare the "
+                "trade may have been a skipped loser), what they cost (a pinned "
+                "spread can be tighter than the quote it replaced) or which bar they "
+                "fill on (a delayed or jittered fill is priced off a later bar, which "
+                "can open more favourably). Compare the "
                 "trade_count check before assuming the trade set moved"
             )
         return cls(
@@ -773,15 +788,31 @@ def win_rate_haircut_metrics(
 def wait_horizon_violations(result: RunResult) -> tuple[str, ...]:
     """Trades whose record contradicts the multi-bar wait-horizon fix.
 
-    Three invariants, each one something the fixed bug broke: a fill cannot
-    resolve on the bar that produced the signal; an exit cannot precede its
-    entry; and a trade whose worst excursion went BEYOND its own stop must
-    have exited at the stop -- the regression reported such a trade as a
-    TARGET because the bars between an early fill and the end of the wait
-    horizon were never inspected. The stop's distance is computed per record
-    from that record's own prices and `risk_dollars`, so the check does not
-    depend on how `risk_dollars` is defined; a fixed -1.0R bound would raise
-    false positives the moment an entry slipped.
+    Five invariants, each one a shape the fixed bug can leave in a record: a
+    fill cannot resolve on the bar that produced the signal; an exit cannot
+    precede its entry; a position that exited on a LATER bar than it entered
+    must have been advanced over at least one bar; a trade whose worst
+    excursion went BEYOND its own stop must have exited at the stop -- the
+    regression reported such a trade as a TARGET; and a trade that exited AT
+    its stop must have an excursion that reached it, or its exit price was on
+    no bar the position held. The stop's distance is computed per record from
+    that record's own prices and `risk_dollars`, so the check does not depend
+    on how `risk_dollars` is defined; a fixed -1.0R bound would raise false
+    positives the moment an entry slipped.
+
+    WHAT A RECORD CANNOT SHOW, stated here because the alternative is a
+    documented promise standing in for a structural one. The f44ddb9
+    regression understated `mae_r` (-0.5 against a true -1.5) BECAUSE it
+    skipped the bars, so the record it emitted was internally consistent and
+    all five invariants PASS on it -- its excursion never reached its stop,
+    and it held a positive number of bars. `bars_held` was understated too (5
+    against 7), and an under-count cannot be separated from a clock gap
+    without the clock, so only the degenerate zero-bar case is checkable
+    here. What verifies the fix is a run over bars whose stop is known to sit
+    inside the skipped window, asserted against the loop's own output
+    (`tests/unit/test_robustness.py::TestTheWaitHorizonFixHolds`). An empty
+    result from this function is the absence of five specific defects, not a
+    proof that every bar was inspected.
     """
     findings: list[str] = []
     for trade in result.trades:
@@ -792,6 +823,17 @@ def wait_horizon_violations(result: RunResult) -> tuple[str, ...]:
             )
         if trade.exit_ts < trade.entry_ts:
             findings.append(f"{trade.trade_id}: exit precedes entry")
+        elif trade.exit_ts > trade.entry_ts and trade.bars_held < 1:
+            # Both fills are stamped at their bar's close, so a same-bar
+            # entry and exit share a timestamp and bars_held=0 is correct
+            # there. A LATER exit means `advance_bar` saw at least one bar
+            # close after the entry; zero means no bar between the fill and
+            # the exit was ever offered to the position.
+            findings.append(
+                f"{trade.trade_id}: exit {trade.exit_ts.isoformat()} postdates its entry "
+                f"{trade.entry_ts.isoformat()} but bars_held=0, so no bar between the "
+                "fill and the exit was ever inspected"
+            )
         stop_r = -(
             abs(trade.entry_price - trade.stop_price) * trade.point_value * trade.filled_size
         ) / trade.risk_dollars
@@ -800,6 +842,17 @@ def wait_horizon_violations(result: RunResult) -> tuple[str, ...]:
                 f"{trade.trade_id}: mae_r={trade.mae_r:.6f} is beyond its own stop at "
                 f"{stop_r:.6f}R, but the exit is {trade.exit_reason.value}. A bar the "
                 "position held was never checked for its stop"
+            )
+        if trade.exit_reason is ExitReason.STOP and trade.mae_r > stop_r + 1e-6:
+            # The mirror of the check above, and sound for the same reason:
+            # excursions are taken from each held bar's high and low and the
+            # exit print is folded in, and the stop is never moved, so a stop
+            # exit whose excursion never reached the stop was filled at a
+            # price no bar the position held ever traded.
+            findings.append(
+                f"{trade.trade_id}: the exit is STOP but mae_r={trade.mae_r:.6f} never "
+                f"reached its own stop at {stop_r:.6f}R, so the exit price was on no "
+                "bar the position held"
             )
     return tuple(findings)
 
@@ -1021,13 +1074,39 @@ def _post_hoc_degradation(
     )
 
 
+#: Said on every run that moves the fill to a later bar. Without it the only
+#: mechanisms offered for a flattering run are a skipped loser and a pinned
+#: spread, and neither is true of a delayed or jittered fill whose trade set
+#: never moved.
+_LATER_BAR_NOTE = (
+    "a delayed fill is a DIFFERENT fill, not the same fill later: the order is priced "
+    "off a later bar, which can open more favourably than the one it would have used. "
+    "So this run can come out AHEAD of the baseline with its trade set unchanged, and "
+    "a flattering result here is that path effect rather than a skipped loser or a "
+    "pinned spread"
+)
+
+
 def _degradation_notes(spec: DegradationSpec, config: Any) -> tuple[str, ...]:
     """What this run cannot say, stated on the run rather than in a docstring.
 
-    Two of the six are capable of being VACUOUS at a given configuration, and
-    a stress test that cannot stress reads as a pass unless it says so.
+    Three of the six are capable of being VACUOUS at some configuration
+    (added slippage at `base_slippage_ticks=0`, a delayed entry under a market
+    order, a sub-bar latency jitter) and three of moving the fill price in the
+    favourable direction, and a stress test that cannot stress reads as a pass
+    unless it says so.
     """
     if spec.is_neutral:
+        return ()
+    if spec.kind is DegradationKind.ADDED_SLIPPAGE:
+        if float(config.execution.base_slippage_ticks) == 0.0:
+            return (
+                "base_slippage_ticks is 0 and this degradation MULTIPLIES it, so "
+                f"severity {spec.severity:g} re-runs the committed configuration "
+                "unchanged -- same config hash, same fills. The run is VACUOUS: an "
+                "unchanged metric here is arithmetic, not evidence that the strategy "
+                "tolerates slippage",
+            )
         return ()
     if spec.kind is DegradationKind.WIDER_SPREAD:
         return (
@@ -1051,7 +1130,7 @@ def _degradation_notes(spec: DegradationSpec, config: Any) -> tuple[str, ...]:
                 "is a statement about this order type, not about the fix. A resting "
                 "entry_order_type is what reaches that path",
             )
-        return notes
+        return notes + (_LATER_BAR_NOTE,)
     if spec.kind is DegradationKind.RANDOM_EXECUTION_DELAY:
         interval = int(config.data.primary_interval_seconds)
         base_ms = float(config.execution.latency_ms)
@@ -1066,7 +1145,7 @@ def _degradation_notes(spec: DegradationSpec, config: Any) -> tuple[str, ...]:
                 "therefore cannot move, so an unchanged metric here is arithmetic, "
                 "not evidence that the strategy tolerates execution delay",
             )
-        return ()
+        return (_LATER_BAR_NOTE,)
     return ()
 
 
@@ -1194,6 +1273,15 @@ class FragilityReport(FrozenModel):
 
     baseline: MetricValue
     worst_relative_drop: MetricValue
+    worst_relative_drop_by_axis: dict[str, MetricValue] = Field(default_factory=dict)
+    """The same quantity, per axis, one entry for every axis supplied.
+
+    `worst_relative_drop` is the maximum over EVERY neighbour of the
+    committed cell, so on a grid with more than one axis it can come from a
+    different parameter than the one a reader is asking about. A
+    pre-registered hypothesis names ONE driver, so scoring it needs that
+    driver's own number rather than the grid's worst."""
+
     max_abs_elasticity: MetricValue
     decay_profile: tuple[DecayStep, ...] = ()
     max_relative_drop_allowed: float
@@ -1322,6 +1410,26 @@ def fragility_report(
     max_drop = float(config.robustness.fragility_max_relative_drop)
     pf_floor = float(config.robustness.fragility_profit_factor_floor)
     committed = {axis.name: axis.committed_value(config) for axis in axes}
+    # A coordinate for an axis this call was not given has no committed value
+    # to be compared against, and defaulting that comparison to the cell's own
+    # value made every such coordinate match: a cell at twice the committed
+    # risk was then nominated as the committed baseline and its verdict
+    # published as the committed configuration's. Refused rather than guessed.
+    stray = sorted(
+        {
+            name
+            for cell in cells
+            for name, _ in cell.point.coordinates
+            if name not in committed
+        }
+    )
+    if stray:
+        raise RobustnessError(
+            f"the cells carry coordinate(s) {stray} for which no axis was supplied "
+            f"(axes given: {sorted(committed)}). The committed coordinate of a missing "
+            "axis is unknown, so a cell at an arbitrary value on it would be reported "
+            "as the committed baseline. Pass every axis the grid was run over"
+        )
     at_baseline = [
         cell
         for cell in cells
@@ -1436,7 +1544,49 @@ def fragility_report(
                 "evidence of an edge"
             )
 
+    # The formula's elasticity(N) = relative_drop(N) / step(N), with BOTH
+    # measured from the baseline. A DecayStep divides by its own lower cell,
+    # so for a neighbour sitting BELOW the baseline on an axis the step's
+    # elasticity is a different ratio -- and a smaller one whenever the
+    # baseline is the larger value, which understates the decay per unit of
+    # parameter change. The baseline-measured value is added to the pool, so
+    # the reported maximum can only rise.
     elasticities = [abs(s.elasticity.require()) for s in steps if s.elasticity.is_defined]
+    if baseline_cell is not None:
+        at = baseline_cell.point.as_mapping()
+        for axis_name, cell_, drop in drops:
+            from_value = at.get(axis_name)
+            to_value = cell_.point.as_mapping().get(axis_name)
+            if from_value is None or to_value is None or not from_value:
+                continue
+            relative_step = abs(to_value - from_value) / abs(from_value)
+            if relative_step > 0.0:
+                elasticities.append(abs(drop.require() / relative_step))
+
+    by_axis: dict[str, MetricValue] = {}
+    for axis in axes:
+        name = f"{metric}_worst_relative_drop"
+        own = [drop for axis_name, _, drop in drops if axis_name == axis.name]
+        if own:
+            by_axis[axis.name] = MetricValue.measured(
+                name, max(drop.require() for drop in own),
+                n=min(drop.n for drop in own), unit="fraction",
+                note=f"worst one-step relative drop along {axis.name} alone, measured "
+                "from the committed cell",
+            )
+        elif not baseline.is_defined:
+            by_axis[axis.name] = _undefined(
+                name, baseline.undefined or Undefined.NO_TRADES, n=baseline.n,
+                note=f"the baseline {metric} is undefined, so a drop along "
+                f"{axis.name} is too",
+            )
+        else:
+            by_axis[axis.name] = _undefined(
+                name, Undefined.INSUFFICIENT_OBSERVATIONS, n=baseline.n,
+                note=f"no neighbour of the committed cell along {axis.name} has a "
+                f"defined {metric}",
+            )
+
     return FragilityReport(
         metric=metric,
         verdict=verdict,
@@ -1444,6 +1594,7 @@ def fragility_report(
         baseline_split=baseline_split,
         baseline=baseline,
         worst_relative_drop=worst,
+        worst_relative_drop_by_axis=by_axis,
         max_abs_elasticity=(
             MetricValue.measured(
                 f"{metric}_max_abs_elasticity", max(elasticities), n=len(elasticities)
@@ -1588,13 +1739,35 @@ def hypothesis_reports(
     score-threshold axis instead would answer a different question with the
     same number.
     """
-    swept = {axis.name for axis in axes} | {path for axis in axes for path in axis.paths}
     path = HYPOTHESIS_DRIVER_PATHS["c_band"]
-    if {"c_band", path} & swept:
+    # The axis that actually moves c_band, by name or by the path it governs.
+    # The number must come from THAT axis: `worst_relative_drop` is the
+    # maximum over every neighbour on every axis, so on a joint grid it can
+    # be a flow-score step, and scoring a pre-registered claim about c_band
+    # with it reports a refutation the driver never produced.
+    driver_axis = next(
+        (axis for axis in axes if axis.name == "c_band" or path in axis.paths), None
+    )
+    if driver_axis is not None:
+        measured = fragility.worst_relative_drop_by_axis.get(driver_axis.name)
+        if measured is None:
+            measured = _undefined(
+                f"{fragility.metric}_worst_relative_drop",
+                Undefined.INSUFFICIENT_OBSERVATIONS,
+                note=f"the fragility report carries no per-axis drop for "
+                f"{driver_axis.name!r}",
+            )
+        others = sorted(axis.name for axis in axes if axis.name != driver_axis.name)
         c_band = _hypothesis_report(
-            "H-SR-CBAND-ROBUST", fragility.worst_relative_drop,
+            "H-SR-CBAND-ROBUST", measured,
             note=f"measured as the worst one-step relative drop in {fragility.metric} "
-            "across the c_band neighbours of the committed cell",
+            f"across the {driver_axis.name} neighbours of the committed cell ALONE"
+            + (
+                f"; the grid also swept {others}, whose steps are excluded because this "
+                "hypothesis names one driver"
+                if others
+                else ""
+            ),
         )
     else:
         c_band = _hypothesis_report(
@@ -1694,9 +1867,12 @@ def robustness_report(
             "degradation runs that came out ahead of the baseline on at least one "
             "metric: " + ", ".join(row.spec.label() for row in improved)
             + ". Not a result. A RERUN degradation can change which trades exist (a "
-            "skipped trade can be a skipped loser) or what they cost (a pinned spread "
+            "skipped trade can be a skipped loser), what they cost (a pinned spread "
             "can be tighter than the quote it replaced, which leaves the trade set "
-            "untouched and the run cheaper). Each row's own notes say which applies"
+            "untouched and the run cheaper) or which bar they fill on (a delayed or "
+            "jittered fill is priced off a later bar, which can open more favourably "
+            "and also leaves the trade set untouched). Each row's own notes say which "
+            "applies"
         )
     findings = tuple(f for row in degradations for f in row.wait_horizon_findings)
     delayed = [

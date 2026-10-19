@@ -47,6 +47,13 @@ a `Fold` whose own ranges do not honour it raises at construction:
 is checked again through `splits.SplitRegistry.assert_embargo`, which section
 10 names as Phase 8's job -- available there and deliberately not automatic.
 
+That second check also covers the TEST-to-SEALED_OOS boundary, and it runs on
+the SEAL THE GUARD ALREADY HOLDS rather than one the caller has to name again
+(`_sealed_from`). The seal is half-open, so a last test window ending on the
+seal's first day does not overlap it and the guard alone passes it: with the
+gap unchecked, that fold set was accepted 0 days from the holdout against a
+required 6.
+
 Across folds the embargo is the span `Fold.embargo_after_test`, and the rule is
 that no later fold's train window may BEGIN inside it. It is not a ban on a
 later train window spanning an earlier test window: `splits.py` records that a
@@ -179,6 +186,31 @@ class FoldMode(StrEnum):
 
 def _shift(day: date, days: int) -> date:
     return date.fromordinal(day.toordinal() + days)
+
+
+def _sealed_from(guard: DataAccessGuard | None, sealed: DateRange | None) -> DateRange | None:
+    """The holdout range the TEST boundary is checked against.
+
+    Read off the GUARD when the caller names none, for the same reason the
+    guard itself is required rather than optional: an optional argument is an
+    argument that gets omitted, and this one decides how close a fold may come
+    to the holdout.
+
+    Omitted, the TEST-to-SEALED_OOS gap went unchecked and only the guard's
+    non-overlap test remained. `DateRange` is half-open, so a fold set whose
+    last test window ENDS on the seal's first day does not overlap it: it was
+    accepted with a gap of 0 against the committed purge+embargo of 6, and a
+    position opened on the last test day and still open has its outcome set by
+    sealed prices. That is the leak the gap exists to stop, at the one
+    boundary this project protects hardest.
+
+    A disabled guard holds no seal to respect and contributes none.
+    """
+    if sealed is not None:
+        return sealed
+    if guard is None or not guard.enabled:
+        return None
+    return guard.sealed
 
 
 #: The only arithmetic `CrossFoldStatement` does. Keyed by the suffix each one
@@ -589,12 +621,17 @@ def generate_folds(
     `FoldSet` would flow downstream and surface as "undefined, n=0", which is
     the honest report of an empty market and a dishonest report of an
     impossible spec.
+
+    `sealed` defaults to the guard's own sealed range (`_sealed_from`), so the
+    gap between the last test window and the holdout is enforced whether or
+    not the caller remembers to name it.
     """
     guard.check_access(
         data_range.start,
         data_range.end,
         purpose=f"walk-forward fold generation over {data_range}",
     )
+    sealed = _sealed_from(guard, sealed)
 
     folds: list[Fold] = []
     index = 0
@@ -748,11 +785,22 @@ class FoldResult(FrozenModel):
                     f"{window.split_id} is indexed {window.fold_index} inside "
                     f"{self.fold.fold_id}"
                 )
-            if ranges[window.phase] != window.range:
+            own = ranges.get(window.phase)
+            if own is None:
+                raise WalkForwardError(
+                    f"{window.split_id} reports on {window.phase.value}, a phase "
+                    f"{self.fold.fold_id} does not hold; a fold holds "
+                    f"{[p.value for p in FOLD_PHASES]}. A "
+                    f"{SplitPhase.SEALED_OOS.value} window arriving here is a holdout "
+                    f"result filed as a fold's own, which is the one thing this module "
+                    f"must not accept quietly -- and `ranges[window.phase]` used to "
+                    f"surface it as a bare KeyError whose whole message was the phase "
+                    f"name, uncatchable as a WalkForwardError"
+                )
+            if own != window.range:
                 raise WalkForwardError(
                     f"{window.split_id} reports on {window.range} but "
-                    f"{self.fold.fold_id}'s {window.phase.value} window is "
-                    f"{ranges[window.phase]}"
+                    f"{self.fold.fold_id}'s {window.phase.value} window is {own}"
                 )
         return self
 
@@ -1104,9 +1152,26 @@ class WalkForwardReport(FrozenModel):
 
 
 def _window_payload(
-    fold: Fold, phase: SplitPhase, split: Split, summary: PerformanceSummary
+    fold: Fold,
+    phase: SplitPhase,
+    split: Split,
+    summary: PerformanceSummary,
+    sample: SampleStatus,
+    min_trades_per_fold: int,
 ) -> dict[str, Any]:
-    """The experiment-log row body for one fold window."""
+    """The experiment-log row body for one fold window.
+
+    `sample` is the FOLD's verdict -- the same value `FoldWindowResult.sample`
+    carries, graded against `WindowSpec.min_trades_per_fold`. It used to be
+    `summary.sample`, which is graded against the analytics `min_sample_n`.
+    Those are two independent configured knobs, so a fold the report called
+    INSUFFICIENT was logged ADEQUATE as soon as they differed, and neither
+    threshold was in the row for a reader to re-derive the verdict from.
+    Section 10 generates the overfitting report from this table, so a row that
+    overstates how much sample a fold had is a thin period reported as a solid
+    one in the one place the study is audited from. Both verdicts and both
+    thresholds are recorded, under names that say which is which.
+    """
     metrics: Mapping[str, MetricValue] = summary.trade_metrics
     return {
         "fold_index": fold.index,
@@ -1117,7 +1182,10 @@ def _window_payload(
         "purge_days": fold.purge_days,
         "embargo_days": fold.embargo_days,
         "n_trades": summary.n_trades,
-        "sample": summary.sample.value,
+        "sample": sample.value,
+        "min_trades_per_fold": min_trades_per_fold,
+        "analytics_sample": summary.sample.value,
+        "min_sample_n": summary.min_sample_n,
         "metrics": {name: value.model_dump(mode="json") for name, value in metrics.items()},
     }
 
@@ -1197,6 +1265,9 @@ def evaluate_folds(
     Every window is written to the experiment log when one is supplied, with
     its own `split_id` and phase, so section 10's overfitting report is
     generated from that table rather than from this object.
+
+    `sealed` defaults to the guard's own sealed range (`_sealed_from`), so
+    supplying a guard is enough to get the TEST-to-holdout gap checked.
     """
     ordered = tuple(p for p in FOLD_PHASES if p in tuple(phases))
     if not ordered:
@@ -1204,6 +1275,7 @@ def evaluate_folds(
             f"no fold phase to evaluate: asked for {[p.value for p in phases]}, and a "
             f"fold holds {[p.value for p in FOLD_PHASES]}"
         )
+    sealed = _sealed_from(guard, sealed)
 
     config_hash = str(getattr(config, "config_hash", ""))
     results: list[FoldResult] = []
@@ -1239,6 +1311,9 @@ def evaluate_folds(
             summary = performance_summary(
                 result.trades, result.equity, split_label=phase, policy=policy
             )
+            sample = sample_status(
+                len(result.trades), max(1, fold_set.spec.min_trades_per_fold)
+            )
             experiment_id = ""
             if log is not None:
                 record = log.log(
@@ -1248,7 +1323,14 @@ def evaluate_folds(
                     data_hash=str(result.provenance.data_hash),
                     split_id=split.name,
                     reason=reason,
-                    results=_window_payload(fold, phase, split, summary),
+                    results=_window_payload(
+                        fold,
+                        phase,
+                        split,
+                        summary,
+                        sample,
+                        fold_set.spec.min_trades_per_fold,
+                    ),
                     notes=f"fold_set={fold_set.fingerprint()} run_id={run_id}",
                     parent_experiment_id=parent_experiment_id,
                 )
@@ -1261,9 +1343,7 @@ def evaluate_folds(
                     split_id=split.name,
                     range=split.range,
                     n_trades=len(result.trades),
-                    sample=sample_status(
-                        len(result.trades), max(1, fold_set.spec.min_trades_per_fold)
-                    ),
+                    sample=sample,
                     min_trades_per_fold=fold_set.spec.min_trades_per_fold,
                     performance=summary,
                     run_id=run_id,
