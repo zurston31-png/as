@@ -255,8 +255,11 @@ ever been taken, so no published figure was computed through it.
 
 ## 4a. THE POPULATION FLOW SCORE DISTRIBUTION — the zero-trade diagnosis
 
-Measured 2026-10-19 by me, synthetic NQ, 2016-01-04 → 2016-03-31, committed
-default config. Nothing moved; production code untouched.
+Measured 2026-10-19 by me, synthetic NQ, committed default config. Nothing
+moved; production code untouched. Two windows: a quarter and the full year. The
+full year is the one to read — the quarter understates the maximum materially,
+and my first write-up of this section drew a stronger conclusion than the data
+supports. Corrected below.
 
 ### Why this measurement was needed, and why it is well posed
 
@@ -274,33 +277,64 @@ bypassing or weakening a single gate.
 
 ### The result
 
+**Full year, 2016-01-04 → 2016-12-30, 19542 bars on the clock:**
+
 | | published today | full population |
 |---|---|---|
-| n | **76** | **1979** (26× more) |
-| min | 30.5540 | 18.0360 |
-| median | 47.9378 | 43.3216 |
-| p95 | 58.3062 | 55.5568 |
-| p99 | 59.2332 | 60.7954 |
-| **max** | **59.8702** | **64.8123** |
-| mean / sd | 47.6537 / 6.4810 | 42.9072 / 8.1957 |
+| n | **282** | **11239** (40× more) |
+| min | 27.7295 | 16.3393 |
+| median | 49.8788 | 43.2000 |
+| p95 | 60.6253 | 56.8005 |
+| p99 | 64.1394 | 61.2305 |
+| **max** | **66.9912** | **69.6335** |
+| mean / sd | 49.5303 / 6.9429 | 43.2333 / 8.1288 |
 | **bars ≥ 70.0** | **0** | **0 (0.0000%)** |
 | out of [0,100] | 0 | 0 |
 
-Also: 2648 bars had no feature vector (blocked before liquidity), and 53 bars
-had their score **refused** by the aggregate rather than estimated — honest
-degradation working as §5 requires.
+Quarter only (2016-01-04 → 2016-03-31), for comparison: published n=76 max
+59.8702; population n=1979 max 64.8123. **The quarter understates the
+population maximum by 4.8 points**, which is why the year is the figure of
+record.
 
-### What it settles
+Also, over the year: 8248 bars had no feature vector (blocked before
+liquidity), and 55 had their score **refused** by the aggregate rather than
+estimated — honest degradation working as §5 requires.
 
-**The scorer is not being filtered to an unrepresentative slice.** The opposite:
-the gates select *higher*-scoring bars than the population (mean 47.65 vs
-42.91). And across 1979 scored bars, **not one reaches 70.0** — the lowest
-setup threshold. The published max of 59.87 is not an artifact of selection;
-the population max is 64.81, still 5.2 points short.
+### What it settles, and what it does not
 
-Note the gates are **not** monotonic in score: the population max (64.81)
-exceeds the published max (59.87), so some bars rejected at structure,
-order-flow or momentum score higher than any bar that reached the scorer.
+**Settled: the scorer is not being filtered to an unrepresentative slice.** The
+opposite — the gates select *higher*-scoring bars than the population (mean
+49.53 vs 43.23). The 282 published scores are representative of the top of the
+distribution, not of a biased corner of it.
+
+**Settled: the gates are not monotonic in score.** Population max 69.6335
+exceeds published max 66.9912, so bars rejected at structure, order-flow or
+momentum score higher than any bar that reached the scorer.
+
+**NOT settled, and this is the correction.** My first draft of this section read
+the quarter's 64.81 maximum and concluded the Flow Score "cannot reach 70".
+The full year's maximum is **69.6335** — short of 70.0 by **0.37 points**, out
+of 100. That is a materially weaker claim. The right statement is:
+
+> Over 11239 scored bars in one year, zero reach 70.0, and the best misses by
+> 0.37 points. The threshold sits just above the observed maximum, not far
+> above it.
+
+The distribution's right tail therefore *approaches* the threshold. Over a
+longer window than one year, bars above 70.0 should be expected — rarely. How
+rarely is a tail question this measurement does not answer, and the honest
+reading is that the system would trade at some very low frequency rather than
+never. Both readings are bad for a research programme, but they are different
+findings and should not be conflated:
+
+* "cannot reach 70" would mean the specification is internally broken.
+* "reaches 69.63 in a year" means the setup is extremely rare, so a
+  ten-year backtest would turn on a handful of trades — far too few for the
+  statistical validation Phases 8 and 9 are built to perform, and far too few
+  to establish an edge.
+
+A tail count at 60/64/66/68/69/69.5/70 is the next measurement;
+`research/population_score.py` reports it.
 
 ### Where the ceiling comes from
 
@@ -321,17 +355,19 @@ contribute 21.6**. That is the ceiling's source.
 
 ### The consequence for Phase 8
 
-A score-threshold sweep cannot find trades at an honest threshold, because the
-scoring function as configured does not produce 70 on any bar — with full
-component availability, over a quarter of bars. Lowering the threshold into the
-40s or 50s to manufacture trades is the move the brief forbids presenting as a
-result.
+A score-threshold sweep over 60..85 will produce trades only in cells BELOW the
+committed 70.0, because no bar in a year reaches 70.0. Those cells are the
+output of lowering a gate until something passes, which the brief forbids
+presenting as a result. The grid is still worth running — it measures
+sensitivity — but no cell in it is a discovery.
 
 **This is a negative result and it is reported as one.** It says nothing about
-markets — the bars are synthetic. What it says is that the Flow Score's
-component magnitudes and its setup thresholds were specified independently and
-are mutually unreachable, and that is a design fact discoverable without any
-real data.
+markets; the bars are synthetic. What it says is that the Flow Score's
+component magnitudes and its setup thresholds were specified independently, and
+the thresholds sit at or just above what the magnitudes actually produce. That
+is a design fact, discoverable with no real data at all — and it is the first
+thing to re-measure once real bars exist, because the component magnitudes are
+a function of the data and may differ.
 
 ---
 

@@ -77,7 +77,7 @@ def describe(name, xs):
     print(f"   min {qs[0]:.4f}  p5 {qs[1]:.4f}  p25 {qs[2]:.4f}  median {qs[3]:.4f}")
     print(f"   p75 {qs[4]:.4f}  p90 {qs[5]:.4f}  p95 {qs[6]:.4f}  p99 {qs[7]:.4f}  max {qs[8]:.4f}")
     print(f"   mean {a.mean():.4f}  sd {a.std(ddof=1):.4f}")
-    for thr in (70.0, 75.0, 80.0):
+    for thr in (60.0, 64.0, 66.0, 68.0, 69.0, 69.5, 70.0, 75.0):
         n = int((a >= thr).sum())
         print(f"   bars >= {thr:.0f}: {n}  ({100.0*n/a.size:.4f}%)")
     print(f"   out of [0,100]: {int(((a<0)|(a>100)).sum())}")
