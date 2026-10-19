@@ -89,7 +89,7 @@ import pytest
 
 from flow_model.backtest.execution import ExecutionModel
 from flow_model.backtest.fills import EntryFill, ExitFill, FillStatus
-from flow_model.backtest.journal import Journal, JournalError, OrderRecord, SignalRecord
+from flow_model.backtest.journal import Journal, JournalError, SignalRecord
 from flow_model.backtest.ledger import (
     EntryContext,
     Ledger,
@@ -2856,6 +2856,84 @@ def test_a_short_is_the_mirror_of_a_long_in_every_sign(
     # A win is a win and a loss is a loss, on the net number.
     assert record.is_win is (gross > 0)
     assert record.is_loss is (gross < 0)
+
+
+class _RecordingLimits(RiskLimitManager):
+    """A `RiskLimitManager` that remembers what heat it was handed.
+
+    The loop releases heat at the exit and flattens every position at the end
+    of a run, so `portfolio_heat()` is back to zero by the time a test can read
+    it -- and a symmetric registration returns to zero whichever quantity was
+    used. Reading the released value therefore cannot tell the planned R unit
+    from the carried exposure, which is why the suite stayed green while the
+    wrong one was registered. This records the value at the moment of
+    registration, which is the invariant itself.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.registered: list[float] = []
+
+    def on_position_opened(self, symbol: str, risk_dollars: float) -> None:
+        self.registered.append(float(risk_dollars))
+        super().on_position_opened(symbol, risk_dollars)
+
+
+def test_the_heat_limit_is_registered_in_carried_risk_not_the_planned_unit():
+    """Section 8's heat cap must count money the account can actually lose.
+
+    `RiskLimitManager.portfolio_heat()` is the gate that blocks an entry
+    (limits.py, MAX_PORTFOLIO_HEAT), and it knows only what the loop hands it
+    at `on_position_opened`. Registering the PLANNED R unit understates heat by
+    the entry slippage, so the hard limit would admit more risk than the
+    configuration allows -- the one direction a hard limit may not err in.
+    `Ledger.open_risk_dollars()` already sums the carried quantity, so the two
+    subsystems enforcing the same `max_portfolio_heat_pct` must agree.
+
+    Hand-computed from the stub's plan -- entry 13000, stop 12990, 2 contracts
+    at 20 dollars a point:
+      * planned R unit  = |13000 - 12990| * 20 * 2 = 400
+      * the fill prints at 13002, 2 points worse, so 12 points remain to the
+        stop and the carried exposure is |13002 - 12990| * 20 * 2 = 480
+    The manager must be handed 480, not 400: 80 dollars of real exposure, 20%
+    of the position, invisible to the gate that is supposed to cap it.
+    """
+    cfg = config()
+    bars = warm_bars(4)
+    # The fill bar opens 2 points above the planned entry, so the entry slips.
+    bars.append(bar(4, open_=13002.0, high=13004.0, low=13001.0, close=13002.0))
+    bars.append(bar(5, open_=13002.0, high=13003.0, low=13001.0, close=13002.0))
+    bars.append(bar(6))
+
+    store = store_of(bars)
+    engine = StubEngine(cfg, (3,))
+    limits = _RecordingLimits(cfg.risk, float(cfg.risk.starting_equity))
+    loop = BacktestLoop(
+        cfg, "NQ", engine=engine, limits=limits,
+        git_commit="", git_dirty=False, atr_median_window=3,
+    )
+    result = loop.run(StoreMarketSource(store, "NQ"))
+
+    assert result.trades, "the stub engine opened no position; the test is vacuous"
+    record = result.trades[0]
+    planned = record.risk_dollars
+    carried = (
+        abs(record.entry_price - record.stop_price)
+        * record.point_value
+        * record.filled_size
+    )
+    assert planned == pytest.approx(400.0)
+    assert carried == pytest.approx(480.0)
+    assert carried != pytest.approx(planned), (
+        f"the entry did not slip (entry {record.entry_price}); the test cannot "
+        "distinguish the two quantities"
+    )
+
+    # THE ASSERTION THAT MATTERS.
+    assert limits.registered == [pytest.approx(carried)]
+    assert limits.registered != [pytest.approx(planned)]
+    # and the release matched, so no heat residue is left behind
+    assert limits.portfolio_heat() == pytest.approx(0.0)
 
 
 def test_a_partial_fill_commits_only_the_risk_it_filled():

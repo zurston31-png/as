@@ -671,7 +671,18 @@ class PositionManager:
         self, intent: TradeIntent, fill: EntryFill, context: EntryContext
     ) -> OpenPosition:
         position = self.ledger.open_position(intent=intent, entry=fill, context=context)
-        self.limits.on_position_opened(position.symbol, position.risk_dollars)
+        # CARRIED risk, not the planned R unit. Section 8's heat limit is a
+        # statement about money the account can actually lose, and
+        # `RiskLimitManager.portfolio_heat()` is the gate that blocks an entry
+        # (limits.py MAX_PORTFOLIO_HEAT). Registering the planned unit here
+        # understates heat by the entry slippage -- $400 registered against
+        # $440 genuinely at risk on a 2-point slip -- which admits more risk
+        # than the configuration allows. `Ledger.open_risk_dollars()` already
+        # sums the carried quantity; this keeps the authoritative limit and the
+        # ledger speaking the same number. Symmetric with the release below:
+        # `carried_risk_dollars` is derived from immutable fields, so the value
+        # subtracted at the exit is the value added here.
+        self.limits.on_position_opened(position.symbol, position.carried_risk_dollars)
         return position
 
     # --- the per-bar update --------------------------------------------
@@ -813,7 +824,7 @@ class PositionManager:
             session_date=self.session_date(record.exit_ts),
             symbol=record.symbol,
             pnl=record.pnl,
-            risk_dollars=position.risk_dollars,
+            risk_dollars=position.carried_risk_dollars,
         )
         return record
 
