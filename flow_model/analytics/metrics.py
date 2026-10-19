@@ -275,6 +275,17 @@ class Undefined(StrEnum):
     compounding a few minutes of return into an annual growth rate. Reported
     as undefined rather than as a crash or an infinity."""
 
+    INPUT_NOT_SUPPLIED = "input_not_supplied"
+    """The object this number would be read from was never handed over.
+
+    Follows the convention `NO_EQUITY_SERIES` sets: name the absent INPUT
+    rather than invent a value. Added for the reporting layer, where a panel
+    may be asked for a Monte Carlo percentile with no Monte Carlo result in
+    hand, or for an out-of-sample column with only one split phase supplied.
+    Deliberately distinct from `NO_TRADES`: "we ran and found nothing" and
+    "we were never given the thing" are different statements, and collapsing
+    them would let a missing input read as a measured zero sample."""
+
 
 class SampleStatus(StrEnum):
     """Whether a cell's N justifies reporting a rate at all."""
@@ -480,12 +491,17 @@ def _r_values(trades: Sequence[TradeRecord]) -> list[float]:
     return [t.r_multiple for t in trades]
 
 
-def _chronological(trades: Sequence[TradeRecord]) -> list[TradeRecord]:
+def chronological(trades: Sequence[TradeRecord]) -> list[TradeRecord]:
     """Trades in the order their outcomes became known.
 
     A trade list is a set, so its argument order is not meaningful; streaks
     are. Sorted on exit (when the win or loss was realized), with entry and id
     as deterministic tie-breaks.
+
+    Public because `monte_carlo.engine` needs the SAME order: a block
+    bootstrap resamples contiguous runs of outcomes and a regime transition
+    is counted between consecutive outcomes, so a second sort key over there
+    would be a second definition of "consecutive" and the two would drift.
     """
     return sorted(trades, key=lambda t: (t.exit_ts, t.entry_ts, t.trade_id))
 
@@ -1051,7 +1067,7 @@ def streaks(
         )
 
     best_win = best_loss = run_win = run_loss = 0
-    for trade in _chronological(t):
+    for trade in chronological(t):
         if trade.is_win:
             run_win, run_loss = run_win + 1, 0
         elif trade.is_loss:

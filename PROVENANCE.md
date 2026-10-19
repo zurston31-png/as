@@ -333,8 +333,41 @@ findings and should not be conflated:
   statistical validation Phases 8 and 9 are built to perform, and far too few
   to establish an edge.
 
-A tail count at 60/64/66/68/69/69.5/70 is the next measurement;
-`research/population_score.py` reports it.
+### The tail, counted
+
+Same full-year run, 11239 scored bars:
+
+| threshold | population bars ≥ | share | published bars ≥ |
+|---|---|---|---|
+| 60.0 | 197 | 1.7528% | 16 |
+| 64.0 | 30 | 0.2669% | 3 |
+| 66.0 | 12 | 0.1068% | 2 |
+| 68.0 | 4 | 0.0356% | 0 |
+| 69.0 | 1 | 0.0089% | 0 |
+| 69.5 | 1 | 0.0089% | 0 |
+| **70.0** | **0** | **0.0000%** | **0** |
+| 75.0 | 0 | 0.0000% | 0 |
+
+The single best bar (69.6335) sits between 69.5 and 70.0. Each two-point step
+up the tail roughly quarters the count — 30 → 12 → 4 → 1 — and then stops.
+
+**So the answer to "how rarely":** extrapolating that decay, bars at or above
+70.0 arrive at well under one per year of 5-minute data. Over the ten-year
+research window (~195k bars) that is on the order of a handful. A backtest over
+the full window would turn on perhaps 2–5 signals, before the §14 structure
+gate and the other seven gates take their share of them — and those gates
+reject 97% of bars, so the expected trade count over ten years is plausibly
+**zero to one**.
+
+That is the quantitative form of the finding, and it is the number that matters
+for Phases 8 and 9: Monte Carlo over one trade is undefined, walk-forward folds
+over one trade are undefined, and a consistency score over one trade is
+undefined. The validation machinery cannot be exercised by this configuration
+on this data, however correct the machinery is.
+
+A caveat on the extrapolation: it assumes the tail keeps its shape past the
+last observed point, which one year of one synthetic generator cannot
+establish. It is an estimate, labelled as one, not a measurement.
 
 ### Where the ceiling comes from
 

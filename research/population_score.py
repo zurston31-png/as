@@ -79,7 +79,10 @@ def describe(name, xs):
     print(f"   mean {a.mean():.4f}  sd {a.std(ddof=1):.4f}")
     for thr in (60.0, 64.0, 66.0, 68.0, 69.0, 69.5, 70.0, 75.0):
         n = int((a >= thr).sum())
-        print(f"   bars >= {thr:.0f}: {n}  ({100.0*n/a.size:.4f}%)")
+        # `:g` not `:.0f`: 69.5 formats as "70" under :.0f (round-half-to-even),
+        # so two different thresholds printed the same label with different
+        # counts -- a table a reader would rightly distrust.
+        print(f"   bars >= {thr:g}: {n}  ({100.0*n/a.size:.4f}%)")
     print(f"   out of [0,100]: {int(((a<0)|(a>100)).sum())}")
 
 print(f"window {start} -> {end}   bars on clock {clock.size}")
