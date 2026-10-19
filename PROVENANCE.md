@@ -253,6 +253,88 @@ from plan. At the committed default (market entry, `max_entry_wait_bars=1`,
 bar's open is not the planned price, so this was live — but zero trades have
 ever been taken, so no published figure was computed through it.
 
+## 4a. THE POPULATION FLOW SCORE DISTRIBUTION — the zero-trade diagnosis
+
+Measured 2026-10-19 by me, synthetic NQ, 2016-01-04 → 2016-03-31, committed
+default config. Nothing moved; production code untouched.
+
+### Why this measurement was needed, and why it is well posed
+
+§2.4 flagged that the 283 published scores are a selected subsample — they
+survived eight gates — so they could not establish the population
+distribution. The blocker looked structural: the pipeline short-circuits at the
+§14 structure gate, and `StructureGate` is the only source of the trade `side`.
+
+**That blocker is not real.** `SignalEngine.score(features)` takes *only* the
+feature vector. The side is consumed by the options-flow and order-flow
+*gates*, not by the scorers. So the Flow Score is well defined for every bar
+that has a feature vector — every bar past the regime gate — and can be
+computed through the engine's own public `score()` and `aggregate()` without
+bypassing or weakening a single gate.
+
+### The result
+
+| | published today | full population |
+|---|---|---|
+| n | **76** | **1979** (26× more) |
+| min | 30.5540 | 18.0360 |
+| median | 47.9378 | 43.3216 |
+| p95 | 58.3062 | 55.5568 |
+| p99 | 59.2332 | 60.7954 |
+| **max** | **59.8702** | **64.8123** |
+| mean / sd | 47.6537 / 6.4810 | 42.9072 / 8.1957 |
+| **bars ≥ 70.0** | **0** | **0 (0.0000%)** |
+| out of [0,100] | 0 | 0 |
+
+Also: 2648 bars had no feature vector (blocked before liquidity), and 53 bars
+had their score **refused** by the aggregate rather than estimated — honest
+degradation working as §5 requires.
+
+### What it settles
+
+**The scorer is not being filtered to an unrepresentative slice.** The opposite:
+the gates select *higher*-scoring bars than the population (mean 47.65 vs
+42.91). And across 1979 scored bars, **not one reaches 70.0** — the lowest
+setup threshold. The published max of 59.87 is not an artifact of selection;
+the population max is 64.81, still 5.2 points short.
+
+Note the gates are **not** monotonic in score: the population max (64.81)
+exceeds the published max (59.87), so some bars rejected at structure,
+order-flow or momentum score higher than any bar that reached the scorer.
+
+### Where the ceiling comes from
+
+The highest-scoring bar in a 2016-01-04 → 2016-02-08 slice, with
+`available_points = 100.0` — all five components present, no degradation:
+
+| component | points | weight | % of weight |
+|---|---|---|---|
+| options_flow | 9.321 | 20 | 46.6% |
+| order_flow | 12.326 | 25 | 49.3% |
+| structure | 12.908 | 20 | 64.5% |
+| liquidity | 14.230 | 15 | **94.9%** |
+| vol_momentum | 15.115 | 20 | 75.6% |
+| **total** | **63.900** | **100** | **63.9%** |
+
+Options flow and order flow together hold **45 of the 100 points and
+contribute 21.6**. That is the ceiling's source.
+
+### The consequence for Phase 8
+
+A score-threshold sweep cannot find trades at an honest threshold, because the
+scoring function as configured does not produce 70 on any bar — with full
+component availability, over a quarter of bars. Lowering the threshold into the
+40s or 50s to manufacture trades is the move the brief forbids presenting as a
+result.
+
+**This is a negative result and it is reported as one.** It says nothing about
+markets — the bars are synthetic. What it says is that the Flow Score's
+component magnitudes and its setup thresholds were specified independently and
+are mutually unreachable, and that is a design fact discoverable without any
+real data.
+
+---
+
 ## 5. Corrections to previously published figures
 
 Both were agent-reported figures I re-ran and found wrong. Recorded so the
