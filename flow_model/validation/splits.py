@@ -24,7 +24,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import computed_field, model_validator
 
 from flow_model.core.enums import SplitPhase
 from flow_model.core.model import FrozenModel

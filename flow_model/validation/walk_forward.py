@@ -65,12 +65,13 @@ stable" preferred over "90% in one window", which cannot be stated without the
 spread.
 
 So the aggregate is not a number this module stores. `CrossFoldStatement` takes
-the per-fold `MetricValue`s as a REQUIRED constructor field and exposes `mean`,
-`stdev`, `spread`, `minimum`, `maximum`, `n_folds` and `n_folds_defined` only
-as computed projections of that vector -- no setter, no cached scalar, no
-constructor accepting a mean. Keeping the mean while dropping the folds is not
-something a caller can do, `model_dump()` included, and `describe()` prints
-every fold first.
+the per-fold `MetricValue`s -- and each fold's own trade count -- as REQUIRED
+constructor fields, and exposes `mean`, `stdev`, `spread`, `minimum`,
+`maximum`, `n_folds`, `n_folds_defined` and `n_trades` only as computed
+projections of those vectors: no setter, no cached scalar, no constructor
+accepting a mean. Keeping the mean while dropping the folds is not something a
+caller can do, `model_dump()` included, and `describe()` prints every fold
+first.
 
 ZERO TRADES IS THE LIVE CASE
 ----------------------------
@@ -134,8 +135,24 @@ FOLD_PHASES: tuple[SplitPhase, ...] = (
 MIN_FOLDS_FOR_DISPERSION: int = 2
 
 
-class WalkForwardError(ValueError):
-    """Base for every refusal in this module."""
+class WalkForwardError(Exception):
+    """Base for every refusal in this module.
+
+    NOT a `ValueError`, and that is the whole point. Pydantic converts a
+    `ValueError` raised inside a `model_validator` into a `ValidationError`,
+    and `Fold`, `FoldSet`, `FoldWindowResult`, `FoldResult`,
+    `CrossFoldStatement` and `WalkForwardReport` do all of their checking
+    there. While this base was `ValueError`, `Fold(...)` on a gap short of the
+    purge raised `pydantic_core.ValidationError`:
+    `isinstance(exc, PurgeViolationError)` was False, so was
+    `isinstance(exc, EmbargoViolationError)`, `except PurgeViolationError` did
+    not catch it, and the purge/embargo distinction this module exists to keep
+    survived only as prose inside `exc.errors()[0]["ctx"]["error"]`. Two
+    errors a caller cannot tell apart are one error.
+
+    Pydantic passes any other exception type through untouched, so the error a
+    caller sees is now the error this module raised.
+    """
 
 
 class PurgeViolationError(WalkForwardError):
@@ -233,6 +250,17 @@ class WindowSpec(FrozenModel):
                 "evaluates, and a walk-forward with holes in its OOS coverage "
                 "reports on a period it chose after the fact"
             )
+        if self.step_days < self.test_days:
+            raise WalkForwardError(
+                f"step_days={self.step_days} is short of test_days={self.test_days}: "
+                f"consecutive test windows would overlap by "
+                f"{self.test_days - self.step_days} day(s), and `FoldSet` refuses "
+                "that -- double-counting the same out-of-sample days flatters the "
+                "fold count and the dispersion at once. Refused here rather than "
+                "after the folds are built, so the spec is named as the cause "
+                "instead of two folds that were only ever a symptom. The step that "
+                "makes test windows meet exactly once is step_days == test_days"
+            )
         return self
 
     @classmethod
@@ -245,17 +273,28 @@ class WindowSpec(FrozenModel):
         every fold then uses the resulting day widths. Two intended
         consequences: the folds are all exactly the same width, and no
         days-per-month constant exists in this module to be wrong.
+
+        `step_months` is resolved from the TEST window's start, not from
+        `anchor`. A step is what makes consecutive test windows meet, so it has
+        to be counted over the same stretch of calendar the test window covers
+        or equal month counts stop meaning equal day counts. Resolved from
+        `anchor` it did not: with the committed 36/12/12/12 months and
+        `anchor=2016-02-29` it gave step_days=365 against test_days=366,
+        because `_add_months(2016-02-29, 12)` clamps to 2017-02-28 while the
+        test window [2020-02-28, 2021-02-28) contains 29 February 2020. The
+        folds then overlapped on exactly one out-of-sample day. At
+        `anchor=2015-01-01` both readings give 365, so nothing committed moves.
         """
         wf = config.walk_forward
         train_end = _add_months(anchor, wf.train_months)
         validation_end = _add_months(train_end, wf.validation_months)
         test_end = _add_months(validation_end, wf.test_months)
-        step_end = _add_months(anchor, wf.step_months)
+        step_end = _add_months(validation_end, wf.step_months)
         return cls(
             train_days=(train_end - anchor).days,
             validation_days=(validation_end - train_end).days,
             test_days=(test_end - validation_end).days,
-            step_days=(step_end - anchor).days,
+            step_days=(step_end - validation_end).days,
             purge_days=wf.purge_days,
             embargo_days=wf.embargo_days,
             mode=FoldMode.ANCHORED if wf.anchored else FoldMode.ROLLING,
@@ -350,9 +389,18 @@ class Fold(FrozenModel):
         calls it. This is that call -- a second, independent check on the
         geometry `Fold._check` already enforced, which additionally covers the
         TEST-to-SEALED_OOS boundary when `sealed` is given.
+
+        The registry is BUILT OUTSIDE the try, so its own refusals keep their
+        own identity. A test window that overlaps the holdout is a seal leak,
+        not a short embargo, and relabelling it `EmbargoViolationError` --
+        which is what building it inside did -- tells the reader to widen the
+        embargo when what they actually did was reach into the sealed window.
+        `splits.SplitRegistry` already says that in the words of the module
+        that owns the seal.
         """
+        registry = self.registry(sealed)
         try:
-            self.registry(sealed).assert_embargo(min_gap_days)
+            registry.assert_embargo(min_gap_days)
         except ValueError as exc:
             raise EmbargoViolationError(f"{self.fold_id}: {exc}") from None
 
@@ -732,6 +780,17 @@ class CrossFoldStatement(FrozenModel):
     phase: SplitPhase
     fold_indices: tuple[int, ...]
     per_fold: tuple[MetricValue, ...]
+    fold_n_trades: tuple[int, ...]
+    """How many trades each fold's window held, in `fold_indices` order.
+
+    Required, and carried rather than read off `per_fold`, because a
+    `MetricValue`'s own `n` is the number of observations BEHIND THAT METRIC,
+    which is not the trade count for any metric conditioned on an outcome.
+    `average_win_r` counts winners; over four folds holding nine losing trades
+    between them it counts zero, and `n_trades` summed from it used to report
+    "0 trade(s) in total" for a study that had taken nine trades and lost all
+    nine. That is a bad period reported as an empty one.
+    """
 
     @model_validator(mode="after")
     def _check(self) -> "CrossFoldStatement":
@@ -739,6 +798,16 @@ class CrossFoldStatement(FrozenModel):
             raise WalkForwardError(
                 f"{self.metric}: {len(self.fold_indices)} fold index(es) against "
                 f"{len(self.per_fold)} value(s); every value must name its fold"
+            )
+        if len(self.fold_n_trades) != len(self.per_fold):
+            raise WalkForwardError(
+                f"{self.metric}: {len(self.fold_n_trades)} trade count(s) against "
+                f"{len(self.per_fold)} value(s); every value must carry the size of "
+                "the sample its fold held"
+            )
+        if any(count < 0 for count in self.fold_n_trades):
+            raise WalkForwardError(
+                f"{self.metric}: negative fold trade count in {self.fold_n_trades}"
             )
         if len(set(self.fold_indices)) != len(self.fold_indices):
             raise WalkForwardError(f"{self.metric}: duplicate fold indices")
@@ -764,6 +833,7 @@ class CrossFoldStatement(FrozenModel):
             phase=phase,
             fold_indices=tuple(w.fold_index for w in windows),
             per_fold=tuple(w.metric(metric) for w in windows),
+            fold_n_trades=tuple(w.n_trades for w in windows),
         )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -792,8 +862,15 @@ class CrossFoldStatement(FrozenModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def n_trades(self) -> int:
-        """Trades behind the whole statement, defined folds or not."""
-        return sum(value.n for value in self.per_fold)
+        """Trades behind the whole statement, defined folds or not.
+
+        Summed from `fold_n_trades`, which is the window's own trade count. A
+        `MetricValue.n` would have been the count of observations the metric
+        itself was taken over -- winners for `average_win_r`, zero for any
+        undefined value -- and summing those reported no trades for folds that
+        had them.
+        """
+        return sum(self.fold_n_trades)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -834,6 +911,30 @@ class CrossFoldStatement(FrozenModel):
         listed = ", ".join(f"{reason} x{count}" for reason, count in reasons.items())
         return f"{head}; undefined: {listed}"
 
+    def _undefined_reason(self) -> Undefined:
+        """Why an aggregate has no number, taken from the folds themselves.
+
+        `NO_TRADES` is reserved for a statement whose folds really held no
+        trades. Before, any statement with nothing to average said `NO_TRADES`,
+        so a metric undefined for want of a WINNER -- four folds, nine trades,
+        nine losses, `average_win_r` undefined `NO_WINS` in every one --
+        aggregated to "no trades". A reader of the aggregate alone would have
+        concluded the system stood flat through a period in which it lost nine
+        times, which is the one direction this project refuses to be wrong in.
+
+        When the folds disagree about why they are undefined, no single reason
+        is theirs; the aggregate says it has too few observations and
+        `undefined_reasons` carries the breakdown.
+        """
+        if self.n_folds_defined > 0:
+            return Undefined.INSUFFICIENT_OBSERVATIONS
+        if self.n_trades == 0:
+            return Undefined.NO_TRADES
+        reasons = {value.undefined for value in self.per_fold if value.undefined is not None}
+        if len(reasons) == 1:
+            return reasons.pop()
+        return Undefined.INSUFFICIENT_OBSERVATIONS
+
     def _aggregate(self, suffix: str, values: Sequence[float], minimum: int) -> MetricValue:
         name = f"{self.metric_name}_{suffix}"
         if self.n_folds == 0:
@@ -841,13 +942,12 @@ class CrossFoldStatement(FrozenModel):
                 name, Undefined.NO_TRADES, n=0, unit=self.unit, note="no folds"
             )
         if len(values) < minimum:
-            reason = (
-                Undefined.NO_TRADES
-                if self.n_folds_defined == 0
-                else Undefined.INSUFFICIENT_OBSERVATIONS
-            )
             return MetricValue.undefined_because(
-                name, reason, n=len(values), unit=self.unit, note=self._coverage_note()
+                name,
+                self._undefined_reason(),
+                n=len(values),
+                unit=self.unit,
+                note=self._coverage_note(),
             )
         number = float(_AGGREGATORS[suffix](values))
         if not math.isfinite(number):
@@ -949,10 +1049,29 @@ class WalkForwardReport(FrozenModel):
                     f"fold result {result.fold.fold_id} does not match the generated "
                     f"{fold.fold_id}"
                 )
+        if self.folds:
+            expected = {w.phase for w in self.folds[0].windows}
+            for result in self.folds[1:]:
+                present = {w.phase for w in result.windows}
+                if present != expected:
+                    raise WalkForwardError(
+                        f"{result.fold.fold_id} reports on "
+                        f"{sorted(p.value for p in present)} against "
+                        f"{self.folds[0].fold.fold_id}'s "
+                        f"{sorted(p.value for p in expected)}. Every fold reports on "
+                        "the same phases or they are not comparable: `phases()` reads "
+                        "the first fold, and a cross-fold statement about a phase one "
+                        "fold is missing is a mean over a different set of folds than "
+                        "the one it names"
+                    )
         return self
 
     def phases(self) -> tuple[SplitPhase, ...]:
-        """The phases every fold reports on, in chronological order."""
+        """The phases every fold reports on, in chronological order.
+
+        Read off the first fold, which `_check` has established speaks for all
+        of them.
+        """
         if not self.folds:
             return ()
         common = [w.phase for w in self.folds[0].windows]
@@ -1003,6 +1122,44 @@ def _window_payload(
     }
 
 
+def _assert_rows_inside(split: Split, result: Any) -> None:
+    """Refuse a runner's rows that are dated outside the fold's own window.
+
+    `run_id` uniqueness catches a reused `BacktestLoop`. It does NOT catch a
+    clock that was never clipped: a runner that walks the whole dataset for
+    every fold returns a different `data_hash` per window only by accident, and
+    nothing else here ties a fold's numbers to a fold's dates. So the rows are
+    checked against the window rather than the runner being trusted to have
+    clipped -- a fold whose trades or equity curve quietly span its neighbours,
+    or the seal, reports an in-sample number under an out-of-sample label, and
+    it reports it with a plausible `split_id` attached.
+
+    `DateRange` is half-open and `contains` normalizes to UTC, so a row stamped
+    at midnight UTC on the window's end date belongs to the NEXT window. That
+    is the same boundary `robustness.StoreRunner` clips its clock on
+    (`start <= ts < end`), by construction rather than by coincidence.
+    """
+    window = split.range
+    for trade in result.trades:
+        for field in ("signal_ts", "entry_ts", "exit_ts"):
+            stamp = getattr(trade, field)
+            if not window.contains(stamp):
+                raise WalkForwardError(
+                    f"{split.name}: trade {trade.trade_id} has {field}={stamp}, "
+                    f"outside the window {window}. The runner's clock was not clipped "
+                    f"to this fold, so this window's numbers are measured over days "
+                    f"that belong to another window -- or to the holdout"
+                )
+    for point in result.equity:
+        if not window.contains(point.ts):
+            raise WalkForwardError(
+                f"{split.name}: an equity point is stamped {point.ts}, outside the "
+                f"window {window}. Total return, CAGR, Sharpe and the drawdown "
+                f"profile are all taken from this series, so a series wider than the "
+                f"fold reports another period's path under this fold's label"
+            )
+
+
 def evaluate_folds(
     fold_set: FoldSet,
     config: Any,
@@ -1029,8 +1186,13 @@ def evaluate_folds(
     `RiskLimitManager` accumulates, and reusing a loop across folds would carry
     one fold's daily-loss and consecutive-loss state into the next. This
     function calls `runner` exactly once per (fold, phase) and refuses
-    duplicate `run_id`s, which is the symptom a reused loop or a mis-clipped
-    clock would produce.
+    duplicate `run_id`s, which is the symptom a reused loop would produce.
+
+    A mis-clipped clock is a SEPARATE failure and `run_id` does not catch it:
+    `BacktestLoop.run_id_for` hashes the split name among its inputs, so a
+    runner that walks the whole dataset under each fold's name still hands back
+    distinct ids. `_assert_rows_inside` checks every trade and equity row
+    against the window's own dates instead.
 
     Every window is written to the experiment log when one is supplied, with
     its own `split_id` and phase, so section 10's overfitting report is
@@ -1061,6 +1223,7 @@ def evaluate_folds(
         for phase in ordered:
             split = fold.split(phase)
             result = runner(config, split)
+            _assert_rows_inside(split, result)
             run_id = str(result.provenance.run_id)
             if run_id in seen_run_ids:
                 raise WalkForwardError(

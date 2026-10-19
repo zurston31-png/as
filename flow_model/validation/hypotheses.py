@@ -39,7 +39,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 
 from flow_model.core.model import FrozenModel
 

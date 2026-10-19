@@ -85,9 +85,19 @@ runs or hide them.
 The delayed-entry runs push `max_entry_wait_bars` past 1, the path where bars
 between an early fill and the end of the wait horizon were once uninspected
 -- worth 2.06R of fabricated performance on one trade (fixed in
-`BacktestLoop._process_pending`, f44ddb9). These runs are that path's first
-consumer, so `wait_horizon_violations` re-checks the invariant on every trade
-they produce rather than assuming the fix holds.
+`BacktestLoop._process_pending`, f44ddb9). `wait_horizon_violations` re-checks
+that invariant on every trade they produce rather than assuming the fix holds.
+
+WHICH IS NOT THE SAME AS REACHING THAT PATH, and the difference is on the
+result rather than only here. `PendingOrder.wait_bars` is 1 for a MARKET
+order whatever `max_entry_wait_bars` says, because section 9 scopes the wait
+horizon to resting entries -- re-offering a market order on later bars would
+let a backtest chase an entry it missed. The committed
+`execution.entry_order_type` is `market`, so at the committed configuration a
+delayed-entry run shifts the fill bar and still builds a SINGLE-bar window:
+the multi-bar horizon is not exercised and an empty `wait_horizon_findings`
+says nothing about the fix. `_degradation_notes` states that on every such
+run, and the path is reached only with a resting `entry_order_type`.
 
 Randomness: `random_latency_ms` and `random_miss_probability` are drawn inside
 `ExecutionModel` from named streams seeded by `config.backtest.seed`, so a
@@ -617,9 +627,12 @@ class DirectionCheck(FrozenModel):
             note = (
                 ""
                 if verdict
-                else "the degraded run came out AHEAD of the baseline. Not an edge: the "
-                "degradation changed which trades exist, so a skipped trade may have "
-                "been a skipped loser"
+                else "the degraded run came out AHEAD of the baseline. Not an edge, and "
+                "this check cannot say WHICH mechanism did it -- read the run's own "
+                "notes. A RERUN degradation can change which trades exist (a skipped "
+                "trade may have been a skipped loser) or what they cost (a pinned "
+                "spread can be tighter than the quote it replaced). Compare the "
+                "trade_count check before assuming the trade set moved"
             )
         return cls(
             metric=metric, baseline=base, degraded=degraded,
@@ -1008,7 +1021,12 @@ def _post_hoc_degradation(
     )
 
 
-def _degradation_notes(spec: DegradationSpec) -> tuple[str, ...]:
+def _degradation_notes(spec: DegradationSpec, config: Any) -> tuple[str, ...]:
+    """What this run cannot say, stated on the run rather than in a docstring.
+
+    Two of the six are capable of being VACUOUS at a given configuration, and
+    a stress test that cannot stress reads as a pass unless it says so.
+    """
     if spec.is_neutral:
         return ()
     if spec.kind is DegradationKind.WIDER_SPREAD:
@@ -1018,11 +1036,37 @@ def _degradation_notes(spec: DegradationSpec) -> tuple[str, ...]:
             "value the run can be cheaper than the baseline",
         )
     if spec.kind is DegradationKind.DELAYED_ENTRY:
-        return (
-            "max_entry_wait_bars is widened past 1, the multi-bar wait horizon whose "
-            "uninspected bars once fabricated 2.06R; the invariant is re-checked per "
+        notes = (
+            "max_entry_wait_bars is widened, and the invariant of the multi-bar wait "
+            "horizon whose uninspected bars once fabricated 2.06R is re-checked per "
             "trade in wait_horizon_findings",
         )
+        if str(config.execution.entry_order_type) == "market":
+            notes += (
+                "entry_order_type is 'market', and PendingOrder.wait_bars is 1 for a "
+                "market order whatever max_entry_wait_bars says -- a market order may "
+                "not be re-offered on later bars. So this run shifts the fill bar by "
+                "entry_delay_bars but builds a SINGLE-bar fill window: it does not "
+                "exercise the multi-bar horizon, and its empty wait_horizon_findings "
+                "is a statement about this order type, not about the fix. A resting "
+                "entry_order_type is what reaches that path",
+            )
+        return notes
+    if spec.kind is DegradationKind.RANDOM_EXECUTION_DELAY:
+        interval = int(config.data.primary_interval_seconds)
+        base_ms = float(config.execution.latency_ms)
+        floor_low = math.floor(base_ms / 1000.0 / interval)
+        floor_high = math.floor((base_ms + spec.severity) / 1000.0 / interval)
+        if floor_low == floor_high:
+            return (
+                f"this jitter is sub-bar: min_fill_offset floors "
+                f"(latency_ms + jitter) / 1000 against a {interval}s bar, and every "
+                f"draw in [0, {spec.severity:g}] ms on top of latency_ms="
+                f"{base_ms:g} floors to the same {floor_low} bar(s). The fill bar "
+                "therefore cannot move, so an unchanged metric here is arithmetic, "
+                "not evidence that the strategy tolerates execution delay",
+            )
+        return ()
     return ()
 
 
@@ -1104,7 +1148,7 @@ def run_degradations(
                     for name in DEGRADATION_METRICS
                 ),
                 wait_horizon_findings=wait_horizon_violations(result),
-                notes=_degradation_notes(spec) + result.notes,
+                notes=_degradation_notes(spec, config) + result.notes,
             )
         )
         logger.info("degradation %s on %s: n=%d", spec.label(), split.name, result.trade_count)
@@ -1143,6 +1187,11 @@ class FragilityReport(FrozenModel):
     metric: str
     verdict: FragilityVerdict
     baseline_point: GridPoint | None
+    baseline_split: str = ""
+    """Which fold the verdict is about. A grid run over several folds holds a
+    cell at the committed coordinate in each, and one verdict can only be
+    about one of them; `reasons` names the folds this verdict excludes."""
+
     baseline: MetricValue
     worst_relative_drop: MetricValue
     max_abs_elasticity: MetricValue
@@ -1156,7 +1205,8 @@ class FragilityReport(FrozenModel):
             f"fragility[{self.metric}]={self.verdict} (cutoffs: relative_drop>"
             f"{self.max_relative_drop_allowed:g}, profit_factor<"
             f"{self.profit_factor_floor:g})",
-            f"baseline {self.baseline}",
+            f"baseline {self.baseline}"
+            + (f" on {self.baseline_split}" if self.baseline_split else ""),
             f"worst {self.worst_relative_drop}",
             f"elasticity {self.max_abs_elasticity}",
             *self.reasons,
@@ -1209,10 +1259,18 @@ def _relative_drop(metric: str, base: MetricValue, other: MetricValue) -> Metric
 def _decay_profile(
     cells: Sequence[CellResult],
     axes: Sequence[ParameterAxis],
-    baseline_point: GridPoint | None,
+    baseline_key: tuple[str, GridPoint] | None,
     metric: str,
 ) -> tuple[list[DecayStep], list[tuple[str, CellResult]]]:
-    """Every adjacent pair on every axis, plus the baseline's neighbours."""
+    """Every adjacent pair on every axis, plus the baseline's neighbours.
+
+    `baseline_key` is (split_name, point), not a point alone. A grid run over
+    several folds holds a cell at the committed coordinate in EVERY fold, so
+    matching on the point alone made every fold's cells neighbours of one
+    fold's baseline: a drop measured from fold A's expectancy to fold B's is
+    not a one-step parameter change, and a defined cell in another fold could
+    supply a ROBUST verdict for a fold whose own neighbours were all n=0.
+    """
     steps: list[DecayStep] = []
     neighbours: list[tuple[str, CellResult]] = []
     for axis in axes:
@@ -1236,10 +1294,10 @@ def _decay_profile(
                         else "the parameter step is zero relative to its own value",
                     )
                 neighbour = False
-                if baseline_point is not None and left.point == baseline_point:
+                if baseline_key is not None and (left.split_name, left.point) == baseline_key:
                     neighbour = True
                     neighbours.append((axis.name, right))
-                elif baseline_point is not None and right.point == baseline_point:
+                elif baseline_key is not None and (right.split_name, right.point) == baseline_key:
                     neighbour = True
                     neighbours.append((axis.name, left))
                 steps.append(
@@ -1272,29 +1330,48 @@ def fragility_report(
             for name, value in cell.point.coordinates
         )
     ]
-    baseline_point = at_baseline[0].point if at_baseline else None
+    baseline_cell = at_baseline[0] if at_baseline else None
+    baseline_point = baseline_cell.point if baseline_cell is not None else None
+    baseline_split = baseline_cell.split_name if baseline_cell is not None else ""
+    baseline_key = (
+        (baseline_cell.split_name, baseline_cell.point)
+        if baseline_cell is not None
+        else None
+    )
     baseline = (
-        at_baseline[0].metric(metric)
-        if at_baseline
+        baseline_cell.metric(metric)
+        if baseline_cell is not None
         else _undefined(
             metric, Undefined.INSUFFICIENT_OBSERVATIONS,
             note=f"the grid holds no cell at the committed coordinate {committed}, so "
             "there is nothing for a one-step change to be a change FROM",
         )
     )
-    steps, neighbours = _decay_profile(cells, axes, baseline_point, metric)
+    steps, neighbours = _decay_profile(cells, axes, baseline_key, metric)
 
     # Always measured FROM the baseline: reusing a step's own drop would divide
     # by the neighbour's value on steps running INTO the baseline, which is a
     # different quantity wearing the same name.
-    drops: list[tuple[str, CellResult, float]] = []
+    drops: list[tuple[str, CellResult, MetricValue]] = []
     for axis_name, cell in neighbours:
         drop = _relative_drop(metric, baseline, cell.metric(metric))
         if drop.is_defined:
-            drops.append((axis_name, cell, drop.require()))
+            drops.append((axis_name, cell, drop))
 
     reasons: list[str] = []
     worst_name = f"{metric}_worst_relative_drop"
+    other_splits = sorted(
+        {cell.split_name for cell in at_baseline[1:]}
+        if len(at_baseline) > 1
+        else set()
+    )
+    if other_splits:
+        reasons.append(
+            f"this verdict covers {baseline_split} only: the grid also holds a cell at "
+            f"the committed coordinate in {other_splits}, and a step from one fold's "
+            "baseline to another fold's cell is not a one-step parameter change. Call "
+            "fragility_report once per fold to read the others"
+        )
     if not baseline.is_defined:
         verdict = FragilityVerdict.UNDEFINED
         worst = _undefined(
@@ -1315,16 +1392,27 @@ def fragility_report(
         )
         reasons.append("undefined: no neighbouring cell of the baseline is defined")
     else:
-        worst_value = max(value for _, _, value in drops)
+        worst_axis, worst_cell, worst_drop = max(
+            drops, key=lambda item: item[2].require()
+        )
+        worst_value = worst_drop.require()
+        # n is the drop's own n (min of the two cells), NOT the baseline's.
+        # A 3-trade neighbour against a 400-trade baseline is a 3-trade
+        # measurement, and labelling it n=400 is exactly how a three-trade
+        # cell reads as a result.
         worst = MetricValue.measured(
-            worst_name, worst_value, n=baseline.n, unit="fraction"
+            worst_name, worst_value, n=worst_drop.n, unit="fraction",
+            note=f"worst over the baseline's neighbours: one step along {worst_axis} "
+            f"to [{worst_cell.point.label()}] on {worst_cell.split_name}, whose own "
+            f"trade count is n={worst_cell.n_trades} (baseline n={baseline.n})",
         )
         verdict = FragilityVerdict.ROBUST
         if worst_value > max_drop:
             verdict = FragilityVerdict.FRAGILE
             reasons.append(
-                f"fragile: a one-step parameter change drops {metric} by "
-                f"{worst_value:.4f} relative, above the committed "
+                f"fragile: a one-step parameter change along {worst_axis} to "
+                f"[{worst_cell.point.label()}] (n={worst_cell.n_trades}) drops {metric} "
+                f"by {worst_value:.4f} relative, above the committed "
                 f"fragility_max_relative_drop={max_drop:g}"
             )
         base_pf = at_baseline[0].metric("profit_factor")
@@ -1342,8 +1430,10 @@ def fragility_report(
         if verdict is FragilityVerdict.ROBUST:
             reasons.append(
                 f"robust at these cutoffs: worst one-step relative drop "
-                f"{worst_value:.4f} <= {max_drop:g}. A verdict over n={baseline.n} "
-                "trades is not evidence of an edge"
+                f"{worst_value:.4f} <= {max_drop:g}, measured from a baseline of "
+                f"n={baseline.n} trades against a neighbour of n="
+                f"{worst_cell.n_trades}. A verdict over these sample sizes is not "
+                "evidence of an edge"
             )
 
     elasticities = [abs(s.elasticity.require()) for s in steps if s.elasticity.is_defined]
@@ -1351,6 +1441,7 @@ def fragility_report(
         metric=metric,
         verdict=verdict,
         baseline_point=baseline_point,
+        baseline_split=baseline_split,
         baseline=baseline,
         worst_relative_drop=worst,
         max_abs_elasticity=(
@@ -1409,8 +1500,21 @@ def fold_profit_concentration(
             note="gross profit across folds is zero, so there is no profit for a single "
             "fold to hold a share of",
         )
+    # One fold holds 1.0 of its own profit by arithmetic. The number is still
+    # reported -- removing it would hide a measurement -- but it carries the
+    # reason it is not a finding, because `H-CONSISTENCY-OVER-PEAK` is refuted
+    # above 0.50 and a one-fold sweep would otherwise refute it every time
+    # without having compared anything.
+    note = (
+        ""
+        if len(folds) > 1
+        else f"only {len(folds)} fold was supplied, so this share is 1.0 by arithmetic "
+        "rather than by concentration: there is no second fold for profit to have been "
+        "spread across. Read it as not-yet-measured, not as a refutation"
+    )
     return MetricValue.measured(
-        "fold_profit_concentration", max(shares) / total, n=n_total, unit="fraction"
+        "fold_profit_concentration", max(shares) / total, n=n_total, unit="fraction",
+        note=note,
     )
 
 
@@ -1589,8 +1693,10 @@ def robustness_report(
         extra.append(
             "degradation runs that came out ahead of the baseline on at least one "
             "metric: " + ", ".join(row.spec.label() for row in improved)
-            + ". A degradation changes which trades exist, so a skipped trade can be a "
-            "skipped loser; this is a path effect and not a result"
+            + ". Not a result. A RERUN degradation can change which trades exist (a "
+            "skipped trade can be a skipped loser) or what they cost (a pinned spread "
+            "can be tighter than the quote it replaced, which leaves the trade set "
+            "untouched and the run cheaper). Each row's own notes say which applies"
         )
     findings = tuple(f for row in degradations for f in row.wait_horizon_findings)
     delayed = [
