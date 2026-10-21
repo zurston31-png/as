@@ -23,7 +23,12 @@ both callable, both expected to return an empty tuple:
   (e) any `async def` or `await`, so there is no event loop to drive a
   socket. Matched on the AST, so the prose above cannot trip it and a string
   cannot hide from it, and on identifier SEGMENTS rather than substrings, so
-  `is_tradable` is not mistaken for `trade`.
+  `is_tradable` is not mistaken for `trade`. One identifier is exempt, by
+  name, in `GUARD_IDENTIFIER_EXEMPTIONS`: this audit's own public name, which
+  cannot say what it checks without containing `place` and `orders`. Without
+  that exemption the audit flagged itself and returned six offences on a
+  clean file, which is the state this module shipped in -- a guard that
+  cannot clear the module it guards clears nothing.
 
   Two consequences worth naming. The word list forbids `position` and
   `trade`, so this module physically cannot call
@@ -117,6 +122,7 @@ from flow_model.signals.engine import EngineDecision, SignalEngine
 __all__ = [
     "FORBIDDEN_CALL_NAMES",
     "FORBIDDEN_IDENTIFIER_WORDS",
+    "GUARD_IDENTIFIER_EXEMPTIONS",
     "NETWORK_ROOTS",
     "PERMITTED_IMPORT_ROOTS",
     "PaperError",
@@ -193,7 +199,20 @@ NETWORK_ROOTS: frozenset[str] = frozenset(
 
 #: Package prefix holding the order-submission machinery. Reaching it from
 #: here would mean the paper path could construct a fill.
-EXECUTION_PACKAGE: str = "flow_model.backtest"
+BACKTEST_PACKAGE: str = "flow_model.backtest"
+
+#: The one identifier the segment scan may not flag. A guard that forbids the
+#: word `place` cannot state its own name without containing it, so the public
+#: entry point is exempted BY NAME, as data, and pinned by a test -- rather
+#: than by weakening the word list, which is what the word list is for.
+#: Deliberately one member: every entry is a word the scan can no longer see on
+#: that spelling. The residual is narrow and bounded -- a module could name an
+#: order-placing function `audit_cannot_place_orders` -- and it is closed in
+#: practice because such a module is still caught by the import allowlist and
+#: by every other identifier in its body; a test asserts exactly that.
+GUARD_IDENTIFIER_EXEMPTIONS: frozenset[str] = frozenset(
+    {"audit_cannot_place_orders"}
+)
 
 
 def _identifier_names(tree: ast.AST) -> Iterator[tuple[int, str]]:
@@ -270,6 +289,8 @@ def audit_cannot_place_orders(source: str | None = None) -> tuple[str, ...]:
                 offences.append(f"line {node.lineno}: call to {name}()")
 
     for lineno, name in _identifier_names(tree):
+        if name in GUARD_IDENTIFIER_EXEMPTIONS:
+            continue
         for segment in name.lower().split("_"):
             if segment in FORBIDDEN_IDENTIFIER_WORDS:
                 offences.append(
@@ -317,7 +338,7 @@ def audit_import_closure(root: Path | None = None) -> tuple[str, ...]:
 
     Walks the transitive closure of this module's `flow_model` imports over
     this repository's own source files and reports any module in it that
-    imports a `NETWORK_ROOTS` member or lives under `EXECUTION_PACKAGE`.
+    imports a `NETWORK_ROOTS` member or lives under `BACKTEST_PACKAGE`.
     Third-party packages are out of scope and are bounded instead by
     `PERMITTED_IMPORT_ROOTS`; the scope is stated rather than implied.
     """
@@ -337,9 +358,9 @@ def audit_import_closure(root: Path | None = None) -> tuple[str, ...]:
         seen.add(module)
         if _repository_source(module, base) is None:
             continue
-        if module == EXECUTION_PACKAGE or module.startswith(f"{EXECUTION_PACKAGE}."):
+        if module == BACKTEST_PACKAGE or module.startswith(f"{BACKTEST_PACKAGE}."):
             offences.append(
-                f"{module} is reachable from {__name__}; {EXECUTION_PACKAGE} holds "
+                f"{module} is reachable from {__name__}; {BACKTEST_PACKAGE} holds "
                 "the machinery that turns an intent into a fill"
             )
         internal, outside = _repository_imports(module, base)
@@ -756,10 +777,18 @@ class PaperSession:
                 f"{type(engine).__name__}. A second implementation of the "
                 "pipeline would drift from the backtest silently"
             )
-        for name in ("decide", "decide_from", "evaluate"):
-            if getattr(type(engine), name) is not getattr(SignalEngine, name):
+        # Plain attribute access, not `getattr`: it resolves through the MRO
+        # identically, and `getattr` is on FORBIDDEN_CALL_NAMES because a
+        # dynamic lookup is how a reader loses track of what this file touches.
+        actual = type(engine)
+        for name, theirs, ours in (
+            ("decide", actual.decide, SignalEngine.decide),
+            ("decide_from", actual.decide_from, SignalEngine.decide_from),
+            ("evaluate", actual.evaluate, SignalEngine.evaluate),
+        ):
+            if theirs is not ours:
                 raise PaperError(
-                    f"{type(engine).__name__} overrides SignalEngine.{name}, so "
+                    f"{actual.__name__} overrides SignalEngine.{name}, so "
                     "the paper path would not run the pipeline the backtest runs"
                 )
         if calendar is not None and engine.calendar is not calendar:
@@ -869,11 +898,7 @@ class PaperSession:
             return (
                 outcome.available_points,
                 outcome.max_points,
-                tuple(
-                    component
-                    for component, score in outcome.components.items()
-                    if not score.available
-                ),
+                tuple(outcome.unavailable_components),
                 "from this bar's Flow Score stage",
             )
         report = self.availability
