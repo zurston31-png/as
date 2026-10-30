@@ -207,11 +207,17 @@ def main() -> int:
             guard=guard, sealed=sealed,
         )
         print(f"evaluated. folds in report: {len(report.folds)}")
+        print(f"  {'fold':9} {'phase':12} {'range':26} {'n_trades':>8} "
+              f"{'sample':14} reportable")
         for fr in report.folds:
             for w in fr.windows:
-                print(f"  {fr.fold.fold_id} {w.phase.value:12} "
-                      f"trades={w.summary.trade_count.value if w.summary.trade_count.value is not None else 'undef'} "
-                      f"sample={w.sample.value}")
+                print(f"  {fr.fold.fold_id:9} {w.phase.value:12} {str(w.range):26} "
+                      f"{w.n_trades:>8} {w.sample.value:14} {w.is_reportable}")
+        # The cross-fold statement is a computed projection of the folds: it
+        # CANNOT be obtained without them, which is section 10's no-aggregate-
+        # only rule made structural.
+        cf = report.cross_fold
+        print(f"\n  cross-fold statement: {cf.describe() if hasattr(cf, 'describe') else cf}")
         return report
     results["walk_forward"] = stage("5. WALK-FORWARD")(_wf)
 
