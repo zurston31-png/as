@@ -1,12 +1,17 @@
-# SignalIQ - Milestone 1: validated historical market data
+# SignalIQ: validated historical market data and strategy research
 
-SignalIQ is a validation-first stock market data platform. This first milestone is the
+SignalIQ is a validation-first stock market data platform. Milestone 1 is the
 foundation: it downloads real historical daily bars for ten US symbols from Alpaca's
 official Market Data API, checks every bar, stores the good ones in a local SQLite
 database and serves them through a small read-only web API.
 
-**What it is not.** There are no trading strategies, predictions, buy/sell
-recommendations, backtests or automated trading here. The ten symbols
+Milestone 2, in progress, adds rule-based strategy research on top of that data: one
+strategy is implemented so far (momentum breakout), together with a simulator that
+records every signal and trade. See [Strategy research](#strategy-research-milestone-2).
+
+**What it is not.** There are no predictions or AI models, no buy/sell recommendations,
+no broker connection and no automated or real-money trading. Strategy runs are
+simulations over stored historical bars with a virtual account. The ten symbols
 (AAPL, MSFT, NVDA, AMD, AMZN, META, TSLA, GOOGL, SPY, QQQ) are a starter list and do
 not represent the whole US stock market.
 
@@ -18,6 +23,7 @@ not represent the whole US stock market.
 - [Data coverage](#data-coverage)
 - [How the data is handled](#how-the-data-is-handled)
 - [Real data and test fixtures](#real-data-and-test-fixtures)
+- [Strategy research (Milestone 2)](#strategy-research-milestone-2)
 - [Database](#database)
 - [Configuration](#configuration)
 - [Tests](#tests)
@@ -100,7 +106,9 @@ to be on the network allowlist.
 python -m app.database
 ```
 
-This creates `data/signaliq.db` with three empty tables. It is safe to run again.
+This creates `data/signaliq.db` with empty tables and prints the schema revision. It is
+safe to run again: an up-to-date database is left alone, and a database created by an
+earlier version is upgraded without touching its data.
 
 ### 4. Download historical bars
 
@@ -169,6 +177,7 @@ pytest
 | Download all ten tickers | `python scripts/ingest.py --all` |
 | Choose the date range | add `--start 2020-01-01 --end 2020-12-31` |
 | Validate stored bars | `python scripts/validate.py` (add `--symbol AAPL` for one symbol) |
+| Simulate a strategy | `python scripts/run_strategy.py momentum_breakout --period in_sample` (see [Strategy research](#strategy-research-milestone-2)) |
 | Inspect the database | `python scripts/inspect_db.py` (add `--json` for JSON output). Shows row counts, the date range and gap-free start of every symbol, the ingestion history and the check outcomes |
 | Start the API | `uvicorn app.main:app --reload` |
 | Run the tests | `pytest` |
@@ -392,6 +401,129 @@ tests (`pytest -m integration`) do fetch real bars, but store them only in a tem
 database. They check structure and behaviour and assert nothing about price levels.
 Nothing in this repository is a statement about market performance.
 
+## Strategy research (Milestone 2)
+
+**Status: Strategy A is implemented and tested on synthetic fixtures only. No backtest
+has been run on real market data, and there are no results yet.** Strategies B (VWAP
+reclaim) and C (mean reversion) are not implemented.
+
+Everything here is a simulation. It reads stored bars, keeps a virtual account and
+writes its records to the `strategy_*` tables. It cannot place orders and has no broker
+connection. Each strategy is simulated alone: there is no function, command or table
+that combines two strategies, so their results can be measured separately.
+
+### Agreed research conditions
+
+| Condition | Value | Where |
+| --- | --- | --- |
+| Starting equity | 100,000 USD of virtual money, per strategy and per run | `app/strategies/assumptions.py` |
+| Slippage, daily fills | 5 bp per side (`base`); `worse` = 10 bp and `severe` = 20 bp are run as separate scenarios | same |
+| Slippage, intraday fills | 3 bp per side (for Strategy B, later) | same |
+| Commission | 0 | same |
+| In-sample period (tuning allowed) | 2021-06-01 to 2024-12-31 | same |
+| Out-of-sample period (reserved) | 2025-01-01 onwards | same |
+| Data | `1Day` bars, feed `iex`, adjustment `split`, source `alpaca` | `app/strategies/data.py` |
+
+Slippage is an assumption. There is no bid/ask data behind it: buys are filled that many
+basis points above the reference price and sells that many below it.
+
+**The out-of-sample period is protected in code.** A run that touches any date from
+2025-01-01 on is refused until the strategy's parameters have been frozen with
+`--freeze-parameters`, and it is then allowed only with exactly those parameters and the
+same version of the rules. Frozen parameters cannot be replaced. An in-sample run reads
+no bar after 2024-12-31, so its result cannot depend on the reserved period; a test
+changes every reserved bar and confirms that the in-sample result stays identical.
+
+**The SPY 2018-11-01 bar is excluded, not deleted.** A simulation reads each symbol only
+from its gap-free start (see [Data coverage](#data-coverage)), so the isolated SPY bar
+never reaches an indicator. It stays in `bars`, still fails validation as before, and
+every run lists it under "Excluded". The same rule applies automatically to any symbol
+that ever has an isolated early bar.
+
+### Strategy A: momentum breakout (implemented)
+
+Long only, daily bars, rules version `1.0` (`app/strategies/momentum_breakout.py`).
+
+| Rule | Exactly |
+| --- | --- |
+| Entry signal | At the close of session t: close > highest high of the 55 sessions **before** t, and close > 200-session average close (including t). Both strict |
+| Entry | Buy at the open of session t+1. Not filled if that open is more than 1 ATR above close[t] |
+| Stop loss | Entry fill - 2 x ATR(20) as it stood at the close of t. Fixed for the life of the trade |
+| Target | None. Positions run until the exit rule or the stop |
+| Exit signal | Close < lowest low of the 20 sessions before the current one. Sell at the next open |
+| Position size | floor(0.5 % of equity / (2 x ATR)) shares, at most floor(20 % of equity / close[t]); decided at the signal close |
+| Positions | At most 5 open. More signals than free slots: the largest 55-session price change goes first, then alphabetical |
+| Trading hours | Decisions after the daily candle is final (from 20:15 New York time); fills at the 09:30 open |
+| Required data | Daily open, high, low, close. 201 sessions of history before the first signal is possible |
+
+ATR here is the plain average of the last 20 true ranges, not Wilder's smoothing.
+
+### How the simulator fills orders
+
+- A signal at the close is acted on at the **next** session's open, never on the bar
+  that produced it.
+- A stop inside a bar's range is assumed hit and filled at the stop price. If the open
+  is already at or below the stop, the fill is the open (a gap), which can lose more
+  than planned and is recorded as such.
+- A daily bar does not show whether its low or high came first; the stop is assumed to
+  come first. A position can be stopped out on its entry day.
+- Sizes are fixed at the signal close. If the cash at the next open does not cover them,
+  fewer shares are bought; the account never borrows.
+- On the last session of a period every open position is closed at the close and marked
+  `period_end`. These exits come from the test design, not from the rules.
+
+### What is recorded
+
+| Table | One row per |
+| --- | --- |
+| `strategy_runs` | Run: strategy, rules version, period, parameters and their hash, cost scenario, starting and ending equity, the bars read with a SHA-256 fingerprint, and a SHA-256 fingerprint of the result |
+| `strategy_signals` | Signal, **including those not traded**, with the indicator values the rule compared, the rank, the planned shares and the reason it was skipped (`no_free_slot`, `already_in_position`, `open_above_entry_limit`, `position_too_small`, `insufficient_cash`, `no_bar_on_entry_session`, `period_ends`) |
+| `strategy_trades` | Round trip, **winning or losing**: entry and exit with reference and filled prices, the stop, the planned risk, gross and net result, the slippage cost, the result in R and the exit reason |
+| `strategy_equity` | Session of a run: cash, value of the positions, equity, open positions |
+| `strategy_parameter_freezes` | Strategy whose parameters were frozen ahead of the out-of-sample run |
+
+**Reproducibility.** The same bars, parameters, rules version and cost scenario always
+give the same result fingerprint, and the stored rows are identical; this is tested.
+The data fingerprint ties every run to the exact bars it read.
+
+### Commands
+
+```bash
+# In-sample, base costs (5 bp), then the worse cost scenarios
+python scripts/run_strategy.py momentum_breakout --period in_sample
+python scripts/run_strategy.py momentum_breakout --period in_sample --cost-scenario worse
+python scripts/run_strategy.py momentum_breakout --period in_sample --cost-scenario severe
+
+# Try a different parameter (in-sample only)
+python scripts/run_strategy.py momentum_breakout --period in_sample --param breakout_window=40
+
+# Once, when the parameters are final: freeze them, then run the reserved period
+python scripts/run_strategy.py momentum_breakout --freeze-parameters
+python scripts/run_strategy.py momentum_breakout --period out_of_sample
+```
+
+None of these commands has been run on the real database yet.
+
+### Limitations that apply to every strategy result
+
+- **IEX is one exchange.** Prices are IEX prices, not the consolidated tape. Breakout
+  levels, stops and "fills at the open" are approximations of what a real order would
+  get. IEX volume is a small fraction of market volume and is not used by Strategy A.
+- **Ten hand-picked symbols.** Large, liquid, mostly technology names that were chosen
+  with hindsight. A strategy that works on them may not work on any other stock, and
+  results are not evidence about the market as a whole.
+- **Short history and few trades.** Daily data starts 2020-07-27. The 200-session
+  average uses up the first 200 sessions, so the in-sample period has about three and a
+  half years of tradeable days and the out-of-sample period less than two. Expect few
+  trades; the statistics will be uncertain.
+- **A mostly rising market.** 2021-2026 contains one major decline (2022). Long-only
+  results depend heavily on that backdrop.
+- **Costs are assumed, not measured.** No bid/ask data exists. The `worse` and `severe`
+  scenarios exist to show how much a result depends on this.
+- **Split-adjusted, not dividend-adjusted.** Ex-dividend days show small price drops
+  that did not cost a holder anything.
+- **No taxes, borrowing, margin interest or market impact** are modelled.
+
 ## Database
 
 SQLite file: `data/signaliq.db`. It is an ordinary file, so the data survives restarts of
@@ -404,6 +536,16 @@ repository: on a new machine, or in a new cloud session, recreate it with
 | `bars` | One row per bar: symbol, timeframe, timestamp, open, high, low, close, volume, vwap, trade_count, source, feed, adjustment. Primary key: symbol, timeframe, timestamp. Each row also records the ingestion run that stored it and when. |
 | `ingestion_runs` | One row per symbol and download attempt: requested window, feed, status, counters for fetched, inserted, unchanged, conflicting, rejected and duplicate bars, missing sessions, and any error message. |
 | `data_quality_checks` | Check outcomes from ingestion and from `validate.py`. A `passed` row summarises one check; a `failed` or `warning` row describes one finding with the offending values. |
+| `strategy_*` | Simulated strategy runs; see [What is recorded](#what-is-recorded) |
+
+**Schema migrations.** The schema is defined by Alembic migrations in
+`app/migrations/versions`: `0001` is the market data schema exactly as Milestone 1
+created it, `0002` adds the strategy tables. `python -m app.database`, the scripts and
+the API all bring the database up to date on start. A database from before migrations
+existed is recognised, marked as `0001` and upgraded; tests check that its rows stay
+byte-identical, and that the migrated schema matches the models exactly. A database
+that has tables but is not a SignalIQ database is refused and left alone. No migration
+can drop the market data tables.
 
 Uniqueness and indexes: the primary key of `bars` (symbol, timeframe, timestamp) is a
 unique index, so the database itself refuses a second bar for the same key. Further
@@ -442,7 +584,11 @@ pytest -m integration -v        # live Alpaca tests only
 ```
 
 The offline tests replace Alpaca with a mocked transport and need no network or
-credentials. Their bars are synthetic fixtures with invented values under fake tickers
+credentials. The strategy tests (`test_indicators.py`, `test_simulator.py`,
+`test_momentum_breakout.py`, `test_strategy_runner.py`) and `test_migrations.py` are
+offline too. The indicator and strategy tests check for look-ahead three ways: every
+value is recomputed with all later bars removed, later bars are replaced with absurd
+values, and one bar is appended; no earlier value may change. Their bars are synthetic fixtures with invented values under fake tickers
 (`TESTA`, `TESTB`). They are test data only and say nothing about real markets.
 
 The live tests in `tests/test_integration_alpaca.py` run only when credentials are
@@ -468,7 +614,7 @@ runtime where the proxy supplies the secret key.
 | 6 | Repeated imports do not create duplicates | Executed: a second `ingest.py --all` inserted 0 bars and found all 15,861 unchanged, with 0 conflicts |
 | 7 | Validation catches errors and never overwrites | Executed in tests, and on a copy of the real database: a changed close was reported as a `conflicting_record` with both values and the stored value was kept; a deleted bar was downloaded again |
 | 8 | API endpoints return stored records | Executed: 52 requests against the running server covering every endpoint, the symbol, timeframe and date filters, paging and invalid input; identical results after a restart |
-| 9 | All automated tests pass | 491 passed, including the 6 live tests. With no credentials configured: 485 passed, 6 skipped |
+| 9 | All automated tests pass | At the end of Milestone 1: 491 passed, including the 6 live tests. With the Milestone 2 work: 670 passed, including the 6 live tests; with no credentials configured, 664 passed and 6 skipped |
 | 10 | Credentials are not exposed | Executed: the key ID does not occur in any API response, in the server log, or in the ingestion output at `DEBUG` level; in this runtime the application never holds the secret key |
 | 11 | README instructions reproduce the setup | Executed on Linux: install, database, ingest, validate, inspect, API and tests. The Windows commands were not executed |
 
@@ -549,21 +695,31 @@ a row-level check.
 signaliq/
 ├── app/
 │   ├── config.py            settings from .env, logging
-│   ├── database.py          engine, sessions, initialisation command
-│   ├── models.py            the three tables and the UTC timestamp type
+│   ├── database.py          engine, sessions, migrations, initialisation command
+│   ├── models.py            the tables and the UTC timestamp type
+│   ├── migrations/          Alembic schema migrations
 │   ├── data/
 │   │   ├── alpaca_client.py  HTTP client: pagination, retries, rate limits, errors
 │   │   ├── ingestion.py      download, validate, store, record history
 │   │   └── validation.py     checks, trading calendar, session coverage, stored-bar validation
+│   ├── strategies/
+│   │   ├── assumptions.py    starting equity, cost scenarios, in/out-of-sample periods
+│   │   ├── indicators.py     SMA, prior high/low, rate of change, true range, ATR, RSI
+│   │   ├── data.py           read usable daily bars for a simulation (read-only)
+│   │   ├── simulator.py      one strategy, one virtual account, fills and bookkeeping
+│   │   ├── momentum_breakout.py  Strategy A rules
+│   │   └── runner.py         run, record, out-of-sample protection
 │   ├── api/
 │   │   └── routes.py         the five endpoints
 │   └── main.py              FastAPI application
 ├── scripts/
 │   ├── ingest.py            download bars
 │   ├── validate.py          validate stored bars
-│   └── inspect_db.py        database statistics
+│   ├── inspect_db.py        database statistics
+│   └── run_strategy.py      simulate one strategy and record the run
 ├── tests/                   offline tests plus one optional live test file
 ├── data/                    the SQLite database is created here
+├── alembic.ini              for the alembic command line (optional)
 ├── .env.example
 ├── requirements.txt
 └── pyproject.toml
@@ -573,26 +729,16 @@ Optional code style check: `pip install ruff`, then `ruff check .` and `ruff for
 
 ## Next steps: Milestone 2
 
-Proposed scope: intraday data, automatic updates and operating the data quality process.
-Still no strategies or signals.
+Agreed order. Steps 1 to 3 are done; nothing below them has started.
 
-1. **Decide how to treat the SPY stray bar** (keep it flagged, move the history start to
-   2020-07-27, or add a reviewed way to acknowledge a finding), and whether six years of
-   IEX history are enough or the consolidated SIP feed is needed.
-2. **Add schema migrations** (Alembic) before any table changes.
-3. **Incremental updates.** Download only from the last stored bar, keep a periodic full
-   re-check for revisions, and add a scheduled daily update after 20:15 New York time.
-4. **Conflict review.** Add a command that lists conflicts, shows stored and incoming
-   values side by side, and applies an accepted revision with an audit record. Handle
-   the re-adjustment after a split as one reviewed event, not thousands of conflicts.
-5. **Intraday ingestion** for 1Min, 5Min, 15Min and 1Hour: store page by page, use the
-   calendar's session closing times (early closes are already known to it) and define
-   when an intraday bar is complete.
-6. **Intraday gap detection** that separates regular and extended hours and allows for
-   minutes without IEX trades.
-7. **Universe management.** Load symbol metadata from Alpaca's assets endpoint, track
-   renames and delistings, and grow the list beyond ten symbols.
-8. **Feed decision.** Decide whether to add the consolidated SIP feed, which would extend
-   the history back to 2016 (see [The SIP feed](#the-sip-feed-not-used)). If so, make the
-   feed part of the bar key so two feeds can be stored side by side, and end each request
-   at least 15 minutes in the past, because this account is refused more recent SIP data.
+1. **Schema migrations** (Alembic). Done.
+2. **Indicators with no-look-ahead tests.** Done.
+3. **Strategy A, momentum breakout:** rules, simulator, run records, out-of-sample
+   protection. Done and tested on synthetic fixtures. **Not yet run on real data.**
+4. **Strategy A backtest** on the in-sample period under the three cost scenarios, then
+   review. Waiting for approval.
+5. **Strategy C, mean reversion**, built separately on the same simulator.
+6. **5-minute ingestion and intraday validation**, then Strategy B, VWAP reclaim.
+
+Still open from Milestone 1: how to treat the SPY stray bar in validation, and whether
+the consolidated SIP feed is needed (see [The SIP feed](#the-sip-feed-not-used)).
