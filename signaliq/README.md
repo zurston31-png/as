@@ -403,9 +403,11 @@ Nothing in this repository is a statement about market performance.
 
 ## Strategy research (Milestone 2)
 
-**Status: Strategy A is implemented and tested on synthetic fixtures only. No backtest
-has been run on real market data, and there are no results yet.** Strategies B (VWAP
-reclaim) and C (mean reversion) are not implemented.
+**Status: Strategy A is implemented and has been run on the in-sample period
+(2021-06-01 to 2024-12-31) under the three cost scenarios. The results, with the full
+audit, are archived in [`research/results/strategy_a/`](research/results/strategy_a/README.md).**
+Its parameters are not frozen and the out-of-sample period has not been run.
+Strategies B (VWAP reclaim) and C (mean reversion) are not implemented.
 
 Everything here is a simulation. It reads stored bars, keeps a virtual account and
 writes its records to the `strategy_*` tables. It cannot place orders and has no broker
@@ -502,7 +504,9 @@ python scripts/run_strategy.py momentum_breakout --freeze-parameters
 python scripts/run_strategy.py momentum_breakout --period out_of_sample
 ```
 
-None of these commands has been run on the real database yet.
+The three in-sample commands were run on 2026-11-17; see
+[`research/results/strategy_a/`](research/results/strategy_a/README.md). The freeze and
+out-of-sample commands have not been run.
 
 ### Auditing stored runs
 
@@ -511,6 +515,10 @@ python scripts/audit_strategy.py momentum_breakout                     # newest 
 python scripts/audit_strategy.py momentum_breakout --expect-trades 62  # also check the trade count
 python scripts/audit_strategy.py momentum_breakout --benchmark-only    # buy-and-hold only
 ```
+
+`python scripts/export_strategy_runs.py momentum_breakout --run 1 --run 2 --run 3 --out DIR`
+writes stored runs to CSV and JSON with the audit report and SHA-256 checksums, also
+read-only. It refuses out-of-sample runs.
 
 The audit only reads. It reports, per run: total and annualised return, volatility and
 Sharpe ratio (risk-free rate 0), exposure, win rate, profit factor, payoff ratio, average
@@ -651,7 +659,7 @@ runtime where the proxy supplies the secret key.
 | 6 | Repeated imports do not create duplicates | Executed: a second `ingest.py --all` inserted 0 bars and found all 15,861 unchanged, with 0 conflicts |
 | 7 | Validation catches errors and never overwrites | Executed in tests, and on a copy of the real database: a changed close was reported as a `conflicting_record` with both values and the stored value was kept; a deleted bar was downloaded again |
 | 8 | API endpoints return stored records | Executed: 52 requests against the running server covering every endpoint, the symbol, timeframe and date filters, paging and invalid input; identical results after a restart |
-| 9 | All automated tests pass | At the end of Milestone 1: 491 passed, including the 6 live tests. With the Milestone 2 work so far: 688 passed, including the 6 live tests; with no credentials configured, 682 passed and 6 skipped |
+| 9 | All automated tests pass | At the end of Milestone 1: 491 passed, including the 6 live tests. With the Milestone 2 work so far: 690 passed, including the 6 live tests; with no credentials configured, 684 passed and 6 skipped |
 | 10 | Credentials are not exposed | Executed: the key ID does not occur in any API response, in the server log, or in the ingestion output at `DEBUG` level; in this runtime the application never holds the secret key |
 | 11 | README instructions reproduce the setup | Executed on Linux: install, database, ingest, validate, inspect, API and tests. The Windows commands were not executed |
 
@@ -755,7 +763,9 @@ signaliq/
 │   ├── validate.py          validate stored bars
 │   ├── inspect_db.py        database statistics
 │   ├── run_strategy.py      simulate one strategy and record the run
-│   └── audit_strategy.py    audit stored runs (read-only)
+│   ├── audit_strategy.py    audit stored runs (read-only)
+│   └── export_strategy_runs.py  export stored runs to files (read-only)
+├── research/results/        archived strategy results (Strategy A in-sample)
 ├── tests/                   offline tests plus one optional live test file
 ├── data/                    the SQLite database is created here
 ├── alembic.ini              for the alembic command line (optional)
@@ -768,14 +778,15 @@ Optional code style check: `pip install ruff`, then `ruff check .` and `ruff for
 
 ## Next steps: Milestone 2
 
-Agreed order. Steps 1 to 3 are done; nothing below them has started.
+Agreed order. Steps 1 to 4 are done; nothing below them has started.
 
 1. **Schema migrations** (Alembic). Done.
 2. **Indicators with no-look-ahead tests.** Done.
 3. **Strategy A, momentum breakout:** rules, simulator, run records, out-of-sample
-   protection. Done and tested on synthetic fixtures. **Not yet run on real data.**
-4. **Strategy A backtest** on the in-sample period under the three cost scenarios, then
-   review. Waiting for approval.
+   protection. Done.
+4. **Strategy A backtest** on the in-sample period under the three cost scenarios, with a
+   read-only audit. Done; archived in `research/results/strategy_a/`. Parameters not frozen,
+   out-of-sample not run.
 5. **Strategy C, mean reversion**, built separately on the same simulator.
 6. **5-minute ingestion and intraday validation**, then Strategy B, VWAP reclaim.
 
