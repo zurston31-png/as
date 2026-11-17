@@ -565,6 +565,76 @@ def test_client_refuses_to_start_without_credentials(settings):
         AlpacaClient(without_credentials)
 
 
+def test_proxy_supplied_secret_sends_only_the_key_id_header(settings, alpaca_mock, make_bar):
+    proxied = settings.model_copy(
+        update={"alpaca_api_secret_key": None, "alpaca_secret_from_proxy": True}
+    )
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2))]})
+
+    assert proxied.has_alpaca_credentials
+    with AlpacaClient(proxied, transport=alpaca_mock.transport) as client:
+        fetch(client)
+
+    request = alpaca_mock.requests[0]
+    assert request.headers["APCA-API-KEY-ID"] == settings.require_alpaca_credentials()[0]
+    assert "APCA-API-SECRET-KEY" not in request.headers
+
+
+def test_proxy_supplied_secret_still_needs_the_key_id(settings):
+    no_key_id = settings.model_copy(
+        update={
+            "alpaca_api_key_id": None,
+            "alpaca_api_secret_key": None,
+            "alpaca_secret_from_proxy": True,
+        }
+    )
+
+    assert not no_key_id.has_alpaca_credentials
+    with pytest.raises(ConfigurationError, match="not configured"):
+        AlpacaClient(no_key_id)
+
+
+def test_a_configured_secret_is_sent_even_when_the_proxy_option_is_on(
+    settings, alpaca_mock, make_bar
+):
+    both = settings.model_copy(update={"alpaca_secret_from_proxy": True})
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2))]})
+
+    with AlpacaClient(both, transport=alpaca_mock.transport) as client:
+        fetch(client)
+
+    assert alpaca_mock.requests[0].headers["APCA-API-SECRET-KEY"] == (
+        settings.require_alpaca_credentials()[1]
+    )
+
+
+def test_proxy_supplied_secret_401_points_at_the_proxy_not_the_env_file(settings, alpaca_mock):
+    proxied = settings.model_copy(
+        update={"alpaca_api_secret_key": None, "alpaca_secret_from_proxy": True}
+    )
+    alpaca_mock.add_error(401)
+
+    with (
+        AlpacaClient(proxied, transport=alpaca_mock.transport) as client,
+        pytest.raises(AlpacaAuthenticationError, match="SIGNALIQ_ALPACA_SECRET_FROM_PROXY"),
+    ):
+        fetch(client)
+
+
+def test_load_settings_reads_the_proxy_supplied_secret_option():
+    loaded = load_settings(
+        env_file=None,
+        environ={"APCA_API_KEY_ID": "fixture-key-only", "SIGNALIQ_ALPACA_SECRET_FROM_PROXY": "true"},
+    )
+
+    assert loaded.alpaca_secret_from_proxy
+    assert loaded.has_alpaca_credentials
+    assert loaded.alpaca_auth_headers() == {"APCA-API-KEY-ID": "fixture-key-only"}
+
+    with pytest.raises(ConfigurationError, match="SIGNALIQ_ALPACA_SECRET_FROM_PROXY"):
+        load_settings(env_file=None, environ={"SIGNALIQ_ALPACA_SECRET_FROM_PROXY": "maybe"})
+
+
 def test_settings_never_reveal_secrets_when_printed(settings):
     key_id, secret = settings.require_alpaca_credentials()
 

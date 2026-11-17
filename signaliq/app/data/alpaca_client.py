@@ -150,7 +150,8 @@ class AlpacaClient:
         clock: Callable[[], float] = time.time,
         backoff_jitter: float = 0.1,
     ) -> None:
-        key_id, secret_key = settings.require_alpaca_credentials()
+        auth_headers = settings.alpaca_auth_headers()
+        self._secret_from_proxy = "APCA-API-SECRET-KEY" not in auth_headers
 
         self._feed = settings.alpaca_feed
         self._adjustment = settings.alpaca_adjustment
@@ -165,15 +166,13 @@ class AlpacaClient:
         self._clock = clock
         self._throttle_until: float | None = None
 
-        # Credentials travel only in these two headers. They are never placed
-        # in a URL and never passed to a logger.
+        # Credentials travel only in the two APCA headers. They are never
+        # placed in a URL and never passed to a logger. When the runtime's
+        # proxy supplies the secret key, only the key ID header is sent from
+        # here and the proxy adds the other one.
         self._http = httpx.Client(
             base_url=settings.alpaca_data_base_url,
-            headers={
-                "APCA-API-KEY-ID": key_id,
-                "APCA-API-SECRET-KEY": secret_key,
-                "Accept": "application/json",
-            },
+            headers={**auth_headers, "Accept": "application/json"},
             timeout=httpx.Timeout(settings.http_timeout_seconds),
             transport=transport,
         )
@@ -397,9 +396,16 @@ class AlpacaClient:
         suffix = f" [request id: {request_id}]" if request_id else ""
 
         if status == 401:
+            if self._secret_from_proxy:
+                hint = (
+                    "Check APCA_API_KEY_ID, and that this runtime's proxy really adds the "
+                    "secret key for the Alpaca data host (SIGNALIQ_ALPACA_SECRET_FROM_PROXY "
+                    "is on, so SignalIQ did not send one itself)."
+                )
+            else:
+                hint = "Check APCA_API_KEY_ID and APCA_API_SECRET_KEY in your .env file."
             return AlpacaAuthenticationError(
-                f"Alpaca rejected the API credentials (HTTP 401: {detail}). Check "
-                f"APCA_API_KEY_ID and APCA_API_SECRET_KEY in your .env file.{suffix}",
+                f"Alpaca rejected the API credentials (HTTP 401: {detail}). {hint}{suffix}",
                 status_code=status,
                 request_id=request_id,
             )

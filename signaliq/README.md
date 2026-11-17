@@ -70,6 +70,22 @@ APCA_API_SECRET_KEY=your-secret-key
 The `.env` file stays on your machine. It is listed in `.gitignore`, and the keys are
 never written to logs.
 
+#### Managed runtimes where a proxy holds the secret key
+
+Some runtimes keep the secret key out of the process entirely: an authenticating network
+proxy adds the `APCA-API-SECRET-KEY` header to requests for `data.alpaca.markets`. A
+Claude Code cloud environment does this when the secret is saved as a network secret for
+that host. There, set only the key ID and switch the option on:
+
+```ini
+APCA_API_KEY_ID=your-key-id
+SIGNALIQ_ALPACA_SECRET_FROM_PROXY=true
+```
+
+SignalIQ then sends the key ID header itself and never holds the secret. If
+`APCA_API_SECRET_KEY` is also set, it is sent as usual. Only the market data host is
+involved; SignalIQ has no trading code and needs no trading host.
+
 ### 3. Create the database
 
 ```bash
@@ -275,6 +291,7 @@ are required.
 | --- | --- | --- |
 | `APCA_API_KEY_ID` | Alpaca API key ID | none |
 | `APCA_API_SECRET_KEY` | Alpaca API secret key | none |
+| `SIGNALIQ_ALPACA_SECRET_FROM_PROXY` | `true` when the runtime's proxy adds the secret key, so only the key ID is needed | `false` |
 | `SIGNALIQ_DATABASE_URL` | SQLite location | `sqlite:///data/signaliq.db` |
 | `SIGNALIQ_ALPACA_FEED` | Market data feed | `iex` |
 | `SIGNALIQ_ALPACA_ADJUSTMENT` | Corporate-action adjustment | `split` |
@@ -308,17 +325,17 @@ What was actually executed for this milestone, and what was not.
 | # | Completion criterion | Status |
 | --- | --- | --- |
 | 1 | The application starts locally | Executed: `uvicorn` started and every endpoint answered over HTTP |
-| 2 | Alpaca authentication works with valid credentials | **Not executed.** No credentials were available in the build environment and the Alpaca host was blocked there |
-| 3 | Historical data is retrieved from the specified feed | **Not executed**, for the same reason. The request is unit-tested to send `feed=iex` |
-| 4 | Pagination is implemented and tested | Executed against a mocked provider. The live pagination test exists but was not run |
+| 2 | Alpaca authentication works with valid credentials | Executed: the live tests authenticated against `data.alpaca.markets` through `AlpacaClient` (key ID from the environment, secret key added by the runtime's proxy), and deliberately wrong credentials were rejected |
+| 3 | Historical data is retrieved from the specified feed | Executed: 21 AAPL daily bars for January 2024 were retrieved with `feed=iex`, `adjustment=split` and passed every validation check. The full history from 2016 and the other nine symbols were not downloaded |
+| 4 | Pagination is implemented and tested | Executed against a mocked provider and live (page size 5 over the same month returned the same bars as one request) |
 | 5 | Data is stored in SQLite | Executed in tests and with the real commands on a scratch database |
 | 6 | Repeated imports do not create duplicates | Executed in tests, including five repeated imports |
 | 7 | Validation catches deliberately introduced errors | Executed in tests and by corrupting rows in a scratch database and running `validate.py` |
 | 8 | API endpoints return stored records | Executed in tests and against the running server |
-| 9 | All automated tests pass | 433 passed, 4 skipped (the live tests) on Python 3.12.3 |
-| 10 | README instructions reproduce the setup | Executed on Linux in a fresh virtual environment: install, database, validate, inspect, API and tests. `ingest.py` ran only up to the blocked network. The Windows commands were not executed |
+| 9 | All automated tests pass | 442 passed on Python 3.12.3, including the 4 live tests; 438 passed with the live tests skipped when no credentials are configured |
+| 10 | README instructions reproduce the setup | Executed on Linux in a fresh virtual environment: install, database, validate, inspect, API and tests. `ingest.py` has not been run against the real API. The Windows commands were not executed |
 
-To close criteria 2, 3 and the live half of 4 on your machine, add your keys to `.env`
+To repeat criteria 2, 3 and the live half of 4 on your machine, add your keys to `.env`
 and run:
 
 ```bash
@@ -330,9 +347,9 @@ python scripts/validate.py --symbol AAPL
 
 ## Known limitations
 
-- **No live run yet.** Everything that talks to Alpaca was tested against a mocked
-  transport built from Alpaca's published response format. The first real run may show
-  small differences that need a fix.
+- **Only a small live run so far.** The live tests fetched and stored one month of AAPL
+  daily bars. The full ingestion from 2016 for all ten symbols has not been run against
+  the real API, so it may still show differences that need a fix.
 - **IEX data is one exchange.** See [How the data is handled](#how-the-data-is-handled).
   Do not read IEX volume as market volume.
 - **History before the feed's first bar.** How far back Alpaca's IEX history goes has not

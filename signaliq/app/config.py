@@ -72,6 +72,7 @@ _PLACEHOLDER_PREFIX = "REPLACE_WITH"
 _ENV_FIELDS: dict[str, str] = {
     "APCA_API_KEY_ID": "alpaca_api_key_id",
     "APCA_API_SECRET_KEY": "alpaca_api_secret_key",
+    "SIGNALIQ_ALPACA_SECRET_FROM_PROXY": "alpaca_secret_from_proxy",
     "SIGNALIQ_ALPACA_DATA_BASE_URL": "alpaca_data_base_url",
     "SIGNALIQ_ALPACA_FEED": "alpaca_feed",
     "SIGNALIQ_ALPACA_ADJUSTMENT": "alpaca_adjustment",
@@ -109,6 +110,12 @@ class Settings(BaseModel):
     # inspection tools work without them; ingestion requires them.
     alpaca_api_key_id: SecretStr | None = None
     alpaca_api_secret_key: SecretStr | None = None
+
+    # Managed runtimes can keep the secret key outside the process altogether:
+    # an authenticating egress proxy adds the APCA-API-SECRET-KEY header to
+    # requests for the data host. When this is switched on, the key ID alone is
+    # enough and SignalIQ never holds the secret.
+    alpaca_secret_from_proxy: bool = False
 
     # Market data request configuration.
     alpaca_data_base_url: str = "https://data.alpaca.markets"
@@ -213,13 +220,14 @@ class Settings(BaseModel):
 
     @property
     def has_alpaca_credentials(self) -> bool:
-        """True when both Alpaca credential values are configured."""
-        return bool(
-            self.alpaca_api_key_id
-            and self.alpaca_api_key_id.get_secret_value()
-            and self.alpaca_api_secret_key
-            and self.alpaca_api_secret_key.get_secret_value()
-        )
+        """True when the client can authenticate.
+
+        That needs the key ID and either the secret key itself or
+        ``alpaca_secret_from_proxy`` (the runtime's proxy supplies the secret).
+        """
+        key_id = self.alpaca_api_key_id.get_secret_value() if self.alpaca_api_key_id else ""
+        secret = self.alpaca_api_secret_key.get_secret_value() if self.alpaca_api_secret_key else ""
+        return bool(key_id and (secret or self.alpaca_secret_from_proxy))
 
     def require_alpaca_credentials(self) -> tuple[str, str]:
         """Return ``(key_id, secret_key)`` or raise a helpful error.
@@ -232,9 +240,28 @@ class Settings(BaseModel):
         if not key_id or not secret:
             raise ConfigurationError(
                 "Alpaca API credentials are not configured. Copy .env.example to .env and set "
-                "APCA_API_KEY_ID and APCA_API_SECRET_KEY to your own keys."
+                "APCA_API_KEY_ID and APCA_API_SECRET_KEY to your own keys. (In a runtime whose "
+                "proxy supplies the secret key, set APCA_API_KEY_ID and "
+                "SIGNALIQ_ALPACA_SECRET_FROM_PROXY=true instead.)"
             )
         return key_id, secret
+
+    def alpaca_auth_headers(self) -> dict[str, str]:
+        """Return the authentication headers for the Alpaca client.
+
+        Normally both credential headers. With ``alpaca_secret_from_proxy`` and
+        no secret key configured, only the key ID header is returned and the
+        runtime's proxy is expected to add the secret header in transit.
+
+        The returned values are secrets: pass them to the HTTP client only and
+        never log or print them.
+        """
+        key_id = self.alpaca_api_key_id.get_secret_value() if self.alpaca_api_key_id else ""
+        secret = self.alpaca_api_secret_key.get_secret_value() if self.alpaca_api_secret_key else ""
+        if key_id and not secret and self.alpaca_secret_from_proxy:
+            return {"APCA-API-KEY-ID": key_id}
+        key_id, secret = self.require_alpaca_credentials()
+        return {"APCA-API-KEY-ID": key_id, "APCA-API-SECRET-KEY": secret}
 
 
 def _resolve_sqlite_url(url: str) -> str:
