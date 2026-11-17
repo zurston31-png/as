@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signaliq"
+description = "SignalIQ Milestone 1: validated historical US stock bar ingestion (Alpaca -> SQLite -> FastAPI)."
+readme = "README.md"
+requires-python = ">=3.12"
+dynamic = ["version", "dependencies"]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+    "integration: live tests that call the real Alpaca API (skipped unless credentials are configured)",
+]

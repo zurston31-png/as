@@ -1,0 +1,25 @@
+# SignalIQ - Milestone 1 dependencies (Python 3.12+)
+# Install with:  pip install -r requirements.txt
+
+# Web API
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+
+# Database
+sqlalchemy>=2.0.30,<2.1
+
+# Configuration and schemas
+pydantic>=2.7,<3.0
+python-dotenv>=1.0,<2.0
+
+# Data handling and validation
+polars>=1.0,<2.0
+
+# HTTP client for the Alpaca Market Data API
+httpx>=0.27,<1.0
+
+# IANA time zone database (required on Windows, harmless elsewhere)
+tzdata>=2024.1
+
+# Testing
+pytest>=8.0,<10.0
