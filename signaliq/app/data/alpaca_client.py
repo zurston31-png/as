@@ -18,6 +18,7 @@ themselves is the job of :mod:`app.data.validation`.
 
 import logging
 import random
+import re
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -131,7 +132,14 @@ def _error_detail(response: httpx.Response) -> str:
         if isinstance(message, str) and message.strip():
             return message.strip()
     text = response.text.strip()
-    return text[:_ERROR_BODY_PREVIEW_CHARS] if text else "no error details returned"
+    if not text:
+        return "no error details returned"
+    # Gateways in front of the API answer with an HTML page (for example
+    # nginx's "401 Authorization Required"). Report its title, not the markup.
+    if "<" in text and ">" in text:
+        title = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+        text = title.group(1) if title else re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.split())[:_ERROR_BODY_PREVIEW_CHARS] or "no error details returned"
 
 
 class AlpacaClient:

@@ -264,6 +264,33 @@ def test_error_message_uses_plain_text_bodies_too(alpaca_client, alpaca_mock):
         fetch(alpaca_client)
 
 
+def test_html_error_pages_are_reported_by_their_title_not_their_markup(alpaca_client, alpaca_mock):
+    # What a gateway in front of the provider really answers for bad credentials.
+    alpaca_mock.add_text(
+        "<html>\r\n<head><title>401 Authorization Required</title></head>\r\n<body>\r\n"
+        "<center><h1>401 Authorization Required</h1></center>\r\n<hr><center>nginx</center>\r\n"
+        "</body>\r\n</html>\r\n",
+        status_code=401,
+    )
+
+    with pytest.raises(AlpacaAuthenticationError) as excinfo:
+        fetch(alpaca_client)
+
+    message = str(excinfo.value)
+    assert "HTTP 401: 401 Authorization Required)" in message
+    assert "<" not in message
+    assert "\n" not in message
+
+
+def test_html_error_page_without_a_title_is_reduced_to_its_text(alpaca_client, alpaca_mock):
+    alpaca_mock.add_text(
+        "<body><h1>Forbidden</h1>\n<p>fixture  gateway</p></body>", status_code=403
+    )
+
+    with pytest.raises(AlpacaPermissionError, match=r"HTTP 403: Forbidden fixture gateway\)"):
+        fetch(alpaca_client)
+
+
 def test_request_id_is_reported_for_support(alpaca_client, alpaca_mock):
     alpaca_mock.add_error(400, "bad window", headers={"X-Request-ID": "fixture-request-id"})
 
@@ -603,8 +630,9 @@ def test_a_configured_secret_is_sent_even_when_the_proxy_option_is_on(
     with AlpacaClient(both, transport=alpaca_mock.transport) as client:
         fetch(client)
 
-    assert alpaca_mock.requests[0].headers["APCA-API-SECRET-KEY"] == (
-        settings.require_alpaca_credentials()[1]
+    assert (
+        alpaca_mock.requests[0].headers["APCA-API-SECRET-KEY"]
+        == (settings.require_alpaca_credentials()[1])
     )
 
 
@@ -624,7 +652,10 @@ def test_proxy_supplied_secret_401_points_at_the_proxy_not_the_env_file(settings
 def test_load_settings_reads_the_proxy_supplied_secret_option():
     loaded = load_settings(
         env_file=None,
-        environ={"APCA_API_KEY_ID": "fixture-key-only", "SIGNALIQ_ALPACA_SECRET_FROM_PROXY": "true"},
+        environ={
+            "APCA_API_KEY_ID": "fixture-key-only",
+            "SIGNALIQ_ALPACA_SECRET_FROM_PROXY": "true",
+        },
     )
 
     assert loaded.alpaca_secret_from_proxy
