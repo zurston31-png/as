@@ -1,8 +1,12 @@
-"""Database engine, session management and schema initialisation (SQLite).
+"""Database engine, session management and schema migrations (SQLite).
 
-Initialise the database from the command line with::
+Create or upgrade the database from the command line with::
 
     python -m app.database
+
+The schema is defined by the Alembic migrations in ``app/migrations``. They
+are applied automatically; a database created before migrations existed is
+recognised and upgraded without touching its data.
 """
 
 import argparse
@@ -11,15 +15,39 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event, func, inspect, select
+from alembic import command
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import Connection, Engine, create_engine, event, func, inspect, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import ConfigurationError, get_settings
 from app.models import Base
 
-#: The tables this milestone creates, in the order they are reported.
+#: The market data tables (Milestone 1), in the order they are reported.
 EXPECTED_TABLES: tuple[str, ...] = ("bars", "ingestion_runs", "data_quality_checks")
+
+#: The strategy research tables (Milestone 2). They hold simulated results only.
+STRATEGY_TABLES: tuple[str, ...] = (
+    "strategy_runs",
+    "strategy_signals",
+    "strategy_trades",
+    "strategy_equity",
+    "strategy_parameter_freezes",
+)
+
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+
+#: The revision that describes the tables as Milestone 1 created them.
+BASELINE_REVISION = "0001"
+
+_VERSION_TABLE = "alembic_version"
+
+
+class SchemaError(RuntimeError):
+    """The database is in a state the migrations cannot safely continue from."""
 
 
 def database_file_path(database_url: str) -> Path | None:
@@ -61,13 +89,52 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def init_db(engine: Engine) -> list[str]:
-    """Create any missing tables and return the table names now present.
+def _migration_config(connection: Connection) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.attributes["connection"] = connection
+    return config
 
-    Safe to call repeatedly: existing tables and their data are left untouched.
+
+def head_revision() -> str:
+    """Return the newest schema revision the code knows."""
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    head = ScriptDirectory.from_config(config).get_current_head()
+    assert head is not None
+    return head
+
+
+def current_revision(engine: Engine) -> str | None:
+    """Return the schema revision of the database (None before any migration)."""
+    with engine.connect() as connection:
+        return MigrationContext.configure(connection).get_current_revision()
+
+
+def init_db(engine: Engine) -> list[str]:
+    """Bring the database schema up to date and return the tables now present.
+
+    Safe to call repeatedly: when the schema is current nothing is done, and a
+    migration never removes market data. A database created before migrations
+    existed (the three Milestone 1 tables, no version marker) is marked as
+    being at the baseline revision and upgraded from there.
     """
-    Base.metadata.create_all(engine)
-    return sorted(inspect(engine).get_table_names())
+    head = head_revision()
+    with engine.begin() as connection:
+        if MigrationContext.configure(connection).get_current_revision() != head:
+            config = _migration_config(connection)
+            tables = set(inspect(connection).get_table_names())
+            if _VERSION_TABLE not in tables and tables:
+                missing = [name for name in EXPECTED_TABLES if name not in tables]
+                if missing:
+                    raise SchemaError(
+                        "The database has tables but no schema version, and it is not a "
+                        f"complete SignalIQ database (missing: {', '.join(missing)}). "
+                        "Refusing to migrate it."
+                    )
+                command.stamp(config, BASELINE_REVISION)
+            command.upgrade(config, "head")
+    return sorted(name for name in inspect(engine).get_table_names() if name != _VERSION_TABLE)
 
 
 @contextmanager
@@ -84,11 +151,11 @@ def session_scope(session_factory: sessionmaker[Session]) -> Iterator[Session]:
         session.close()
 
 
-def table_row_counts(engine: Engine) -> dict[str, int]:
-    """Return the number of rows in each SignalIQ table."""
+def table_row_counts(engine: Engine, tables: tuple[str, ...] = EXPECTED_TABLES) -> dict[str, int]:
+    """Return the number of rows in each of ``tables`` (the market data tables by default)."""
     counts: dict[str, int] = {}
     with engine.connect() as connection:
-        for name in EXPECTED_TABLES:
+        for name in tables:
             counts[name] = connection.execute(
                 select(func.count()).select_from(Base.metadata.tables[name])
             ).scalar_one()
@@ -99,7 +166,10 @@ def main(argv: list[str] | None = None) -> int:
     """Command-line entry point: create the database and its tables."""
     parser = argparse.ArgumentParser(
         prog="python -m app.database",
-        description="Initialise the SignalIQ SQLite database (safe to run more than once).",
+        description=(
+            "Create the SignalIQ SQLite database or upgrade its schema "
+            "(safe to run more than once)."
+        ),
     )
     parser.parse_args(argv)
 
@@ -111,16 +181,25 @@ def main(argv: list[str] | None = None) -> int:
 
     engine = create_db_engine(settings.database_url)
     try:
+        before = current_revision(engine)
         tables = init_db(engine)
-        counts = table_row_counts(engine)
+        after = current_revision(engine)
+        counts = table_row_counts(engine, (*EXPECTED_TABLES, *STRATEGY_TABLES))
+    except SchemaError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     finally:
         engine.dispose()
 
     location = database_file_path(settings.database_url) or "in-memory database"
     print(f"Database ready: {location}")
-    for table in EXPECTED_TABLES:
+    if before == after:
+        print(f"Schema revision: {after} (already up to date)")
+    else:
+        print(f"Schema revision: {after} (upgraded from {before or 'no version'})")
+    for table in (*EXPECTED_TABLES, *STRATEGY_TABLES):
         state = f"{counts[table]:>10,} rows" if table in tables else "   MISSING"
-        print(f"  {table:<22} {state}")
+        print(f"  {table:<27} {state}")
     return 0
 
 

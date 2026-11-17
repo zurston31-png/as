@@ -11,8 +11,9 @@ uvicorn==0.54.0
 # it provides the test client used by the API tests.
 starlette==1.10.0
 
-# Database
+# Database and schema migrations
 sqlalchemy==2.0.57
+alembic==1.20.1
 
 # Configuration and schemas
 pydantic==2.14.3

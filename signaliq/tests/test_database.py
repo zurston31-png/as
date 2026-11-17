@@ -65,12 +65,22 @@ def fixture_bar(timestamp: datetime, **overrides) -> Bar:
 # --- Schema -----------------------------------------------------------------
 
 
-def test_init_db_creates_the_three_tables(engine):
+def test_init_db_creates_the_market_data_and_strategy_tables(engine):
     assert set(inspect(engine).get_table_names()) == {
+        # Market data (Milestone 1).
         "bars",
         "ingestion_runs",
         "data_quality_checks",
+        # Simulated strategy results (Milestone 2).
+        "strategy_runs",
+        "strategy_signals",
+        "strategy_trades",
+        "strategy_equity",
+        "strategy_parameter_freezes",
+        # Schema version marker written by the migrations.
+        "alembic_version",
     }
+    assert set(database.EXPECTED_TABLES) | set(database.STRATEGY_TABLES) == set(init_db(engine))
 
 
 def test_bars_table_has_all_required_columns(engine):
@@ -89,7 +99,7 @@ def test_init_db_is_idempotent_and_keeps_existing_data(engine, session_factory):
 
     tables = init_db(engine)  # second initialisation
 
-    assert set(tables) == {"bars", "ingestion_runs", "data_quality_checks"}
+    assert set(tables) == set(database.EXPECTED_TABLES) | set(database.STRATEGY_TABLES)
     assert table_row_counts(engine)["bars"] == 1
 
 
