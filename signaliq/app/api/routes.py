@@ -381,7 +381,9 @@ def get_bars(
     total = session.execute(select(func.count()).select_from(Bar).where(*conditions)).scalar_one()
     ordering = Bar.timestamp.asc() if order == "asc" else Bar.timestamp.desc()
     bars = (
-        session.execute(select(Bar).where(*conditions).order_by(ordering).limit(limit).offset(offset))
+        session.execute(
+            select(Bar).where(*conditions).order_by(ordering).limit(limit).offset(offset)
+        )
         .scalars()
         .all()
     )
@@ -414,7 +416,9 @@ def list_ingestion_runs(
         conditions.append(IngestionRun.symbol == _known_symbol(symbol, settings))
     if status is not None:
         if status not in RunStatus.ALL:
-            raise _invalid(f"Invalid status {status!r}. Expected one of: {', '.join(RunStatus.ALL)}.")
+            raise _invalid(
+                f"Invalid status {status!r}. Expected one of: {', '.join(RunStatus.ALL)}."
+            )
         conditions.append(IngestionRun.status == status)
 
     total = session.execute(
@@ -468,7 +472,9 @@ def quality_report(
         bar_conditions.append(Bar.symbol == symbol)
     if stage is not None:
         if stage not in CheckStage.ALL:
-            raise _invalid(f"Invalid stage {stage!r}. Expected one of: {', '.join(CheckStage.ALL)}.")
+            raise _invalid(
+                f"Invalid stage {stage!r}. Expected one of: {', '.join(CheckStage.ALL)}."
+            )
         conditions.append(DataQualityCheck.stage == stage)
 
     bars_stored = session.execute(
@@ -491,7 +497,9 @@ def quality_report(
             description=CHECK_DESCRIPTIONS.get(name, name),
             **per_check[name],
         )
-        for name in sorted(per_check, key=lambda name: (known_order.get(name, len(known_order)), name))
+        for name in sorted(
+            per_check, key=lambda name: (known_order.get(name, len(known_order)), name)
+        )
     ]
 
     # The latest validation of stored bars shows the current state of the data.

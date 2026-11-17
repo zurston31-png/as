@@ -23,11 +23,16 @@ from typing import Any
 # Allow running this file directly (python scripts/inspect_db.py) without installing the project.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import Engine, func, select  # noqa: E402
+from sqlalchemy import Engine, func, select
 
-from app.config import ConfigurationError, Settings, get_settings  # noqa: E402
-from app.database import create_db_engine, database_file_path, init_db, table_row_counts  # noqa: E402
-from app.models import Bar, CheckStage, DataQualityCheck, IngestionRun  # noqa: E402
+from app.config import ConfigurationError, Settings, get_settings
+from app.database import (
+    create_db_engine,
+    database_file_path,
+    init_db,
+    table_row_counts,
+)
+from app.models import Bar, CheckStage, DataQualityCheck, IngestionRun
 
 LATEST_RUNS_SHOWN = 5
 
@@ -98,7 +103,7 @@ def collect_statistics(engine: Engine, settings: Settings) -> dict[str, Any]:
             latest_validation = {
                 "check_run_id": newest_validation.check_run_id,
                 "created_at": _iso(newest_validation.created_at),
-                "by_status": {status: count for status, count in counts},
+                "by_status": dict(counts),
             }
 
     stored_symbols = {row.symbol for row in coverage}
@@ -133,7 +138,7 @@ def collect_statistics(engine: Engine, settings: Settings) -> dict[str, Any]:
             "without_data": [symbol for symbol in settings.symbols if symbol not in stored_symbols],
         },
         "ingestion_runs": {
-            "by_status": {status: count for status, count in runs_by_status},
+            "by_status": dict(runs_by_status),
             "latest": [
                 {
                     "id": row.id,
@@ -151,7 +156,7 @@ def collect_statistics(engine: Engine, settings: Settings) -> dict[str, Any]:
             ],
         },
         "quality_checks": {
-            "by_status": {status: count for status, count in checks_by_status},
+            "by_status": dict(checks_by_status),
             "latest_stored_validation": latest_validation,
         },
     }
@@ -176,7 +181,9 @@ def format_statistics(stats: dict[str, Any]) -> str:
 
     lines.append("\nBars by symbol and timeframe")
     if stats["bars"]:
-        lines.append(f"  {'SYMBOL':<8}{'TIMEFRAME':<11}{'BARS':>10}  {'FIRST (UTC)':<22}{'LAST (UTC)':<22}")
+        lines.append(
+            f"  {'SYMBOL':<8}{'TIMEFRAME':<11}{'BARS':>10}  {'FIRST (UTC)':<22}{'LAST (UTC)':<22}"
+        )
         for row in stats["bars"]:
             note = "" if row["in_universe"] else "  <- not in the configured universe"
             lines.append(
@@ -205,9 +212,9 @@ def format_statistics(stats: dict[str, Any]) -> str:
         for run in runs["latest"]:
             lines.append(
                 f"  #{run['id']:<5}{run['started_at']}  {run['symbol']:<7}{run['timeframe']:<6}"
-                f"{run['status']:<23}fetched={run['bars_fetched']:,} inserted={run['bars_inserted']:,} "
-                f"conflicts={run['bars_conflicting']:,} rejected={run['bars_rejected']:,} "
-                f"missing={run['missing_sessions']:,}"
+                f"{run['status']:<23}fetched={run['bars_fetched']:,} "
+                f"inserted={run['bars_inserted']:,} conflicts={run['bars_conflicting']:,} "
+                f"rejected={run['bars_rejected']:,} missing={run['missing_sessions']:,}"
             )
 
     checks = stats["quality_checks"]

@@ -19,7 +19,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
-from functools import lru_cache
+from functools import cache
 from types import MappingProxyType
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -152,7 +152,7 @@ def _observed(holiday: date) -> date:
     return holiday
 
 
-@lru_cache(maxsize=None)
+@cache
 def market_holidays(year: int) -> Mapping[date, str]:
     """Return the full-day market closures of ``year`` (weekdays only)."""
     holidays: dict[date, str] = {}
@@ -395,7 +395,9 @@ def _build_record(
         "symbol": _as_text(symbol),
         "timeframe": _as_text(timeframe),
         "timestamp": timestamp,
-        "timestamp_raw": raw_timestamp if isinstance(raw_timestamp, str) else _json_safe(raw_timestamp),
+        "timestamp_raw": raw_timestamp
+        if isinstance(raw_timestamp, str)
+        else _json_safe(raw_timestamp),
         "timestamp_error": timestamp_error,
         "source": _as_text(source),
         "feed": _as_text(feed),
@@ -436,9 +438,7 @@ def normalize_alpaca_bars(
                     symbol=symbol,
                     timeframe=timeframe,
                     raw_timestamp=payload.get("t"),
-                    raw_values={
-                        name: payload.get(key) for key, name in ALPACA_FIELD_MAP.items()
-                    },
+                    raw_values={name: payload.get(key) for key, name in ALPACA_FIELD_MAP.items()},
                     source=source,
                     feed=feed,
                     adjustment=adjustment,
@@ -568,7 +568,11 @@ def _finding_for(
         message = f"Required field(s) missing or malformed: {listing}"
         details["problems"] = dict(problems)
     elif check_name == CHECK_NON_POSITIVE_PRICE:
-        bad = {name: record[name] for name in PRICE_FIELDS if record[name] is not None and record[name] <= 0}
+        bad = {
+            name: record[name]
+            for name in PRICE_FIELDS
+            if record[name] is not None and record[name] <= 0
+        }
         listing = ", ".join(f"{name}={value}" for name, value in bad.items())
         message = f"Non-positive price(s): {listing}"
         details["non_positive"] = bad
@@ -636,7 +640,9 @@ def validate_records(
     is rejected, because the correct one cannot be determined.
     """
     if not records:
-        return BatchValidation(records=[], findings=[], rejected_rows=frozenset(), duplicate_rows=frozenset())
+        return BatchValidation(
+            records=[], findings=[], rejected_rows=frozenset(), duplicate_rows=frozenset()
+        )
 
     allowed = list(allowed_symbols)
     expected = {"source": expected_source, "feed": expected_feed, "adjustment": expected_adjustment}
@@ -943,7 +949,13 @@ def build_check_rows(
     with_findings = {finding.check_name for finding in findings}
     for check_name in check_names:
         if check_name in skipped:
-            add(check_name, CheckStatus.SKIPPED, skipped[check_name], symbol=symbol, timeframe=timeframe)
+            add(
+                check_name,
+                CheckStatus.SKIPPED,
+                skipped[check_name],
+                symbol=symbol,
+                timeframe=timeframe,
+            )
         elif check_name not in with_findings:
             add(
                 check_name,
@@ -1089,9 +1101,7 @@ def validate_stored_bars(
             ]
             analysis = analyse_session_gaps(present, window_start, window_end)
             counts_by_check[CHECK_SESSION_GAP] = analysis.expected_sessions
-            gap_findings = session_gap_findings(
-                analysis, symbol=symbol, timeframe=group_timeframe
-            )
+            gap_findings = session_gap_findings(analysis, symbol=symbol, timeframe=group_timeframe)
             group_findings.extend(gap_findings)
             all_findings.extend(gap_findings)
 

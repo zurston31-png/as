@@ -112,7 +112,12 @@ def test_records_are_normalised_without_altering_values(make_bar):
     assert record["symbol"] == "TESTA"
     assert record["timeframe"] == "1Day"
     assert record["timestamp"] == datetime(2024, 1, 2, 5, 0, tzinfo=UTC)
-    assert (record["open"], record["high"], record["low"], record["close"]) == (10.25, 11.75, 9.5, 10.5)
+    assert (record["open"], record["high"], record["low"], record["close"]) == (
+        10.25,
+        11.75,
+        9.5,
+        10.5,
+    )
     assert (record["volume"], record["trade_count"], record["vwap"]) == (123456, 789, 10.123456)
     assert (record["source"], record["feed"], record["adjustment"]) == ("alpaca", "iex", "split")
     assert record["raw"] == raw
@@ -271,7 +276,9 @@ def test_high_lower_than_low_is_rejected(make_bar):
         ({"o": 12.0, "c": 8.0}, "Open 12.0 and close 8.0 outside the low-high range [9.0, 11.0]"),
     ],
 )
-def test_open_or_close_outside_the_high_low_range_is_rejected(make_bar, overrides, expected_message):
+def test_open_or_close_outside_the_high_low_range_is_rejected(
+    make_bar, overrides, expected_message
+):
     result = run_checks({"TESTA": [make_bar(date(2024, 1, 2), **overrides)]})
 
     assert failed_checks(result) == {CHECK_OPEN_CLOSE_RANGE}
@@ -358,7 +365,11 @@ def test_three_identical_copies_drop_two(make_bar):
 
 
 def test_conflicting_duplicates_are_all_rejected(make_bar):
-    bars = [make_bar(date(2024, 1, 2)), make_bar(date(2024, 1, 2), c=10.6), make_bar(date(2024, 1, 3))]
+    bars = [
+        make_bar(date(2024, 1, 2)),
+        make_bar(date(2024, 1, 2), c=10.6),
+        make_bar(date(2024, 1, 3)),
+    ]
 
     result = run_checks({"TESTA": bars})
 
@@ -580,22 +591,19 @@ def test_findings_are_reported_in_a_stable_check_order(make_bar):
 #: reference calendar (the ``exchange_calendars`` XNYS calendar) and NOT from
 #: the code under test.
 REFERENCE_WEEKDAY_CLOSURES = {
-    2016: ["01-01", "01-18", "02-15", "03-25", "05-30", "07-04", "09-05", "11-24", "12-26"],
-    2017: ["01-02", "01-16", "02-20", "04-14", "05-29", "07-04", "09-04", "11-23", "12-25"],
-    2018: ["01-01", "01-15", "02-19", "03-30", "05-28", "07-04", "09-03", "11-22", "12-05", "12-25"],
-    2019: ["01-01", "01-21", "02-18", "04-19", "05-27", "07-04", "09-02", "11-28", "12-25"],
-    2020: ["01-01", "01-20", "02-17", "04-10", "05-25", "07-03", "09-07", "11-26", "12-25"],
-    2021: ["01-01", "01-18", "02-15", "04-02", "05-31", "07-05", "09-06", "11-25", "12-24"],
-    2022: ["01-17", "02-21", "04-15", "05-30", "06-20", "07-04", "09-05", "11-24", "12-26"],
-    2023: ["01-02", "01-16", "02-20", "04-07", "05-29", "06-19", "07-04", "09-04", "11-23", "12-25"],
-    2024: ["01-01", "01-15", "02-19", "03-29", "05-27", "06-19", "07-04", "09-02", "11-28", "12-25"],
-    2025: [
-        "01-01", "01-09", "01-20", "02-17", "04-18", "05-26", "06-19", "07-04", "09-01", "11-27",
-        "12-25",
-    ],
-    2026: ["01-01", "01-19", "02-16", "04-03", "05-25", "06-19", "07-03", "09-07", "11-26", "12-25"],
-    2027: ["01-01", "01-18", "02-15", "03-26", "05-31", "06-18", "07-05", "09-06", "11-25", "12-24"],
-}  # fmt: skip
+    2016: "01-01 01-18 02-15 03-25 05-30 07-04 09-05 11-24 12-26".split(),
+    2017: "01-02 01-16 02-20 04-14 05-29 07-04 09-04 11-23 12-25".split(),
+    2018: "01-01 01-15 02-19 03-30 05-28 07-04 09-03 11-22 12-05 12-25".split(),
+    2019: "01-01 01-21 02-18 04-19 05-27 07-04 09-02 11-28 12-25".split(),
+    2020: "01-01 01-20 02-17 04-10 05-25 07-03 09-07 11-26 12-25".split(),
+    2021: "01-01 01-18 02-15 04-02 05-31 07-05 09-06 11-25 12-24".split(),
+    2022: "01-17 02-21 04-15 05-30 06-20 07-04 09-05 11-24 12-26".split(),
+    2023: "01-02 01-16 02-20 04-07 05-29 06-19 07-04 09-04 11-23 12-25".split(),
+    2024: "01-01 01-15 02-19 03-29 05-27 06-19 07-04 09-02 11-28 12-25".split(),
+    2025: "01-01 01-09 01-20 02-17 04-18 05-26 06-19 07-04 09-01 11-27 12-25".split(),
+    2026: "01-01 01-19 02-16 04-03 05-25 06-19 07-03 09-07 11-26 12-25".split(),
+    2027: "01-01 01-18 02-15 03-26 05-31 06-18 07-05 09-06 11-25 12-24".split(),
+}
 
 #: Number of trading sessions per year from the same independent reference.
 REFERENCE_SESSIONS_PER_YEAR = {
@@ -620,7 +628,9 @@ def test_calendar_closures_match_the_independent_reference(year):
 
 @pytest.mark.parametrize("year", sorted(REFERENCE_SESSIONS_PER_YEAR))
 def test_trading_session_count_matches_the_independent_reference(year):
-    assert len(trading_days(date(year, 1, 1), date(year, 12, 31))) == REFERENCE_SESSIONS_PER_YEAR[year]
+    assert (
+        len(trading_days(date(year, 1, 1), date(year, 12, 31))) == REFERENCE_SESSIONS_PER_YEAR[year]
+    )
 
 
 def test_weekends_are_never_trading_days():
@@ -753,7 +763,11 @@ def test_complete_data_has_no_gaps():
 
     assert analysis.gaps == ()
     assert analysis.unexpected_dates == ()
-    assert (analysis.expected_sessions, analysis.present_sessions, analysis.missing_sessions) == (9, 9, 0)
+    assert (analysis.expected_sessions, analysis.present_sessions, analysis.missing_sessions) == (
+        9,
+        9,
+        0,
+    )
 
 
 @pytest.mark.parametrize(
@@ -787,7 +801,9 @@ def test_weekends_and_market_holidays_are_not_reported_as_gaps(first, last, clos
 
 
 def test_a_missing_session_is_detected():
-    present = [day for day in weekdays(date(2024, 1, 2), date(2024, 1, 12)) if day != date(2024, 1, 9)]
+    present = [
+        day for day in weekdays(date(2024, 1, 2), date(2024, 1, 12)) if day != date(2024, 1, 9)
+    ]
 
     analysis = analyse_session_gaps(present, date(2024, 1, 2), date(2024, 1, 12))
 
@@ -879,13 +895,17 @@ def test_leading_interior_and_trailing_gaps_together():
         (GAP_TRAILING, (date(2024, 1, 11), date(2024, 1, 12))),
     ]
     statuses = [
-        finding.status for finding in session_gap_findings(analysis, symbol="TESTA", timeframe="1Day")
+        finding.status
+        for finding in session_gap_findings(analysis, symbol="TESTA", timeframe="1Day")
     ]
     assert statuses == [CheckStatus.WARNING, CheckStatus.FAILED, CheckStatus.WARNING]
 
 
 def test_bars_on_closed_days_are_reported():
-    present = [*weekdays(date(2024, 7, 1), date(2024, 7, 5)), date(2024, 7, 6)]  # 4 July and a Saturday
+    present = [
+        *weekdays(date(2024, 7, 1), date(2024, 7, 5)),
+        date(2024, 7, 6),
+    ]  # 4 July and a Saturday
 
     analysis = analyse_session_gaps(present, date(2024, 7, 1), date(2024, 7, 8))
 
@@ -901,7 +921,11 @@ def test_bars_on_closed_days_are_reported():
 
 
 def test_dates_outside_the_window_are_ignored():
-    present = weekdays(date(2023, 12, 1), date(2024, 2, 29), closed=(date(2023, 12, 25), date(2024, 1, 1), date(2024, 1, 15), date(2024, 2, 19)))
+    present = weekdays(
+        date(2023, 12, 1),
+        date(2024, 2, 29),
+        closed=(date(2023, 12, 25), date(2024, 1, 1), date(2024, 1, 15), date(2024, 2, 19)),
+    )
 
     analysis = analyse_session_gaps(present, date(2024, 1, 2), date(2024, 1, 12))
 
@@ -987,7 +1011,9 @@ def run_stored_validation(session_factory, settings, now, **kwargs):
 
 def stored_checks(session_factory) -> list[DataQualityCheck]:
     with session_scope(session_factory) as session:
-        return list(session.execute(select(DataQualityCheck).order_by(DataQualityCheck.id)).scalars())
+        return list(
+            session.execute(select(DataQualityCheck).order_by(DataQualityCheck.id)).scalars()
+        )
 
 
 def corrupt(engine, statement: str, **parameters) -> None:
@@ -1047,7 +1073,9 @@ def test_deliberately_corrupted_stored_bar_is_caught(
     assert finding.symbol == "TESTA"
     assert finding.bar_timestamp == datetime(2024, 1, 10, 5, 0, tzinfo=UTC)
 
-    failed_rows = [row for row in stored_checks(session_factory) if row.status == CheckStatus.FAILED]
+    failed_rows = [
+        row for row in stored_checks(session_factory) if row.status == CheckStatus.FAILED
+    ]
     assert [(row.check_name, row.symbol) for row in failed_rows] == [(expected_check, "TESTA")]
     assert failed_rows[0].details["record"]["timestamp"] == "2024-01-10T05:00:00.000000Z"
 
@@ -1119,7 +1147,9 @@ def test_stored_validation_does_not_flag_weekends_or_holidays(
 
     summary = run_stored_validation(session_factory, settings, fixed_now)
 
-    gap_rows = [row for row in stored_checks(session_factory) if row.check_name == CHECK_SESSION_GAP]
+    gap_rows = [
+        row for row in stored_checks(session_factory) if row.check_name == CHECK_SESSION_GAP
+    ]
     assert [row.status for row in gap_rows] == [CheckStatus.PASSED]
     assert summary.counts[CHECK_SESSION_GAP] == {CheckStatus.PASSED: 1}
 
@@ -1133,7 +1163,10 @@ def test_stale_and_late_starting_data_produce_warnings_not_failures(
 
     assert summary.failed == 0
     assert summary.warnings == 2
-    assert [finding.details["gap_type"] for finding in summary.findings] == [GAP_LEADING, GAP_TRAILING]
+    assert [finding.details["gap_type"] for finding in summary.findings] == [
+        GAP_LEADING,
+        GAP_TRAILING,
+    ]
     assert summary.findings[0].details["missing_session_count"] == 4  # 2-5 January
     assert summary.findings[1].details["missing_session_count"] == 8  # 20-29 February
 
@@ -1203,7 +1236,9 @@ def test_validation_never_modifies_the_stored_bars(
     session_factory, settings, fixed_now, store_bars, engine
 ):
     store_bars("TESTA", january_february_2024())
-    corrupt(engine, "UPDATE bars SET high = 8.0 WHERE timestamp = :ts", ts="2024-01-10T05:00:00.000000Z")
+    corrupt(
+        engine, "UPDATE bars SET high = 8.0 WHERE timestamp = :ts", ts="2024-01-10T05:00:00.000000Z"
+    )
     with engine.connect() as connection:
         before = connection.execute(text("SELECT * FROM bars ORDER BY timestamp")).all()
 
@@ -1227,7 +1262,11 @@ def test_cli_passes_for_valid_stored_bars(run_script, session_factory, store_bar
     assert exit_code == 0
     assert "Validated 41 stored bar(s) in 1 symbol/timeframe group(s)." in output
     assert "RESULT: PASSED - no problems found" in output
-    table = {line.split()[0]: line.split()[1:] for line in output.splitlines() if "_" in line.split(" ")[0]}
+    table = {
+        line.split()[0]: line.split()[1:]
+        for line in output.splitlines()
+        if "_" in line.split(" ")[0]
+    }
     assert table["high_below_low"] == ["1", "0", "0", "0"]
     assert table["negative_volume"] == ["1", "0", "0", "0"]
     # The fixture data ends in February 2024, so it is (correctly) reported as not up to date.
@@ -1238,8 +1277,14 @@ def test_cli_passes_for_valid_stored_bars(run_script, session_factory, store_bar
 
 def test_cli_fails_when_stored_bars_were_corrupted(run_script, session_factory, store_bars, engine):
     store_bars("TESTA", january_february_2024())
-    corrupt(engine, "UPDATE bars SET high = 8.0 WHERE timestamp = :ts", ts="2024-01-10T05:00:00.000000Z")
-    corrupt(engine, "UPDATE bars SET volume = -5 WHERE timestamp = :ts", ts="2024-02-07T05:00:00.000000Z")
+    corrupt(
+        engine, "UPDATE bars SET high = 8.0 WHERE timestamp = :ts", ts="2024-01-10T05:00:00.000000Z"
+    )
+    corrupt(
+        engine,
+        "UPDATE bars SET volume = -5 WHERE timestamp = :ts",
+        ts="2024-02-07T05:00:00.000000Z",
+    )
 
     exit_code, output, _ = run_script("validate")
 
@@ -1250,7 +1295,9 @@ def test_cli_fails_when_stored_bars_were_corrupted(run_script, session_factory, 
         "[high_below_low] TESTA 1Day 2024-01-10T05:00:00.000000Z - High 8.0 is lower than low 9.0"
         in output
     )
-    assert "[negative_volume] TESTA 1Day 2024-02-07T05:00:00.000000Z - Negative volume: -5" in output
+    assert (
+        "[negative_volume] TESTA 1Day 2024-02-07T05:00:00.000000Z - Negative volume: -5" in output
+    )
     failed = [row for row in stored_checks(session_factory) if row.status == CheckStatus.FAILED]
     assert {row.check_name for row in failed} == {CHECK_HIGH_BELOW_LOW, CHECK_NEGATIVE_VOLUME}
 

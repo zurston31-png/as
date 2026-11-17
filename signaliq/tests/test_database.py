@@ -75,7 +75,7 @@ def test_init_db_creates_the_three_tables(engine):
 
 def test_bars_table_has_all_required_columns(engine):
     columns = {column["name"] for column in inspect(engine).get_columns("bars")}
-    assert REQUIRED_BAR_COLUMNS <= columns
+    assert columns >= REQUIRED_BAR_COLUMNS
 
 
 def test_bars_primary_key_is_symbol_timeframe_timestamp(engine):
@@ -130,9 +130,8 @@ def test_duplicate_primary_key_is_rejected_by_the_database(session_factory):
     with session_scope(session_factory) as session:
         session.add(fixture_bar(timestamp))
 
-    with pytest.raises(IntegrityError):
-        with session_scope(session_factory) as session:
-            session.add(fixture_bar(timestamp, close=10.6))
+    with pytest.raises(IntegrityError), session_scope(session_factory) as session:
+        session.add(fixture_bar(timestamp, close=10.6))
 
     with session_scope(session_factory) as session:
         stored = session.execute(select(Bar)).scalars().all()
@@ -151,20 +150,24 @@ def test_same_timestamp_is_allowed_for_another_symbol_or_timeframe(session_facto
         assert len(session.execute(select(Bar)).scalars().all()) == 3
 
 
-@pytest.mark.parametrize("column", sorted(REQUIRED_BAR_COLUMNS - {"symbol", "timeframe", "timestamp"}))
+@pytest.mark.parametrize(
+    "column", sorted(REQUIRED_BAR_COLUMNS - {"symbol", "timeframe", "timestamp"})
+)
 def test_required_bar_columns_are_not_nullable(session_factory, column):
-    with pytest.raises(IntegrityError):
-        with session_scope(session_factory) as session:
-            session.add(fixture_bar(datetime(2024, 1, 2, 5, 0, tzinfo=UTC), **{column: None}))
+    with pytest.raises(IntegrityError), session_scope(session_factory) as session:
+        session.add(fixture_bar(datetime(2024, 1, 2, 5, 0, tzinfo=UTC), **{column: None}))
 
 
 # --- UTC timestamp handling ---------------------------------------------------
 
 
 def test_naive_timestamp_is_rejected(session_factory):
-    with pytest.raises(StatementError, match="Naive datetime rejected"):
-        with session_scope(session_factory) as session:
-            session.add(fixture_bar(datetime(2024, 1, 2, 5, 0)))  # no tzinfo
+    naive = datetime(2024, 1, 2, 5, 0)  # no tzinfo
+    with (
+        pytest.raises(StatementError, match="Naive datetime rejected"),
+        session_scope(session_factory) as session,
+    ):
+        session.add(fixture_bar(naive))
 
 
 def test_aware_non_utc_timestamp_is_converted_to_utc(session_factory):
@@ -278,26 +281,28 @@ def test_ingestion_run_and_quality_check_are_persisted(session_factory):
 
 
 def test_foreign_keys_are_enforced(session_factory):
-    with pytest.raises(IntegrityError):
-        with session_scope(session_factory) as session:
-            session.add(
-                DataQualityCheck(
-                    check_run_id="fixture-check-run",
-                    stage=CheckStage.STORED,
-                    ingestion_run_id=999_999,  # no such run
-                    check_name="negative_volume",
-                    status=CheckStatus.PASSED,
-                    message="fixture",
-                )
+    with pytest.raises(IntegrityError), session_scope(session_factory) as session:
+        session.add(
+            DataQualityCheck(
+                check_run_id="fixture-check-run",
+                stage=CheckStage.STORED,
+                ingestion_run_id=999_999,  # no such run
+                check_name="negative_volume",
+                status=CheckStatus.PASSED,
+                message="fixture",
             )
+        )
 
 
 def test_session_scope_rolls_back_on_error(session_factory, engine):
-    with pytest.raises(RuntimeError, match="boom"):
+    def add_a_bar_then_fail() -> None:
         with session_scope(session_factory) as session:
             session.add(fixture_bar(datetime(2024, 1, 2, 5, 0, tzinfo=UTC)))
             session.flush()
             raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        add_a_bar_then_fail()
 
     assert table_row_counts(engine)["bars"] == 0
 
@@ -334,7 +339,9 @@ def test_inspect_cli_reports_database_statistics(run_script, store_bars, engine)
     assert ["ingestion_runs", "0", "rows"] in lines
     assert ["data_quality_checks", "0", "rows"] in lines
     assert ["TESTA", "1Day", "4", "2024-01-02T05:00:00Z", "2024-01-05T05:00:00Z"] in lines
-    assert any("ZZZZ" in line and "not in the configured universe" in line for line in output.splitlines())
+    assert any(
+        "ZZZZ" in line and "not in the configured universe" in line for line in output.splitlines()
+    )
     assert "Configured symbols without data: TESTB" in output
     assert "source=alpaca  feed=iex  adjustment=split" in output
     assert "Stored bars have not been validated yet" in output

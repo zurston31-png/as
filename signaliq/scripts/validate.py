@@ -22,27 +22,27 @@ from pathlib import Path
 # Allow running this file directly (python scripts/validate.py) without installing the project.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import (  # noqa: E402
+from app.config import (
     ConfigurationError,
     configure_logging,
     get_settings,
     is_valid_symbol,
     is_valid_timeframe,
 )
-from app.data.validation import (  # noqa: E402
+from app.data.validation import (
     CHECK_DESCRIPTIONS,
     Finding,
     StoredValidationSummary,
     validate_stored_bars,
 )
-from app.database import (  # noqa: E402
+from app.database import (
     create_db_engine,
     create_session_factory,
     database_file_path,
     init_db,
     session_scope,
 )
-from app.models import CheckStatus, format_utc  # noqa: E402
+from app.models import CheckStatus, format_utc
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
@@ -138,7 +138,10 @@ def main(argv: list[str] | None = None) -> int:
     symbols: list[str] | None = None
     if args.symbol:
         symbols = [
-            part.strip().upper() for value in args.symbol for part in value.split(",") if part.strip()
+            part.strip().upper()
+            for value in args.symbol
+            for part in value.split(",")
+            if part.strip()
         ]
         invalid = [symbol for symbol in symbols if not is_valid_symbol(symbol)]
         if invalid:

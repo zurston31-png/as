@@ -75,7 +75,8 @@ def test_ingestion_stores_bars_in_sqlite(ingestion_service, alpaca_mock, session
     assert (result.bars_fetched, result.bars_inserted) == (9, 9)
     assert (result.bars_unchanged, result.bars_conflicting) == (0, 0)
     assert (result.bars_rejected, result.bars_duplicate, result.missing_sessions) == (0, 0, 0)
-    assert result.error is None and result.ok
+    assert result.error is None
+    assert result.ok
 
     bars = stored_bars(session_factory)
     assert len(bars) == 9
@@ -126,7 +127,10 @@ def test_timestamps_are_stored_in_utc_across_a_daylight_saving_change(
     settings, session_factory, alpaca_client, alpaca_mock, engine, make_bar
 ):
     service = IngestionService(
-        settings, session_factory, alpaca_client, now=lambda: datetime(2024, 3, 20, 15, 0, tzinfo=UTC)
+        settings,
+        session_factory,
+        alpaca_client,
+        now=lambda: datetime(2024, 3, 20, 15, 0, tzinfo=UTC),
     )
     # Friday 8 March 2024 is in winter time, Monday 11 March 2024 in summer time.
     alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 3, 8)), make_bar(date(2024, 3, 11))]})
@@ -140,7 +144,11 @@ def test_timestamps_are_stored_in_utc_across_a_daylight_saving_change(
     ]
     assert all(bar.timestamp.utcoffset().total_seconds() == 0 for bar in bars)
     with engine.connect() as connection:
-        raw = connection.execute(text("SELECT timestamp FROM bars ORDER BY timestamp")).scalars().all()
+        raw = (
+            connection.execute(text("SELECT timestamp FROM bars ORDER BY timestamp"))
+            .scalars()
+            .all()
+        )
     assert raw == ["2024-03-08T05:00:00.000000Z", "2024-03-11T04:00:00.000000Z"]
 
 
@@ -157,7 +165,9 @@ def test_running_the_same_import_twice_creates_no_duplicates(
     alpaca_mock.add_bars(payload)
 
     first = ingest(ingestion_service)
-    snapshot = [(bar.timestamp, bar.close, bar.ingestion_run_id) for bar in stored_bars(session_factory)]
+    snapshot = [
+        (bar.timestamp, bar.close, bar.ingestion_run_id) for bar in stored_bars(session_factory)
+    ]
     second = ingest(ingestion_service)
 
     assert (first.bars_inserted, first.bars_unchanged) == (9, 0)
@@ -286,7 +296,9 @@ def test_data_from_another_feed_is_never_merged_into_stored_bars(
 
     other_feed = settings.model_copy(update={"alpaca_feed": "sip"})
     with AlpacaClient(other_feed, transport=alpaca_mock.transport) as sip_client:
-        sip_service = IngestionService(other_feed, session_factory, sip_client, now=lambda: fixed_now)
+        sip_service = IngestionService(
+            other_feed, session_factory, sip_client, now=lambda: fixed_now
+        )
         result = ingest(sip_service)
 
     assert alpaca_mock.query()["feed"] == "sip"  # the explicitly configured feed was requested
@@ -385,7 +397,9 @@ def test_bars_for_a_symbol_that_was_not_requested_are_rejected(
     assert (result.bars_fetched, result.bars_inserted, result.bars_rejected) == (10, 9, 1)
     assert {bar.symbol for bar in stored_bars(session_factory)} == {"TESTA"}
     failed = stored_checks(session_factory, status=CheckStatus.FAILED)
-    assert [(check.check_name, check.symbol) for check in failed] == [(CHECK_UNEXPECTED_SYMBOL, "TESTB")]
+    assert [(check.check_name, check.symbol) for check in failed] == [
+        (CHECK_UNEXPECTED_SYMBOL, "TESTB")
+    ]
 
 
 def test_counters_always_add_up_to_the_number_of_bars_fetched(
@@ -427,8 +441,12 @@ def test_counters_always_add_up_to_the_number_of_bars_fetched(
 def test_all_pages_are_downloaded_and_stored(
     ingestion_service, alpaca_mock, session_factory, make_bar
 ):
-    alpaca_mock.add_bars({"TESTA": [make_bar(day) for day in SESSIONS[:3]]}, next_page_token="tok-1")
-    alpaca_mock.add_bars({"TESTA": [make_bar(day) for day in SESSIONS[3:6]]}, next_page_token="tok-2")
+    alpaca_mock.add_bars(
+        {"TESTA": [make_bar(day) for day in SESSIONS[:3]]}, next_page_token="tok-1"
+    )
+    alpaca_mock.add_bars(
+        {"TESTA": [make_bar(day) for day in SESSIONS[3:6]]}, next_page_token="tok-2"
+    )
     alpaca_mock.add_bars({"TESTA": [make_bar(day) for day in SESSIONS[6:]]})
 
     result = ingest(ingestion_service)
@@ -440,7 +458,17 @@ def test_all_pages_are_downloaded_and_stored(
         "tok-1",
         "tok-2",
     ]
-    assert [bar.timestamp.day for bar in stored_bars(session_factory)] == [2, 3, 4, 5, 8, 9, 10, 11, 12]
+    assert [bar.timestamp.day for bar in stored_bars(session_factory)] == [
+        2,
+        3,
+        4,
+        5,
+        8,
+        9,
+        10,
+        11,
+        12,
+    ]
     assert stored_runs(session_factory)[0].pages_fetched == 3
 
 
@@ -484,7 +512,8 @@ def test_error_message_stored_in_the_database_contains_no_credentials(
     key_id, secret = settings.require_alpaca_credentials()
     message = stored_runs(session_factory)[0].error_message
     assert "AlpacaPermissionError" in message
-    assert key_id not in message and secret not in message
+    assert key_id not in message
+    assert secret not in message
 
 
 def test_a_rejected_request_for_one_symbol_does_not_stop_the_others(
@@ -537,7 +566,9 @@ def test_transient_error_is_retried_and_the_run_succeeds(
 def test_failure_in_the_middle_of_pagination_stores_nothing(
     ingestion_service, alpaca_mock, session_factory, make_bar
 ):
-    alpaca_mock.add_bars({"TESTA": [make_bar(day) for day in SESSIONS[:3]]}, next_page_token="tok-1")
+    alpaca_mock.add_bars(
+        {"TESTA": [make_bar(day) for day in SESSIONS[:3]]}, next_page_token="tok-1"
+    )
     alpaca_mock.add_error(403, "fixture forbidden")
 
     result = ingest(ingestion_service)
@@ -793,7 +824,9 @@ def test_repeated_symbols_in_a_batch_are_ingested_once(ingestion_service, alpaca
 # =============================================================================
 
 
-def test_ingestion_history_is_recorded(ingestion_service, alpaca_mock, session_factory, fixed_now, make_bar):
+def test_ingestion_history_is_recorded(
+    ingestion_service, alpaca_mock, session_factory, fixed_now, make_bar
+):
     alpaca_mock.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
 
     result = ingest(ingestion_service)
@@ -895,14 +928,21 @@ def test_cli_downloads_all_tickers_of_the_universe(
         "TESTB",
     ]
     assert bar_count(session_factory) == 18
-    assert "TESTA" in output and "TESTB" in output
+    assert "TESTA" in output
+    assert "TESTB" in output
 
 
 @pytest.mark.parametrize(
     "symbol_args",
-    [("--symbol", "TESTA,TESTB"), ("--symbol", "TESTA", "--symbol", "testb"), ("-s", "TESTA", "-s", "TESTB")],
+    [
+        ("--symbol", "TESTA,TESTB"),
+        ("--symbol", "TESTA", "--symbol", "testb"),
+        ("-s", "TESTA", "-s", "TESTB"),
+    ],
 )
-def test_cli_accepts_several_tickers(run_script, mocked_provider, session_factory, make_bar, symbol_args):
+def test_cli_accepts_several_tickers(
+    run_script, mocked_provider, session_factory, make_bar, symbol_args
+):
     mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
     mocked_provider.add_bars({"TESTB": [make_bar(day) for day in SESSIONS]})
 
@@ -927,7 +967,9 @@ def test_cli_can_be_repeated_without_creating_duplicates(
     assert bar_count(session_factory) == 9
 
 
-def test_cli_creates_the_database_when_it_does_not_exist(run_script, mocked_provider, settings, make_bar):
+def test_cli_creates_the_database_when_it_does_not_exist(
+    run_script, mocked_provider, settings, make_bar
+):
     # No ``engine`` fixture: the database file does not exist before the command runs.
     mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
 
@@ -941,7 +983,8 @@ def test_cli_requires_exactly_one_of_symbol_or_all(run_script, mocked_provider, 
     exit_code, _, errors = run_script("ingest", *argv)
 
     assert exit_code == 2
-    assert "--symbol" in errors and "--all" in errors
+    assert "--symbol" in errors
+    assert "--all" in errors
     assert mocked_provider.requests == []
 
 
@@ -975,7 +1018,9 @@ def test_cli_rejects_a_symbol_outside_the_universe(run_script, mocked_provider):
     assert mocked_provider.requests == []
 
 
-def test_cli_reports_a_failed_run_with_exit_code_1(run_script, mocked_provider, session_factory, settings):
+def test_cli_reports_a_failed_run_with_exit_code_1(
+    run_script, mocked_provider, session_factory, settings
+):
     mocked_provider.add_error(401, "fixture unauthorized")
 
     exit_code, output, _ = run_script("ingest", "--all", *WINDOW_ARGS)
@@ -985,11 +1030,14 @@ def test_cli_reports_a_failed_run_with_exit_code_1(run_script, mocked_provider, 
     assert "AlpacaAuthenticationError" in output
     assert "Not attempted because the error above would affect them too: TESTB" in output
     key_id, secret = settings.require_alpaca_credentials()
-    assert key_id not in output and secret not in output
+    assert key_id not in output
+    assert secret not in output
     assert bar_count(session_factory) == 0
 
 
-def test_cli_reports_data_issues_and_warnings(run_script, mocked_provider, session_factory, make_bar):
+def test_cli_reports_data_issues_and_warnings(
+    run_script, mocked_provider, session_factory, make_bar
+):
     payload = [make_bar(day) for day in SESSIONS[2:]]  # history starts on 4 January
     payload[3] = make_bar(SESSIONS[5], v=-5)  # 9 January has a negative volume
     mocked_provider.add_bars({"TESTA": payload})
@@ -998,7 +1046,17 @@ def test_cli_reports_data_issues_and_warnings(run_script, mocked_provider, sessi
 
     assert exit_code == 0  # the run finished; the data problems are recorded, not hidden
     summary_line = next(line for line in output.splitlines() if line.startswith("TESTA"))
-    assert summary_line.split() == ["TESTA", "completed_with_issues", "7", "6", "0", "0", "1", "0", "3"]
+    assert summary_line.split() == [
+        "TESTA",
+        "completed_with_issues",
+        "7",
+        "6",
+        "0",
+        "0",
+        "1",
+        "0",
+        "3",
+    ]
     assert "Warnings:" in output
     assert "History starts later than requested" in output
     assert "Nothing was repaired or overwritten" in output

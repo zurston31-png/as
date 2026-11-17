@@ -30,3 +30,19 @@ filterwarnings = [
     # (see "Known limitations" in the README).
     "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
 ]
+
+# Optional code style tooling (not needed to run the project):
+#   pip install ruff && ruff check . && ruff format .
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PIE", "PT", "RUF"]
+ignore = [
+    "PT011",  # pytest.raises(ValueError) is used with a match= pattern throughout
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The scripts add the project folder to sys.path before importing ``app``.
+"scripts/*.py" = ["E402"]

@@ -514,5 +514,7 @@ class AlpacaClient:
         wait = self._throttle_until - self._clock()
         self._throttle_until = None
         if wait > 0:
-            logger.warning("Alpaca rate limit reached; waiting %.1f seconds before continuing", wait)
+            logger.warning(
+                "Alpaca rate limit reached; waiting %.1f seconds before continuing", wait
+            )
             self._sleep(wait)

@@ -155,9 +155,7 @@ class AlpacaMock:
         headers: dict[str, str] | None = None,
     ) -> None:
         """Queue a successful page in the provider's documented response shape."""
-        self.add_json(
-            {"bars": bars_by_symbol, "next_page_token": next_page_token}, headers=headers
-        )
+        self.add_json({"bars": bars_by_symbol, "next_page_token": next_page_token}, headers=headers)
 
     def add_error(
         self,
@@ -216,7 +214,9 @@ def alpaca_client(
 def store_bars(session_factory: sessionmaker[Session]) -> Callable[..., None]:
     """Insert SYNTHETIC daily bars straight into the database, bypassing ingestion."""
 
-    def _store(symbol: str, days: Iterable[date], *, timeframe: str = "1Day", **overrides: Any) -> None:
+    def _store(
+        symbol: str, days: Iterable[date], *, timeframe: str = "1Day", **overrides: Any
+    ) -> None:
         with session_scope(session_factory) as session:
             for day in days:
                 midnight_new_york = datetime.combine(day, time(0, 0), tzinfo=NEW_YORK)
@@ -287,7 +287,8 @@ def run_script(
     def _run(name: str, *argv: str, use_settings: Settings | None = None) -> tuple[int, str, str]:
         path = PROJECT_ROOT / "scripts" / f"{name}.py"
         spec = importlib.util.spec_from_file_location(f"signaliq_script_{name}", path)
-        assert spec is not None and spec.loader is not None
+        assert spec is not None
+        assert spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         monkeypatch.setattr(module, "get_settings", lambda: use_settings or settings)

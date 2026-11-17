@@ -10,8 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import __version__
-from app.database import session_scope
 from app.data.validation import validate_stored_bars
+from app.database import session_scope
 from app.main import create_app
 
 #: The nine trading sessions from 2 to 12 January 2024.

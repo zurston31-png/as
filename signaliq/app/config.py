@@ -136,7 +136,9 @@ class Settings(BaseModel):
     def _validate_base_url(cls, value: str) -> str:
         value = value.strip().rstrip("/")
         if not value.startswith("https://"):
-            raise ValueError("must start with https:// (credentials are never sent over plain HTTP)")
+            raise ValueError(
+                "must start with https:// (credentials are never sent over plain HTTP)"
+            )
         return value
 
     @field_validator("alpaca_feed")
@@ -225,16 +227,14 @@ class Settings(BaseModel):
         The returned values are secrets: pass them to the HTTP client only and
         never log or print them.
         """
-        if not self.has_alpaca_credentials:
+        key_id = self.alpaca_api_key_id.get_secret_value() if self.alpaca_api_key_id else ""
+        secret = self.alpaca_api_secret_key.get_secret_value() if self.alpaca_api_secret_key else ""
+        if not key_id or not secret:
             raise ConfigurationError(
                 "Alpaca API credentials are not configured. Copy .env.example to .env and set "
                 "APCA_API_KEY_ID and APCA_API_SECRET_KEY to your own keys."
             )
-        assert self.alpaca_api_key_id is not None and self.alpaca_api_secret_key is not None
-        return (
-            self.alpaca_api_key_id.get_secret_value(),
-            self.alpaca_api_secret_key.get_secret_value(),
-        )
+        return key_id, secret
 
 
 def _resolve_sqlite_url(url: str) -> str:

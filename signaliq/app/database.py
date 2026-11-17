@@ -48,7 +48,7 @@ def create_db_engine(database_url: str) -> Engine:
     )
 
     @event.listens_for(engine, "connect")
-    def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+    def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()

@@ -303,7 +303,11 @@ def test_non_json_success_body_raises_response_error(alpaca_client, alpaca_mock)
 
 def test_matching_currency_in_response_is_accepted(alpaca_client, alpaca_mock, make_bar):
     alpaca_mock.add_json(
-        {"bars": {"TESTA": [make_bar(date(2024, 1, 2))]}, "next_page_token": None, "currency": "USD"}
+        {
+            "bars": {"TESTA": [make_bar(date(2024, 1, 2))]},
+            "next_page_token": None,
+            "currency": "USD",
+        }
     )
 
     assert len(fetch(alpaca_client)["TESTA"]) == 1
@@ -692,7 +696,8 @@ def test_feed_names_are_normalised_but_never_changed(settings):
 
 def test_secret_values_are_wrapped_so_they_cannot_leak_by_accident():
     configured = Settings(
-        alpaca_api_key_id=SecretStr("fixture-key"), alpaca_api_secret_key=SecretStr("fixture-secret")
+        alpaca_api_key_id=SecretStr("fixture-key"),
+        alpaca_api_secret_key=SecretStr("fixture-secret"),
     )
 
     assert "fixture-secret" not in f"{configured.alpaca_api_secret_key}"

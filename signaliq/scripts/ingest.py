@@ -22,10 +22,10 @@ from pathlib import Path
 # Allow running this file directly (python scripts/ingest.py) without installing the project.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.config import ConfigurationError, Settings, configure_logging, get_settings  # noqa: E402
-from app.data.ingestion import BatchIngestionResult, IngestionError, run_ingestion  # noqa: E402
-from app.database import database_file_path  # noqa: E402
-from app.models import RunStatus  # noqa: E402
+from app.config import ConfigurationError, Settings, configure_logging, get_settings
+from app.data.ingestion import BatchIngestionResult, IngestionError, run_ingestion
+from app.database import database_file_path
+from app.models import RunStatus
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
@@ -111,7 +111,9 @@ def print_summary(batch: BatchIngestionResult, settings: Settings) -> None:
             f"{result.bars_duplicate:>12,}{result.missing_sessions:>9,}"
         )
 
-    warnings = [(result.symbol, message) for result in batch.results for message in result.warning_messages]
+    warnings = [
+        (result.symbol, message) for result in batch.results for message in result.warning_messages
+    ]
     if warnings:
         print("\nWarnings:")
         for symbol, message in warnings:
