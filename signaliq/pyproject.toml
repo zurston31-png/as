@@ -23,3 +23,10 @@ addopts = "-ra"
 markers = [
     "integration: live tests that call the real Alpaca API (skipped unless credentials are configured)",
 ]
+filterwarnings = [
+    # Starlette's test client now prefers the "httpx2" package and prints a
+    # deprecation notice when it runs on HTTPX. This project uses HTTPX, as
+    # specified for Milestone 1, and the test client still works with it
+    # (see "Known limitations" in the README).
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]

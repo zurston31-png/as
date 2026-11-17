@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -25,6 +26,7 @@ from app.config import Settings
 from app.data.alpaca_client import AlpacaClient
 from app.data.ingestion import IngestionService
 from app.database import create_db_engine, create_session_factory, init_db, session_scope
+from app.main import create_app
 from app.models import Bar
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -247,3 +249,10 @@ def ingestion_service(
 ) -> IngestionService:
     """Ingestion wired to the mocked provider, a throw-away database and a fixed clock."""
     return IngestionService(settings, session_factory, alpaca_client, now=lambda: fixed_now)
+
+
+@pytest.fixture
+def api_client(settings: Settings, engine: Engine) -> Iterator[TestClient]:
+    """The FastAPI application running against the throw-away test database."""
+    with TestClient(create_app(settings)) as client:
+        yield client
