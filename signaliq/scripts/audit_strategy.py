@@ -264,6 +264,19 @@ def print_comparison(audits: list[RunAudit]) -> None:
     )
 
 
+def print_report(
+    bench, first: date, last: date, slippage_bps: float, audits: list[RunAudit]
+) -> None:
+    """Print the whole audit: benchmark, every run, and the comparison of the runs."""
+    benchmark = {row.symbol: row.total_return for row in bench}
+    print("READ-ONLY AUDIT of stored simulations. Nothing was simulated or changed.\n")
+    print_benchmark(bench, first, last, slippage_bps)
+    for audit in audits:
+        print_run(audit, benchmark)
+    if len(audits) > 1:
+        print_comparison(audits)
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     try:
@@ -315,7 +328,6 @@ def main(argv=None) -> int:
     finally:
         engine.dispose()
 
-    benchmark = {row.symbol: row.total_return for row in bench}
     if args.json:
         print(
             json.dumps(
@@ -325,12 +337,7 @@ def main(argv=None) -> int:
             )
         )
     else:
-        print("READ-ONLY AUDIT of stored simulations. Nothing was simulated or changed.\n")
-        print_benchmark(bench, first, last, slippage)
-        for audit in audits:
-            print_run(audit, benchmark)
-        if len(audits) > 1:
-            print_comparison(audits)
+        print_report(bench, first, last, slippage, audits)
 
     failed = [a.run_id for a in audits if not a.integrity.ok]
     wrong_count = [

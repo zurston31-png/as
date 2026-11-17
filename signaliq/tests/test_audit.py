@@ -338,3 +338,68 @@ def test_cli_refuses_when_there_is_nothing_to_audit(run_script, engine):
     assert code == 2
     assert "no stored in_sample run" in err
     assert "Nothing was simulated" in err
+
+
+# =============================================================================
+# Export (scripts/export_strategy_runs.py)
+# =============================================================================
+
+
+def test_export_writes_every_row_exactly_and_checksums_them(
+    run_script, settings, three_runs, tmp_path, engine
+):
+    import csv
+    import hashlib
+    import json
+
+    small = settings.model_copy(update={"symbols": ("TESTA", "TESTB")})
+    out = tmp_path / "export"
+    args = ["momentum_breakout", *[f"--run={run}" for run in three_runs], "--out", str(out)]
+
+    code, _, err = run_script("export_strategy_runs", *args, use_settings=small)
+
+    assert code == 0, err
+    with engine.connect() as connection:
+        for name, run_id in zip(("base", "worse", "severe"), three_runs, strict=True):
+            for table, prefix in (("strategy_trades", "trades"), ("strategy_signals", "signals")):
+                stored = connection.execute(
+                    text(f"SELECT id, net_pnl FROM {table} WHERE run_id = :r ORDER BY id")
+                    if table == "strategy_trades"
+                    else text(f"SELECT id, close FROM {table} WHERE run_id = :r ORDER BY id"),
+                    {"r": run_id},
+                ).all()
+                rows = list(csv.DictReader((out / f"{prefix}_{name}.csv").open()))
+                assert len(rows) == len(stored) > 0
+                value = "net_pnl" if prefix == "trades" else "close"
+                key = "trade_id" if prefix == "trades" else "signal_id"
+                assert [(int(r[key]), float(r[value])) for r in rows] == [tuple(s) for s in stored]
+            points = connection.execute(
+                text("SELECT COUNT(*) FROM strategy_equity WHERE run_id = :r"), {"r": run_id}
+            ).scalar_one()
+            assert len(list(csv.DictReader((out / f"equity_{name}.csv").open()))) == points
+    runs = json.loads((out / "runs.json").read_text())
+    assert [run["id"] for run in runs] == three_runs
+    assert all(run["created_at"].endswith("Z") for run in runs)
+    assert "READ-ONLY AUDIT" in (out / "audit_report.txt").read_text()
+    for line in (out / "SHA256SUMS").read_text().splitlines():
+        digest, name = line.split("  ")
+        assert hashlib.sha256((out / name).read_bytes()).hexdigest() == digest
+    assert len((out / "SHA256SUMS").read_text().splitlines()) == 13
+
+
+def test_export_refuses_out_of_sample_runs(
+    run_script, settings, session_factory, three_runs, tmp_path
+):
+    with session_scope(session_factory) as session:
+        session.get(StrategyRun, three_runs[0]).period = "out_of_sample"
+
+    code, _, err = run_script(
+        "export_strategy_runs",
+        "momentum_breakout",
+        f"--run={three_runs[0]}",
+        "--out",
+        str(tmp_path / "x"),
+    )
+
+    assert code == 2
+    assert "out-of-sample" in err
