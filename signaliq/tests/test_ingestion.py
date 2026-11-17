@@ -859,3 +859,147 @@ def test_run_ingestion_creates_the_database_and_stores_bars(
     assert batch.ok
     assert batch.results[0].bars_inserted == 9
     assert bar_count(session_factory) == 9
+
+
+# =============================================================================
+# Command line: scripts/ingest.py
+# =============================================================================
+
+WINDOW_ARGS = ("--start", "2024-01-02", "--end", "2024-01-12")
+
+
+def test_cli_downloads_one_ticker(run_script, mocked_provider, session_factory, make_bar):
+    mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
+
+    exit_code, output, _ = run_script("ingest", "--symbol", "TESTA", *WINDOW_ARGS)
+
+    assert exit_code == 0
+    assert "Ingestion summary  feed=iex  adjustment=split" in output
+    summary_line = next(line for line in output.splitlines() if line.startswith("TESTA"))
+    assert summary_line.split() == ["TESTA", "succeeded", "9", "9", "0", "0", "0", "0", "0"]
+    assert bar_count(session_factory) == 9
+    assert [request.url.params["symbols"] for request in mocked_provider.requests] == ["TESTA"]
+
+
+def test_cli_downloads_all_tickers_of_the_universe(
+    run_script, mocked_provider, session_factory, make_bar
+):
+    mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
+    mocked_provider.add_bars({"TESTB": [make_bar(day) for day in SESSIONS]})
+
+    exit_code, output, _ = run_script("ingest", "--all", *WINDOW_ARGS)
+
+    assert exit_code == 0
+    assert [request.url.params["symbols"] for request in mocked_provider.requests] == [
+        "TESTA",
+        "TESTB",
+    ]
+    assert bar_count(session_factory) == 18
+    assert "TESTA" in output and "TESTB" in output
+
+
+@pytest.mark.parametrize(
+    "symbol_args",
+    [("--symbol", "TESTA,TESTB"), ("--symbol", "TESTA", "--symbol", "testb"), ("-s", "TESTA", "-s", "TESTB")],
+)
+def test_cli_accepts_several_tickers(run_script, mocked_provider, session_factory, make_bar, symbol_args):
+    mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
+    mocked_provider.add_bars({"TESTB": [make_bar(day) for day in SESSIONS]})
+
+    exit_code, _, _ = run_script("ingest", *symbol_args, *WINDOW_ARGS)
+
+    assert exit_code == 0
+    assert bar_count(session_factory) == 18
+
+
+def test_cli_can_be_repeated_without_creating_duplicates(
+    run_script, mocked_provider, session_factory, make_bar
+):
+    for _ in range(2):
+        mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
+
+    first_code, _, _ = run_script("ingest", "--symbol", "TESTA", *WINDOW_ARGS)
+    second_code, output, _ = run_script("ingest", "--symbol", "TESTA", *WINDOW_ARGS)
+
+    assert (first_code, second_code) == (0, 0)
+    summary_line = next(line for line in output.splitlines() if line.startswith("TESTA"))
+    assert summary_line.split() == ["TESTA", "succeeded", "9", "0", "9", "0", "0", "0", "0"]
+    assert bar_count(session_factory) == 9
+
+
+def test_cli_creates_the_database_when_it_does_not_exist(run_script, mocked_provider, settings, make_bar):
+    # No ``engine`` fixture: the database file does not exist before the command runs.
+    mocked_provider.add_bars({"TESTA": [make_bar(day) for day in SESSIONS]})
+
+    exit_code, _, _ = run_script("ingest", "--symbol", "TESTA", *WINDOW_ARGS)
+
+    assert exit_code == 0
+
+
+@pytest.mark.parametrize("argv", [(), ("--symbol", "TESTA", "--all")])
+def test_cli_requires_exactly_one_of_symbol_or_all(run_script, mocked_provider, argv):
+    exit_code, _, errors = run_script("ingest", *argv)
+
+    assert exit_code == 2
+    assert "--symbol" in errors and "--all" in errors
+    assert mocked_provider.requests == []
+
+
+def test_cli_rejects_a_malformed_date(run_script, mocked_provider):
+    exit_code, _, errors = run_script("ingest", "--symbol", "TESTA", "--start", "01/02/2024")
+
+    assert exit_code == 2
+    assert "is not a date; use the form YYYY-MM-DD" in errors
+    assert mocked_provider.requests == []
+
+
+def test_cli_explains_missing_credentials(run_script, settings, session_factory):
+    without_credentials = settings.model_copy(
+        update={"alpaca_api_key_id": None, "alpaca_api_secret_key": None}
+    )
+
+    exit_code, _, errors = run_script(
+        "ingest", "--symbol", "TESTA", use_settings=without_credentials
+    )
+
+    assert exit_code == 2
+    assert "Copy .env.example to .env" in errors
+    assert bar_count(session_factory) == 0
+
+
+def test_cli_rejects_a_symbol_outside_the_universe(run_script, mocked_provider):
+    exit_code, _, errors = run_script("ingest", "--symbol", "NOPE", *WINDOW_ARGS)
+
+    assert exit_code == 2
+    assert "not in the configured universe" in errors
+    assert mocked_provider.requests == []
+
+
+def test_cli_reports_a_failed_run_with_exit_code_1(run_script, mocked_provider, session_factory, settings):
+    mocked_provider.add_error(401, "fixture unauthorized")
+
+    exit_code, output, _ = run_script("ingest", "--all", *WINDOW_ARGS)
+
+    assert exit_code == 1
+    assert "Errors:" in output
+    assert "AlpacaAuthenticationError" in output
+    assert "Not attempted because the error above would affect them too: TESTB" in output
+    key_id, secret = settings.require_alpaca_credentials()
+    assert key_id not in output and secret not in output
+    assert bar_count(session_factory) == 0
+
+
+def test_cli_reports_data_issues_and_warnings(run_script, mocked_provider, session_factory, make_bar):
+    payload = [make_bar(day) for day in SESSIONS[2:]]  # history starts on 4 January
+    payload[3] = make_bar(SESSIONS[5], v=-5)  # 9 January has a negative volume
+    mocked_provider.add_bars({"TESTA": payload})
+
+    exit_code, output, _ = run_script("ingest", "--symbol", "TESTA", *WINDOW_ARGS)
+
+    assert exit_code == 0  # the run finished; the data problems are recorded, not hidden
+    summary_line = next(line for line in output.splitlines() if line.startswith("TESTA"))
+    assert summary_line.split() == ["TESTA", "completed_with_issues", "7", "6", "0", "0", "1", "0", "3"]
+    assert "Warnings:" in output
+    assert "History starts later than requested" in output
+    assert "Nothing was repaired or overwritten" in output
+    assert bar_count(session_factory) == 6

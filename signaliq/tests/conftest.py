@@ -10,6 +10,7 @@ TESTB) are deliberately fake, and the mocked HTTP responses only imitate the
 *shape* of Alpaca's documented bars payload.
 """
 
+import importlib.util
 from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, date, datetime, time
 from typing import Any
@@ -22,7 +23,7 @@ from pydantic import SecretStr
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import Settings
+from app.config import PROJECT_ROOT, Settings
 from app.data.alpaca_client import AlpacaClient
 from app.data.ingestion import IngestionService
 from app.database import create_db_engine, create_session_factory, init_db, session_scope
@@ -256,3 +257,48 @@ def api_client(settings: Settings, engine: Engine) -> Iterator[TestClient]:
     """The FastAPI application running against the throw-away test database."""
     with TestClient(create_app(settings)) as client:
         yield client
+
+
+@pytest.fixture
+def mocked_provider(alpaca_mock: AlpacaMock, monkeypatch: pytest.MonkeyPatch) -> AlpacaMock:
+    """Make ``run_ingestion()`` (used by the command line) talk to the mocked
+    provider instead of the network."""
+    monkeypatch.setattr(
+        "app.data.ingestion.AlpacaClient",
+        lambda configured: AlpacaClient(
+            configured,
+            transport=alpaca_mock.transport,
+            sleep=lambda seconds: None,
+            backoff_jitter=0.0,
+        ),
+    )
+    return alpaca_mock
+
+
+@pytest.fixture
+def run_script(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> Callable[..., tuple[int, str, str]]:
+    """Run a file from ``scripts/`` as a command against the test settings.
+
+    Returns ``(exit_code, stdout, stderr)``.
+    """
+
+    def _run(name: str, *argv: str, use_settings: Settings | None = None) -> tuple[int, str, str]:
+        path = PROJECT_ROOT / "scripts" / f"{name}.py"
+        spec = importlib.util.spec_from_file_location(f"signaliq_script_{name}", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        monkeypatch.setattr(module, "get_settings", lambda: use_settings or settings)
+        if hasattr(module, "configure_logging"):
+            # Keep pytest's own log handling intact during the test.
+            monkeypatch.setattr(module, "configure_logging", lambda level: None)
+        try:
+            exit_code = module.main(list(argv))
+        except SystemExit as exc:  # argparse exits by itself on usage errors
+            exit_code = exc.code
+        captured = capsys.readouterr()
+        return exit_code, captured.out, captured.err
+
+    return _run

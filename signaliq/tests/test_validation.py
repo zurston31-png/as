@@ -1212,3 +1212,85 @@ def test_validation_never_modifies_the_stored_bars(
     with engine.connect() as connection:
         after = connection.execute(text("SELECT * FROM bars ORDER BY timestamp")).all()
     assert after == before  # invalid data is reported, never repaired or removed
+
+
+# =============================================================================
+# Command line: scripts/validate.py
+# =============================================================================
+
+
+def test_cli_passes_for_valid_stored_bars(run_script, session_factory, store_bars):
+    store_bars("TESTA", january_february_2024())
+
+    exit_code, output, _ = run_script("validate")
+
+    assert exit_code == 0
+    assert "Validated 41 stored bar(s) in 1 symbol/timeframe group(s)." in output
+    assert "RESULT: PASSED - no problems found" in output
+    table = {line.split()[0]: line.split()[1:] for line in output.splitlines() if "_" in line.split(" ")[0]}
+    assert table["high_below_low"] == ["1", "0", "0", "0"]
+    assert table["negative_volume"] == ["1", "0", "0", "0"]
+    # The fixture data ends in February 2024, so it is (correctly) reported as not up to date.
+    assert table["trading_session_gap"] == ["0", "0", "1", "0"]
+    assert "Data is not up to date" in output
+    assert len(stored_checks(session_factory)) == 10
+
+
+def test_cli_fails_when_stored_bars_were_corrupted(run_script, session_factory, store_bars, engine):
+    store_bars("TESTA", january_february_2024())
+    corrupt(engine, "UPDATE bars SET high = 8.0 WHERE timestamp = :ts", ts="2024-01-10T05:00:00.000000Z")
+    corrupt(engine, "UPDATE bars SET volume = -5 WHERE timestamp = :ts", ts="2024-02-07T05:00:00.000000Z")
+
+    exit_code, output, _ = run_script("validate")
+
+    assert exit_code == 1
+    assert "RESULT: FAILED - 2 problem(s) found" in output
+    assert "Nothing was changed or repaired." in output
+    assert (
+        "[high_below_low] TESTA 1Day 2024-01-10T05:00:00.000000Z - High 8.0 is lower than low 9.0"
+        in output
+    )
+    assert "[negative_volume] TESTA 1Day 2024-02-07T05:00:00.000000Z - Negative volume: -5" in output
+    failed = [row for row in stored_checks(session_factory) if row.status == CheckStatus.FAILED]
+    assert {row.check_name for row in failed} == {CHECK_HIGH_BELOW_LOW, CHECK_NEGATIVE_VOLUME}
+
+
+def test_cli_can_validate_selected_symbols(run_script, store_bars):
+    store_bars("TESTA", january_february_2024())
+    store_bars("TESTB", january_february_2024(), volume=-1)
+
+    code_a, output_a, _ = run_script("validate", "--symbol", "testa")
+    code_b, output_b, _ = run_script("validate", "--symbol", "TESTB", "--max-issues", "3")
+
+    assert code_a == 0
+    assert "in 1 symbol/timeframe group(s)" in output_a
+    assert code_b == 1
+    assert "Failed checks (showing 3 of 41):" in output_b
+    assert output_b.count("[negative_volume]") == 3
+
+
+def test_cli_on_an_empty_database(run_script, engine):
+    exit_code, output, _ = run_script("validate")
+
+    assert exit_code == 0
+    assert "Nothing to validate: no bars are stored yet." in output
+
+
+def test_cli_explains_a_missing_database(run_script):
+    # No ``engine`` fixture: the database file was never created.
+    exit_code, _, errors = run_script("validate")
+
+    assert exit_code == 2
+    assert "database not found" in errors
+    assert "python -m app.database" in errors
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [(("--symbol", "bad symbol!"), "invalid symbol"), (("--timeframe", "1D"), "invalid timeframe")],
+)
+def test_cli_rejects_invalid_arguments(run_script, engine, argv, expected):
+    exit_code, _, errors = run_script("validate", *argv)
+
+    assert exit_code == 2
+    assert expected in errors

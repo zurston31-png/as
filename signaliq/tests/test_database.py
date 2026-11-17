@@ -3,7 +3,8 @@
 All values are synthetic test fixtures (see ``conftest.py``), not market data.
 """
 
-from datetime import UTC, datetime, timedelta, timezone
+import json
+from datetime import UTC, date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -314,3 +315,71 @@ def test_database_cli_initialises_the_database(settings, monkeypatch, capsys):
     assert "Database ready" in output
     for table in ("bars", "ingestion_runs", "data_quality_checks"):
         assert table in output
+
+
+# --- Command line: scripts/inspect_db.py ---------------------------------------
+
+
+def test_inspect_cli_reports_database_statistics(run_script, store_bars, engine):
+    days = [date(2024, 1, day) for day in (2, 3, 4, 5)]
+    store_bars("TESTA", days)
+    store_bars("ZZZZ", days[:1])  # a symbol outside the configured universe
+
+    exit_code, output, _ = run_script("inspect_db")
+
+    assert exit_code == 0
+    assert "test_signaliq.db" in output
+    lines = [line.split() for line in output.splitlines()]
+    assert ["bars", "5", "rows"] in lines
+    assert ["ingestion_runs", "0", "rows"] in lines
+    assert ["data_quality_checks", "0", "rows"] in lines
+    assert ["TESTA", "1Day", "4", "2024-01-02T05:00:00Z", "2024-01-05T05:00:00Z"] in lines
+    assert any("ZZZZ" in line and "not in the configured universe" in line for line in output.splitlines())
+    assert "Configured symbols without data: TESTB" in output
+    assert "source=alpaca  feed=iex  adjustment=split" in output
+    assert "Stored bars have not been validated yet" in output
+
+
+def test_inspect_cli_can_print_json(run_script, store_bars, engine):
+    store_bars("TESTA", [date(2024, 1, 2), date(2024, 1, 3)])
+
+    exit_code, output, _ = run_script("inspect_db", "--json")
+
+    assert exit_code == 0
+    stats = json.loads(output)
+    assert stats["tables"] == {"bars": 2, "ingestion_runs": 0, "data_quality_checks": 0}
+    assert stats["bars"] == [
+        {
+            "symbol": "TESTA",
+            "timeframe": "1Day",
+            "bar_count": 2,
+            "first_timestamp": "2024-01-02T05:00:00Z",
+            "last_timestamp": "2024-01-03T05:00:00Z",
+            "in_universe": True,
+        }
+    ]
+    assert stats["provenance"] == [
+        {"source": "alpaca", "feed": "iex", "adjustment": "split", "bar_count": 2}
+    ]
+    assert stats["universe"] == {"configured": ["TESTA", "TESTB"], "without_data": ["TESTB"]}
+    assert stats["ingestion_runs"] == {"by_status": {}, "latest": []}
+    assert stats["quality_checks"] == {"by_status": {}, "latest_stored_validation": None}
+    assert stats["database"]["size_bytes"] > 0
+
+
+def test_inspect_cli_only_reads(run_script, store_bars, engine):
+    store_bars("TESTA", [date(2024, 1, 2)])
+    before = table_row_counts(engine)
+
+    run_script("inspect_db")
+
+    assert table_row_counts(engine) == before
+
+
+def test_inspect_cli_explains_a_missing_database(run_script):
+    # No ``engine`` fixture: the database file was never created.
+    exit_code, _, errors = run_script("inspect_db")
+
+    assert exit_code == 2
+    assert "database not found" in errors
+    assert "python -m app.database" in errors

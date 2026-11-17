@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import ConfigurationError, get_settings
 from app.models import Base
 
-#: The tables this milestone creates.
-EXPECTED_TABLES: tuple[str, ...] = ("bars", "data_quality_checks", "ingestion_runs")
+#: The tables this milestone creates, in the order they are reported.
+EXPECTED_TABLES: tuple[str, ...] = ("bars", "ingestion_runs", "data_quality_checks")
 
 
 def database_file_path(database_url: str) -> Path | None:
@@ -88,9 +88,9 @@ def table_row_counts(engine: Engine) -> dict[str, int]:
     """Return the number of rows in each SignalIQ table."""
     counts: dict[str, int] = {}
     with engine.connect() as connection:
-        for table in Base.metadata.sorted_tables:
-            counts[table.name] = connection.execute(
-                select(func.count()).select_from(table)
+        for name in EXPECTED_TABLES:
+            counts[name] = connection.execute(
+                select(func.count()).select_from(Base.metadata.tables[name])
             ).scalar_one()
     return counts
 
@@ -118,8 +118,9 @@ def main(argv: list[str] | None = None) -> int:
 
     location = database_file_path(settings.database_url) or "in-memory database"
     print(f"Database ready: {location}")
-    for table in tables:
-        print(f"  {table:<22} {counts.get(table, 0):>10,} rows")
+    for table in EXPECTED_TABLES:
+        state = f"{counts[table]:>10,} rows" if table in tables else "   MISSING"
+        print(f"  {table:<22} {state}")
     return 0
 
 
