@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import Engine, func, select
 
 from app.config import ConfigurationError, Settings, get_settings
+from app.data.validation import SessionCoverage, stored_session_coverage
 from app.database import (
     create_db_engine,
     database_file_path,
@@ -39,6 +40,20 @@ LATEST_RUNS_SHOWN = 5
 
 def _iso(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%dT%H:%M:%SZ") if value is not None else None
+
+
+def _session_coverage(summary: SessionCoverage | None) -> dict[str, Any] | None:
+    """Coverage against the trading calendar (None when not available for the timeframe)."""
+    if summary is None:
+        return None
+    return {
+        "first_session": summary.first_session.isoformat(),
+        "last_session": summary.last_session.isoformat(),
+        "sessions_expected": summary.sessions_expected,
+        "sessions_missing": summary.sessions_missing,
+        "gap_free_from": summary.gap_free_from.isoformat(),
+        "gap_free_sessions": summary.gap_free_sessions,
+    }
 
 
 def collect_statistics(engine: Engine, settings: Settings) -> dict[str, Any]:
@@ -56,6 +71,7 @@ def collect_statistics(engine: Engine, settings: Settings) -> dict[str, Any]:
             .group_by(Bar.symbol, Bar.timeframe)
             .order_by(Bar.symbol, Bar.timeframe)
         ).all()
+        sessions = stored_session_coverage(connection)
         provenance = connection.execute(
             select(Bar.source, Bar.feed, Bar.adjustment, func.count().label("bar_count"))
             .group_by(Bar.source, Bar.feed, Bar.adjustment)
@@ -121,6 +137,7 @@ def collect_statistics(engine: Engine, settings: Settings) -> dict[str, Any]:
                 "first_timestamp": _iso(row.first_timestamp),
                 "last_timestamp": _iso(row.last_timestamp),
                 "in_universe": row.symbol in settings.symbols,
+                "session_coverage": _session_coverage(sessions.get((row.symbol, row.timeframe))),
             }
             for row in coverage
         ],
@@ -195,6 +212,26 @@ def format_statistics(stats: dict[str, Any]) -> str:
     if stats["universe"]["without_data"]:
         lines.append(
             "  Configured symbols without data: " + ", ".join(stats["universe"]["without_data"])
+        )
+
+    with_sessions = [row for row in stats["bars"] if row["session_coverage"] is not None]
+    if with_sessions:
+        lines.append("\nSession coverage against the trading calendar (New York dates)")
+        lines.append(
+            f"  {'SYMBOL':<8}{'TIMEFRAME':<11}{'FIRST':<12}{'LAST':<12}"
+            f"{'EXPECTED':>9}{'MISSING':>9}  {'GAP-FREE FROM':<15}{'SESSIONS':>9}"
+        )
+        for row in with_sessions:
+            sessions = row["session_coverage"]
+            lines.append(
+                f"  {row['symbol']:<8}{row['timeframe']:<11}{sessions['first_session']:<12}"
+                f"{sessions['last_session']:<12}{sessions['sessions_expected']:>9,}"
+                f"{sessions['sessions_missing']:>9,}  {sessions['gap_free_from']:<15}"
+                f"{sessions['gap_free_sessions']:>9,}"
+            )
+        lines.append(
+            "  EXPECTED and MISSING count trading sessions between FIRST and LAST. From "
+            "GAP-FREE FROM onwards every expected session has a bar."
         )
 
     if stats["provenance"]:

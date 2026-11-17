@@ -3,7 +3,8 @@
 These tests are skipped automatically unless Alpaca credentials are configured
 (``APCA_API_KEY_ID`` and ``APCA_API_SECRET_KEY`` in the environment or in the
 project's ``.env`` file). When they run they make a handful of small, real
-requests for one month of daily bars.
+requests for one month of daily bars (for the ten configured symbols in one of
+the tests) and one week around a market holiday.
 
 They check structure and behaviour only: authentication, the response shape,
 pagination, validation, idempotent storage and the API. They assert nothing
@@ -29,9 +30,11 @@ from app.data.ingestion import IngestionService
 from app.data.validation import (
     NEW_YORK,
     analyse_session_gaps,
+    early_close_reason,
     normalize_alpaca_bars,
     session_date,
     session_window_utc,
+    trading_days,
     validate_records,
 )
 from app.database import create_db_engine, create_session_factory, init_db
@@ -136,9 +139,72 @@ def test_live_wrong_credentials_are_rejected(live_settings: Settings):
 
     with (
         AlpacaClient(wrong) as client,
-        pytest.raises((AlpacaAuthenticationError, AlpacaPermissionError)),
+        pytest.raises((AlpacaAuthenticationError, AlpacaPermissionError)) as excinfo,
     ):
         fetch_month(client)
+
+    # The error is readable and repeats neither the credentials nor an HTML page.
+    message = str(excinfo.value)
+    assert "INVALID-KEY-ID-FOR-TEST" not in message
+    assert "invalid-secret-for-test" not in message
+    assert "<" not in message
+    assert "\n" not in message
+
+
+def test_live_every_configured_symbol_returns_valid_bars(live_settings: Settings):
+    start, end = session_window_utc(FIRST_SESSION, LAST_SESSION)
+    symbols = live_settings.symbols
+
+    with AlpacaClient(live_settings) as client:
+        bars = client.fetch_bars(list(symbols), timeframe="1Day", start=start, end=end)
+        feed, adjustment = client.feed, client.adjustment
+
+    # Exactly the requested symbols came back, each validated on its own.
+    assert sorted(bars) == sorted(symbols)
+    for symbol in symbols:
+        records = normalize_alpaca_bars(
+            {symbol: bars[symbol]},
+            timeframe="1Day",
+            source=SOURCE_ALPACA,
+            feed=feed,
+            adjustment=adjustment,
+        )
+        result = validate_records(
+            records, allowed_symbols=(symbol,), expected_feed=feed, expected_adjustment=adjustment
+        )
+        assert [finding.message for finding in result.findings] == [], symbol
+        analysis = analyse_session_gaps(
+            (session_date(record["timestamp"]) for record in records), FIRST_SESSION, LAST_SESSION
+        )
+        assert (analysis.gaps, analysis.unexpected_dates) == ((), ()), symbol
+        assert len(records) == EXPECTED_SESSIONS, symbol
+
+
+def test_live_holiday_has_no_bar_and_the_early_close_after_it_has_one(live_client: AlpacaClient):
+    # Thanksgiving week 2024: Thursday the 28th was closed, Friday the 29th closed at 13:00.
+    first, last = date(2024, 11, 25), date(2024, 11, 29)
+    start, end = session_window_utc(first, last)
+
+    bars = live_client.fetch_bars([SYMBOL], timeframe="1Day", start=start, end=end)[SYMBOL]
+    sessions = [
+        session_date(record["timestamp"])
+        for record in normalize_alpaca_bars(
+            {SYMBOL: bars},
+            timeframe="1Day",
+            source=SOURCE_ALPACA,
+            feed=live_client.feed,
+            adjustment=live_client.adjustment,
+        )
+    ]
+
+    assert sessions == [
+        date(2024, 11, 25),
+        date(2024, 11, 26),
+        date(2024, 11, 27),
+        date(2024, 11, 29),
+    ]
+    assert sessions == trading_days(first, last)
+    assert early_close_reason(date(2024, 11, 29)) == "Day after Thanksgiving"
 
 
 def test_live_ingestion_is_idempotent_and_served_by_the_api(live_settings: Settings, tmp_path):

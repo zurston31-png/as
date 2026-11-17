@@ -108,6 +108,98 @@ def test_non_sqlite_database_is_refused():
         create_db_engine("postgresql://user@localhost/signaliq")
 
 
+def test_indexes_and_the_unique_bar_key_exist(engine):
+    inspector = inspect(engine)
+
+    def indexed(table: str) -> set[tuple[str, ...]]:
+        return {tuple(index["column_names"]) for index in inspector.get_indexes(table)}
+
+    # The primary key is what makes a bar unique; SQLite backs it with a unique index.
+    with engine.connect() as connection:
+        bar_indexes = connection.execute(text("PRAGMA index_list('bars')")).mappings().all()
+    unique = [index for index in bar_indexes if index["unique"] and index["origin"] == "pk"]
+    assert len(unique) == 1
+    with engine.connect() as connection:
+        key_columns = [
+            row["name"]
+            for row in connection.execute(
+                text(f"PRAGMA index_info('{unique[0]['name']}')")
+            ).mappings()
+        ]
+    assert key_columns == ["symbol", "timeframe", "timestamp"]
+
+    assert ("ingestion_run_id",) in indexed("bars")
+    assert ("symbol", "started_at") in indexed("ingestion_runs")
+    assert indexed("data_quality_checks") >= {
+        ("check_run_id",),
+        ("ingestion_run_id",),
+        ("status",),
+        ("symbol", "check_name"),
+    }
+
+
+def test_data_survives_closing_and_reopening_the_database(tmp_path):
+    """What a restart of the application does: a new engine on the same file."""
+    url = f"sqlite:///{(tmp_path / 'restart.db').as_posix()}"
+    stamp = datetime(2024, 1, 2, 5, 0, tzinfo=UTC)
+
+    first = create_db_engine(url)
+    init_db(first)
+    with session_scope(database.create_session_factory(first)) as session:
+        run = IngestionRun(
+            status=RunStatus.SUCCEEDED,
+            symbol="TESTA",
+            timeframe="1Day",
+            source="alpaca",
+            feed="iex",
+            adjustment="split",
+            currency="USD",
+            requested_start=stamp,
+            requested_end=stamp,
+            bars_fetched=1,
+            bars_inserted=1,
+        )
+        session.add(run)
+        session.flush()
+        session.add(fixture_bar(stamp, ingestion_run_id=run.id))
+        session.add(
+            DataQualityCheck(
+                check_run_id="fixture-check-run",
+                stage=CheckStage.INGESTION,
+                ingestion_run_id=run.id,
+                check_name="negative_volume",
+                status=CheckStatus.PASSED,
+                symbol="TESTA",
+                timeframe="1Day",
+                records_checked=1,
+                message="fixture",
+            )
+        )
+    first.dispose()
+
+    second = create_db_engine(url)
+    try:
+        # Initialising again must not empty or recreate anything.
+        init_db(second)
+        assert table_row_counts(second) == {
+            "bars": 1,
+            "ingestion_runs": 1,
+            "data_quality_checks": 1,
+        }
+        with session_scope(database.create_session_factory(second)) as session:
+            bar = session.execute(select(Bar)).scalar_one()
+            assert (bar.symbol, bar.timestamp, bar.close) == ("TESTA", stamp, 10.5)
+            assert session.get(IngestionRun, bar.ingestion_run_id).status == RunStatus.SUCCEEDED
+        # The unique key is still enforced after reopening.
+        with (
+            pytest.raises(IntegrityError),
+            session_scope(database.create_session_factory(second)) as session,
+        ):
+            session.add(fixture_bar(stamp, close=99.0))
+    finally:
+        second.dispose()
+
+
 # --- Insertion and primary key ----------------------------------------------
 
 
@@ -363,6 +455,14 @@ def test_inspect_cli_can_print_json(run_script, store_bars, engine):
             "first_timestamp": "2024-01-02T05:00:00Z",
             "last_timestamp": "2024-01-03T05:00:00Z",
             "in_universe": True,
+            "session_coverage": {
+                "first_session": "2024-01-02",
+                "last_session": "2024-01-03",
+                "sessions_expected": 2,
+                "sessions_missing": 0,
+                "gap_free_from": "2024-01-02",
+                "gap_free_sessions": 2,
+            },
         }
     ]
     assert stats["provenance"] == [
@@ -372,6 +472,23 @@ def test_inspect_cli_can_print_json(run_script, store_bars, engine):
     assert stats["ingestion_runs"] == {"by_status": {}, "latest": []}
     assert stats["quality_checks"] == {"by_status": {}, "latest_stored_validation": None}
     assert stats["database"]["size_bytes"] > 0
+
+
+def test_inspect_cli_shows_where_the_gap_free_history_starts(run_script, store_bars, engine):
+    # An isolated bar on 2 January, nothing on 3 and 4 January, then two sessions.
+    store_bars("TESTA", [date(2024, 1, 2), date(2024, 1, 5), date(2024, 1, 8)])
+
+    exit_code, output, _ = run_script("inspect_db")
+
+    assert exit_code == 0
+    assert "Session coverage against the trading calendar" in output
+    row = next(
+        line.split()
+        for line in output.splitlines()
+        if line.split()[:3] == ["TESTA", "1Day", "2024-01-02"]
+    )
+    #        symbol   timeframe first         last          expected missing gap-free-from sessions
+    assert row == ["TESTA", "1Day", "2024-01-02", "2024-01-08", "5", "2", "2024-01-05", "2"]
 
 
 def test_inspect_cli_only_reads(run_script, store_bars, engine):

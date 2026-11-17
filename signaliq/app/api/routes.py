@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app import __version__
 from app.config import Settings, is_valid_symbol, is_valid_timeframe
-from app.data.validation import CHECK_DESCRIPTIONS, NEW_YORK
+from app.data.validation import CHECK_DESCRIPTIONS, NEW_YORK, stored_session_coverage
 from app.models import (
     Bar,
     CheckStage,
@@ -108,11 +108,28 @@ class BarsResponse(BaseModel):
     bars: list[BarOut]
 
 
+class SessionCoverageOut(BaseModel):
+    """Stored daily bars measured against the trading calendar (New York dates)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    first_session: date
+    last_session: date
+    #: Trading sessions expected / without a bar between the first and last session.
+    sessions_expected: int
+    sessions_missing: int
+    #: From this session to ``last_session`` every expected session has a bar.
+    gap_free_from: date
+    gap_free_sessions: int
+
+
 class TimeframeCoverage(BaseModel):
     timeframe: str
     bar_count: int
     first_timestamp: datetime
     last_timestamp: datetime
+    #: Null for timeframes without calendar support (anything but daily bars).
+    session_coverage: SessionCoverageOut | None = None
 
 
 class SymbolInfo(BaseModel):
@@ -322,14 +339,19 @@ def list_symbols(session: SessionDep, settings: SettingsDep) -> SymbolsResponse:
         .order_by(Bar.symbol, Bar.timeframe)
     ).all()
 
+    sessions = stored_session_coverage(session, settings.symbols)
     coverage: dict[str, list[TimeframeCoverage]] = {symbol: [] for symbol in settings.symbols}
     for row in rows:
+        summary = sessions.get((row.symbol, row.timeframe))
         coverage[row.symbol].append(
             TimeframeCoverage(
                 timeframe=row.timeframe,
                 bar_count=row.bar_count,
                 first_timestamp=row.first_timestamp,
                 last_timestamp=row.last_timestamp,
+                session_coverage=(
+                    SessionCoverageOut.model_validate(summary) if summary is not None else None
+                ),
             )
         )
     symbols = [

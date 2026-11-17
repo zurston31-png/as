@@ -25,11 +25,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import polars as pl
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.config import SOURCE_ALPACA, Settings
-from app.models import CheckStage, CheckStatus, DataQualityCheck, utc_now
+from app.models import Bar, CheckStage, CheckStatus, DataQualityCheck, utc_now
 
 # =============================================================================
 # Check names
@@ -192,6 +193,51 @@ def closure_reason(day: date) -> str | None:
 def is_trading_day(day: date) -> bool:
     """True when the US stock market holds a regular session on ``day``."""
     return closure_reason(day) is None
+
+
+#: Regular-session closing times in New York. An early close ends the regular
+#: session at 13:00; the day is still a trading session with its own daily bar.
+REGULAR_CLOSE_TIME = time(16, 0)
+EARLY_CLOSE_TIME = time(13, 0)
+
+#: The early-close rules below were cross-checked against an independent
+#: exchange calendar for this range. Before 2004 the exchanges used one-off
+#: schedules that these rules do not reproduce (see README).
+EARLY_CLOSES_VERIFIED_FROM = date(2004, 1, 1)
+EARLY_CLOSES_VERIFIED_TO = date(2027, 12, 31)
+
+
+@cache
+def market_early_closes(year: int) -> Mapping[date, str]:
+    """Return the scheduled 13:00 early closes of ``year``.
+
+    An early close shortens the session; it does not remove it. Such a day is
+    a trading day, a daily bar is expected for it, and a missing bar is
+    reported as a gap like on any other session.
+    """
+    early: dict[date, str] = {}
+    # 3 July and 24 December close early only when they fall on a Monday to
+    # Thursday. On a Friday they are the observed holiday itself, and on a
+    # weekend there is no session to shorten.
+    if date(year, 7, 3).weekday() <= _THURSDAY:
+        early[date(year, 7, 3)] = "Day before Independence Day"
+    # The Friday after Thanksgiving closes early every year.
+    early[_nth_weekday(year, 11, _THURSDAY, 4) + timedelta(days=1)] = "Day after Thanksgiving"
+    if date(year, 12, 24).weekday() <= _THURSDAY:
+        early[date(year, 12, 24)] = "Christmas Eve"
+    return MappingProxyType(early)
+
+
+def early_close_reason(day: date) -> str | None:
+    """Explain why ``day`` is a shortened session (None for a full session or a closed day)."""
+    return market_early_closes(day.year).get(day)
+
+
+def session_close_time(day: date) -> time | None:
+    """Return the New York time the regular session ends on ``day`` (None when closed)."""
+    if not is_trading_day(day):
+        return None
+    return EARLY_CLOSE_TIME if early_close_reason(day) else REGULAR_CLOSE_TIME
 
 
 def trading_days(start: date, end: date) -> list[date]:
@@ -807,6 +853,82 @@ def analyse_session_gaps(
         gaps=tuple(gaps),
         unexpected_dates=unexpected,
     )
+
+
+@dataclass(frozen=True)
+class SessionCoverage:
+    """What is stored for one symbol, measured against the trading calendar.
+
+    ``gap_free_from`` is the first session of the uninterrupted run of sessions
+    that ends at ``last_session``. Everything from that date on has a bar for
+    every expected trading session; anything stored before it is separated
+    from the run by at least one missing session.
+    """
+
+    first_session: date
+    last_session: date
+    #: Trading sessions with a bar, from ``first_session`` to ``last_session``.
+    sessions_present: int
+    #: Trading sessions the calendar expects in that range.
+    sessions_expected: int
+    #: Expected sessions in that range that have no bar.
+    sessions_missing: int
+    gap_free_from: date
+    #: Sessions (all with a bar) from ``gap_free_from`` to ``last_session``.
+    gap_free_sessions: int
+
+
+def summarise_session_coverage(present_dates: Iterable[date]) -> SessionCoverage | None:
+    """Summarise stored session dates against the trading calendar.
+
+    Returns None when no bar falls on a trading session. Nothing is filled in:
+    the summary only describes what is stored.
+    """
+    present = {day for day in present_dates if is_trading_day(day)}
+    if not present:
+        return None
+    first, last = min(present), max(present)
+    expected = trading_days(first, last)
+    gap_free_from = last
+    gap_free_sessions = 0
+    for day in reversed(expected):
+        if day not in present:
+            break
+        gap_free_from = day
+        gap_free_sessions += 1
+    return SessionCoverage(
+        first_session=first,
+        last_session=last,
+        sessions_present=len(present),
+        sessions_expected=len(expected),
+        sessions_missing=len(expected) - len(present),
+        gap_free_from=gap_free_from,
+        gap_free_sessions=gap_free_sessions,
+    )
+
+
+def stored_session_coverage(
+    database: Session | Connection, symbols: Sequence[str] | None = None
+) -> dict[tuple[str, str], SessionCoverage]:
+    """Return the session coverage of stored bars per ``(symbol, timeframe)``.
+
+    Only timeframes with calendar support (daily bars) are summarised; other
+    timeframes are left out. This reads the database and changes nothing.
+    """
+    statement = select(Bar.symbol, Bar.timeframe, Bar.timestamp).where(
+        Bar.timeframe.in_(GAP_CHECK_TIMEFRAMES)
+    )
+    if symbols is not None:
+        statement = statement.where(Bar.symbol.in_(symbols))
+    dates: dict[tuple[str, str], list[date]] = defaultdict(list)
+    for symbol, timeframe, timestamp in database.execute(statement):
+        dates[(symbol, timeframe)].append(session_date(timestamp))
+    coverage: dict[tuple[str, str], SessionCoverage] = {}
+    for key, days in dates.items():
+        summary = summarise_session_coverage(days)
+        if summary is not None:
+            coverage[key] = summary
+    return coverage
 
 
 def _sessions_text(gap: SessionGap) -> str:

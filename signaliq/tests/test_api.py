@@ -75,6 +75,57 @@ def test_api_starts_without_alpaca_credentials(settings, engine):
         assert client.get("/symbols").status_code == 200
 
 
+def test_no_response_ever_contains_the_configured_credentials(
+    settings, engine, store_bars, ingestion_service, alpaca_mock, make_bar
+):
+    # Give the database something of every kind: bars, a failed run with an
+    # error message from the provider, and quality findings.
+    store_bars("TESTA", SESSIONS)
+    alpaca_mock.add_error(401, "fixture: credentials rejected")
+    ingestion_service.ingest_symbol("TESTB")
+    key_id, secret = settings.require_alpaca_credentials()
+
+    paths = [
+        "/",
+        "/health",
+        "/symbols",
+        "/bars/TESTA",
+        "/bars/UNKNOWN",
+        "/bars/TESTA?start=not-a-date",
+        "/ingestion/runs",
+        "/quality/report",
+        "/openapi.json",
+        "/docs",
+    ]
+    with TestClient(create_app(settings)) as client:
+        responses = [client.get(path) for path in paths]
+
+    runs = responses[paths.index("/ingestion/runs")].json()["runs"]
+    assert runs[0]["status"] == "failed"
+    assert "credentials rejected" in runs[0]["error_message"]
+    for path, response in zip(paths, responses, strict=True):
+        exposed = response.text + repr(dict(response.headers))
+        assert key_id not in exposed, path
+        assert secret not in exposed, path
+        assert "APCA-API" not in exposed.upper(), path
+
+
+def test_api_offers_no_trading_or_write_endpoints(api_client):
+    paths = api_client.get("/openapi.json").json()["paths"]
+
+    assert sorted(paths) == [
+        "/bars/{symbol}",
+        "/health",
+        "/ingestion/runs",
+        "/quality/report",
+        "/symbols",
+    ]
+    assert {method for operations in paths.values() for method in operations} == {"get"}
+    for path in ("/orders", "/positions", "/account", "/trade", "/signals"):
+        assert api_client.get(path).status_code == 404
+        assert api_client.post(path, json={}).status_code == 404
+
+
 def test_api_creates_the_database_tables_on_startup(settings):
     # No ``engine`` fixture here: the application itself must create the tables.
     with TestClient(create_app(settings)) as client:
@@ -135,15 +186,43 @@ def test_symbols_reports_what_is_stored(api_client, store_bars):
             "bar_count": 9,
             "first_timestamp": "2024-01-02T05:00:00Z",
             "last_timestamp": "2024-01-12T05:00:00Z",
+            "session_coverage": {
+                "first_session": "2024-01-02",
+                "last_session": "2024-01-12",
+                "sessions_expected": 9,
+                "sessions_missing": 0,
+                "gap_free_from": "2024-01-02",
+                "gap_free_sessions": 9,
+            },
         },
         {
             "timeframe": "1Hour",
             "bar_count": 2,
             "first_timestamp": "2024-01-02T05:00:00Z",
             "last_timestamp": "2024-01-03T05:00:00Z",
+            # No calendar support for intraday bars yet.
+            "session_coverage": None,
         },
     ]
     assert body["symbols"][1] == {"symbol": "TESTB", "bar_count": 0, "coverage": []}
+
+
+def test_symbols_reports_where_the_gap_free_history_starts(api_client, store_bars):
+    # One isolated bar, three missing sessions (3, 4 and 5 January), then an
+    # uninterrupted run. The stray bar stays visible; nothing is filled in.
+    store_bars("TESTA", [SESSIONS[0], *SESSIONS[4:]])
+
+    coverage = api_client.get("/symbols").json()["symbols"][0]["coverage"][0]
+
+    assert coverage["bar_count"] == 6
+    assert coverage["session_coverage"] == {
+        "first_session": "2024-01-02",
+        "last_session": "2024-01-12",
+        "sessions_expected": 9,
+        "sessions_missing": 3,
+        "gap_free_from": "2024-01-08",
+        "gap_free_sessions": 5,
+    }
 
 
 # =============================================================================

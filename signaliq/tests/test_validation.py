@@ -5,7 +5,7 @@ Every bar here is a SYNTHETIC TEST FIXTURE with invented values (see
 ``conftest.py``). Nothing in this file is real market data.
 """
 
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 import pytest
 from sqlalchemy import select, text
@@ -30,16 +30,21 @@ from app.data.validation import (
     analyse_session_gaps,
     build_check_rows,
     closure_reason,
+    early_close_reason,
     easter_sunday,
     is_trading_day,
     last_completed_session,
+    market_early_closes,
     market_holidays,
     new_check_run_id,
     normalize_alpaca_bars,
     parse_utc_timestamp,
+    session_close_time,
     session_date,
     session_gap_findings,
     session_window_utc,
+    stored_session_coverage,
+    summarise_session_coverage,
     trading_days,
     validate_records,
     validate_stored_bars,
@@ -659,6 +664,82 @@ def test_notable_calendar_days(day, is_open):
     assert is_trading_day(day) is is_open
 
 
+#: Scheduled 13:00 early closes, 2004-2027, taken from the same independent
+#: reference calendar (``exchange_calendars`` XNYS) and NOT from the code under
+#: test. The twelve dates from November 2020 to December 2025 were additionally
+#: confirmed against real hourly IEX volume (see README).
+REFERENCE_EARLY_CLOSES = {
+    2004: "11-26", 2005: "11-25", 2006: "07-03 11-24", 2007: "07-03 11-23 12-24",
+    2008: "07-03 11-28 12-24", 2009: "11-27 12-24", 2010: "11-26", 2011: "11-25",
+    2012: "07-03 11-23 12-24", 2013: "07-03 11-29 12-24", 2014: "07-03 11-28 12-24",
+    2015: "11-27 12-24", 2016: "11-25", 2017: "07-03 11-24", 2018: "07-03 11-23 12-24",
+    2019: "07-03 11-29 12-24", 2020: "11-27 12-24", 2021: "11-26", 2022: "11-25",
+    2023: "07-03 11-24", 2024: "07-03 11-29 12-24", 2025: "07-03 11-28 12-24",
+    2026: "11-27 12-24", 2027: "11-26",
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("year", sorted(REFERENCE_EARLY_CLOSES))
+def test_early_closes_match_the_independent_reference(year):
+    early = [day.strftime("%m-%d") for day in market_early_closes(year)]
+
+    assert early == REFERENCE_EARLY_CLOSES[year].split()
+
+
+def test_an_early_close_is_a_trading_session_with_an_earlier_closing_time():
+    black_friday, thanksgiving, ordinary = (
+        date(2024, 11, 29),
+        date(2024, 11, 28),
+        date(2024, 11, 27),
+    )
+
+    assert early_close_reason(black_friday) == "Day after Thanksgiving"
+    assert is_trading_day(black_friday)
+    assert session_close_time(black_friday) == time(13, 0)
+
+    assert early_close_reason(ordinary) is None
+    assert session_close_time(ordinary) == time(16, 0)
+
+    # A full-day closure is not an early close and has no closing time.
+    assert early_close_reason(thanksgiving) is None
+    assert session_close_time(thanksgiving) is None
+    assert session_close_time(date(2024, 11, 30)) is None  # Saturday
+
+
+@pytest.mark.parametrize(
+    ("day", "is_early"),
+    [
+        (date(2024, 7, 3), True),  # Wednesday before Independence Day
+        (date(2026, 7, 2), False),  # 4 July 2026 is a Saturday: Thursday stays a full session
+        (date(2020, 7, 2), False),  # same situation in 2020
+        (date(2022, 7, 1), False),  # 4 July 2022 was a Monday: no early close on Friday
+        (date(2021, 12, 23), False),  # Christmas observed on Friday 24th: no early close
+        (date(2021, 12, 24), False),  # ... and the 24th itself was closed all day
+        (date(2023, 12, 22), False),  # 24 December 2023 was a Sunday
+        (date(2025, 12, 24), True),
+    ],
+)
+def test_notable_early_close_days(day, is_early):
+    assert (early_close_reason(day) is not None) is is_early
+
+
+def test_a_missing_bar_on_an_early_close_day_is_a_gap_like_any_other_session():
+    # 27 and 29 November 2024 are sessions (the 29th closes early); the 28th is Thanksgiving.
+    complete = analyse_session_gaps(
+        [date(2024, 11, 27), date(2024, 11, 29), date(2024, 12, 2)],
+        date(2024, 11, 27),
+        date(2024, 12, 2),
+    )
+    without_early_close = analyse_session_gaps(
+        [date(2024, 11, 27), date(2024, 12, 2)], date(2024, 11, 27), date(2024, 12, 2)
+    )
+
+    assert complete.gaps == ()
+    assert [(gap.kind, gap.sessions) for gap in without_early_close.gaps] == [
+        (GAP_INTERIOR, (date(2024, 11, 29),))
+    ]
+
+
 def test_closure_reason_names_the_holiday():
     assert closure_reason(date(2024, 7, 4)) == "Independence Day"
     assert closure_reason(date(2024, 3, 29)) == "Good Friday"
@@ -931,6 +1012,72 @@ def test_dates_outside_the_window_are_ignored():
 
     assert analysis.gaps == ()
     assert analysis.present_sessions == 9
+
+
+# --- Session coverage ----------------------------------------------------------
+
+
+def test_coverage_of_an_uninterrupted_history_starts_at_the_first_bar():
+    # 2 to 12 January 2024 has nine sessions; the weekend in between is not a gap.
+    days = weekdays(date(2024, 1, 2), date(2024, 1, 12))
+
+    coverage = summarise_session_coverage(days)
+
+    assert (coverage.first_session, coverage.last_session) == (date(2024, 1, 2), date(2024, 1, 12))
+    assert (coverage.sessions_present, coverage.sessions_expected, coverage.sessions_missing) == (
+        9,
+        9,
+        0,
+    )
+    assert (coverage.gap_free_from, coverage.gap_free_sessions) == (date(2024, 1, 2), 9)
+
+
+def test_coverage_reports_where_the_gap_free_history_starts_after_a_stray_bar():
+    # The shape real data showed: one isolated early bar, a long hole, then a
+    # complete history. The holiday on 15 January 2024 does not break the run.
+    stray = date(2023, 12, 1)
+    run = weekdays(date(2024, 1, 8), date(2024, 1, 19), closed=(date(2024, 1, 15),))
+
+    coverage = summarise_session_coverage([stray, *run])
+
+    assert coverage.first_session == stray
+    assert coverage.gap_free_from == date(2024, 1, 8)
+    assert coverage.gap_free_sessions == len(run) == 9
+    assert coverage.sessions_present == 10
+    assert coverage.sessions_missing == len(trading_days(date(2023, 12, 4), date(2024, 1, 5)))
+    assert coverage.sessions_expected == coverage.sessions_present + coverage.sessions_missing
+
+
+def test_coverage_restarts_after_the_most_recent_missing_session():
+    days = [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 5), date(2024, 1, 8)]
+
+    coverage = summarise_session_coverage(days)
+
+    assert coverage.sessions_missing == 1  # 4 January
+    assert (coverage.gap_free_from, coverage.gap_free_sessions) == (date(2024, 1, 5), 2)
+
+
+def test_coverage_ignores_bars_on_closed_days_and_handles_no_data():
+    assert summarise_session_coverage([]) is None
+    assert summarise_session_coverage([date(2024, 1, 6), date(2024, 1, 1)]) is None  # Sat, holiday
+
+    single = summarise_session_coverage([date(2024, 1, 6), date(2024, 1, 8)])
+    assert (single.first_session, single.last_session) == (date(2024, 1, 8), date(2024, 1, 8))
+    assert (single.sessions_present, single.sessions_missing, single.gap_free_sessions) == (1, 0, 1)
+
+
+def test_stored_session_coverage_is_per_symbol_and_only_for_daily_bars(db_session, store_bars):
+    store_bars("TESTA", [date(2024, 1, 2), date(2024, 1, 4), date(2024, 1, 5)])
+    store_bars("TESTA", [date(2024, 1, 2)], timeframe="1Hour")
+    store_bars("TESTB", [date(2024, 1, 2), date(2024, 1, 3)])
+
+    coverage = stored_session_coverage(db_session)
+
+    assert sorted(coverage) == [("TESTA", "1Day"), ("TESTB", "1Day")]
+    assert coverage[("TESTA", "1Day")].gap_free_from == date(2024, 1, 4)
+    assert coverage[("TESTA", "1Day")].sessions_missing == 1
+    assert coverage[("TESTB", "1Day")].gap_free_from == date(2024, 1, 2)
+    assert sorted(stored_session_coverage(db_session, ["TESTB"])) == [("TESTB", "1Day")]
 
 
 def test_window_without_any_trading_day_has_nothing_to_report():
