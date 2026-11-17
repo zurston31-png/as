@@ -504,6 +504,43 @@ python scripts/run_strategy.py momentum_breakout --period out_of_sample
 
 None of these commands has been run on the real database yet.
 
+### Auditing stored runs
+
+```bash
+python scripts/audit_strategy.py momentum_breakout                     # newest in-sample run per cost scenario
+python scripts/audit_strategy.py momentum_breakout --expect-trades 62  # also check the trade count
+python scripts/audit_strategy.py momentum_breakout --benchmark-only    # buy-and-hold only
+```
+
+The audit only reads. It reports, per run: total and annualised return, volatility and
+Sharpe ratio (risk-free rate 0), exposure, win rate, profit factor, payoff ratio, average
+win and loss, expectancy in dollars and R, slippage paid, holding periods, exits by
+reason, the longest losing streak, the five largest wins and losses, the maximum
+drawdown with its recovery, results and profit shares by symbol next to buy-and-hold,
+dependence on one symbol or trade, and integrity checks (one trade per taken signal,
+losing trades present, ending equity equal to the start plus every net result, complete
+equity curve). With several runs it compares the cost scenarios side by side. It exits
+with code 1 if an integrity check or `--expect-trades` fails.
+
+Definitions are in `app/strategies/audit.py`. Two are easy to misread: a symbol's
+"strategy return" is its net profit divided by the shared starting equity, not the
+result of trading that symbol alone; and "net without the best symbol" only subtracts
+that symbol's trades, without re-simulating the freed cash and slots.
+
+**Buy-and-hold over the in-sample period** (2021-06-01 open to 2024-12-31 close,
+split-adjusted, dividends not included), computed from the stored bars:
+
+| Symbol | Return | Max drawdown | | Symbol | Return | Max drawdown |
+| --- | --- | --- | --- | --- | --- | --- |
+| AAPL | +100.3 % | 31.2 % | | MSFT | +67.9 % | 37.5 % |
+| AMD | +49.2 % | 65.4 % | | NVDA | +724.8 % | 66.4 % |
+| AMZN | +35.3 % | 56.1 % | | QQQ | +52.5 % | 35.6 % |
+| GOOGL | +59.5 % | 44.4 % | | SPY | +38.7 % | 25.4 % |
+| META | +77.4 % | 76.7 % | | TSLA | +93.0 % | 73.6 % |
+
+Equal dollars in all ten at the start, never rebalanced: +129.9 %. NVDA alone supplies
+more than half of that, which any strategy result on this universe must be read against.
+
 ### Limitations that apply to every strategy result
 
 - **IEX is one exchange.** Prices are IEX prices, not the consolidated tape. Breakout
@@ -614,7 +651,7 @@ runtime where the proxy supplies the secret key.
 | 6 | Repeated imports do not create duplicates | Executed: a second `ingest.py --all` inserted 0 bars and found all 15,861 unchanged, with 0 conflicts |
 | 7 | Validation catches errors and never overwrites | Executed in tests, and on a copy of the real database: a changed close was reported as a `conflicting_record` with both values and the stored value was kept; a deleted bar was downloaded again |
 | 8 | API endpoints return stored records | Executed: 52 requests against the running server covering every endpoint, the symbol, timeframe and date filters, paging and invalid input; identical results after a restart |
-| 9 | All automated tests pass | At the end of Milestone 1: 491 passed, including the 6 live tests. With the Milestone 2 work: 670 passed, including the 6 live tests; with no credentials configured, 664 passed and 6 skipped |
+| 9 | All automated tests pass | At the end of Milestone 1: 491 passed, including the 6 live tests. With the Milestone 2 work so far: 688 passed, including the 6 live tests; with no credentials configured, 682 passed and 6 skipped |
 | 10 | Credentials are not exposed | Executed: the key ID does not occur in any API response, in the server log, or in the ingestion output at `DEBUG` level; in this runtime the application never holds the secret key |
 | 11 | README instructions reproduce the setup | Executed on Linux: install, database, ingest, validate, inspect, API and tests. The Windows commands were not executed |
 
@@ -708,7 +745,8 @@ signaliq/
 │   │   ├── data.py           read usable daily bars for a simulation (read-only)
 │   │   ├── simulator.py      one strategy, one virtual account, fills and bookkeeping
 │   │   ├── momentum_breakout.py  Strategy A rules
-│   │   └── runner.py         run, record, out-of-sample protection
+│   │   ├── runner.py         run, record, out-of-sample protection
+│   │   └── audit.py          read-only performance audit of stored runs
 │   ├── api/
 │   │   └── routes.py         the five endpoints
 │   └── main.py              FastAPI application
@@ -716,7 +754,8 @@ signaliq/
 │   ├── ingest.py            download bars
 │   ├── validate.py          validate stored bars
 │   ├── inspect_db.py        database statistics
-│   └── run_strategy.py      simulate one strategy and record the run
+│   ├── run_strategy.py      simulate one strategy and record the run
+│   └── audit_strategy.py    audit stored runs (read-only)
 ├── tests/                   offline tests plus one optional live test file
 ├── data/                    the SQLite database is created here
 ├── alembic.ini              for the alembic command line (optional)
