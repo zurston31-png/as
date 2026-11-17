@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.data.alpaca_client import AlpacaClient
+from app.data.ingestion import IngestionService
 from app.database import create_db_engine, create_session_factory, init_db, session_scope
 from app.models import Bar
 
@@ -235,3 +236,14 @@ def store_bars(session_factory: sessionmaker[Session]) -> Callable[..., None]:
                 session.add(Bar(**values))
 
     return _store
+
+
+@pytest.fixture
+def ingestion_service(
+    settings: Settings,
+    session_factory: sessionmaker[Session],
+    alpaca_client: AlpacaClient,
+    fixed_now: datetime,
+) -> IngestionService:
+    """Ingestion wired to the mocked provider, a throw-away database and a fixed clock."""
+    return IngestionService(settings, session_factory, alpaca_client, now=lambda: fixed_now)

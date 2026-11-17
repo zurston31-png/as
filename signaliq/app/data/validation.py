@@ -898,14 +898,20 @@ def build_check_rows(
     findings: Sequence[Finding],
     ingestion_run_id: int | None = None,
     skipped: Mapping[str, str] | None = None,
+    records_checked_by_check: Mapping[str, int] | None = None,
 ) -> list[DataQualityCheck]:
     """Create ``data_quality_checks`` rows for one symbol and timeframe.
 
     Every finding becomes its own row. A check that found nothing gets a single
     ``passed`` row, and a check that could not run gets a ``skipped`` row, so
     the table shows what was verified and not only what went wrong.
+
+    ``records_checked`` is the number of records each check looked at;
+    ``records_checked_by_check`` overrides it for individual checks (the gap
+    check, for example, counts expected sessions rather than bars).
     """
     skipped = skipped or {}
+    records_checked_by_check = records_checked_by_check or {}
     created_at = utc_now()
     rows: list[DataQualityCheck] = []
 
@@ -945,7 +951,7 @@ def build_check_rows(
                 f"{CHECK_DESCRIPTIONS[check_name]}: no problems found",
                 symbol=symbol,
                 timeframe=timeframe,
-                records_checked=records_checked,
+                records_checked=records_checked_by_check.get(check_name, records_checked),
             )
     return rows
 
@@ -1059,6 +1065,7 @@ def validate_stored_bars(
         group_records = grouped_records.get((symbol, group_timeframe), [])
         group_findings = list(grouped_findings.get((symbol, group_timeframe), []))
         skipped: dict[str, str] = {}
+        counts_by_check: dict[str, int] = {}
 
         if group_timeframe not in GAP_CHECK_TIMEFRAMES:
             skipped[CHECK_SESSION_GAP] = (
@@ -1080,10 +1087,10 @@ def validate_stored_bars(
                 for record in group_records
                 if record["timestamp"] is not None
             ]
+            analysis = analyse_session_gaps(present, window_start, window_end)
+            counts_by_check[CHECK_SESSION_GAP] = analysis.expected_sessions
             gap_findings = session_gap_findings(
-                analyse_session_gaps(present, window_start, window_end),
-                symbol=symbol,
-                timeframe=group_timeframe,
+                analysis, symbol=symbol, timeframe=group_timeframe
             )
             group_findings.extend(gap_findings)
             all_findings.extend(gap_findings)
@@ -1098,6 +1105,7 @@ def validate_stored_bars(
                 records_checked=len(group_records),
                 findings=group_findings,
                 skipped=skipped,
+                records_checked_by_check=counts_by_check,
             )
         )
 
