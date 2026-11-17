@@ -227,7 +227,7 @@ def format_statistics(stats: dict[str, Any]) -> str:
         )
     else:
         lines.append("  Stored bars have not been validated yet (run: python scripts/validate.py)")
-    return "\n".join(lines)
+    return "\n".join(line.rstrip() for line in lines)
 
 
 def main(argv: list[str] | None = None) -> int:

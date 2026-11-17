@@ -816,7 +816,7 @@ def test_a_missing_session_is_detected():
     assert finding.check_name == CHECK_SESSION_GAP
     assert finding.status == CheckStatus.FAILED
     assert finding.message == (
-        "Missing data: 1 expected trading session (2024-01-09) between stored bars have no bar"
+        "Missing data: no bar for 1 expected trading session (2024-01-09) between stored bars"
     )
     assert finding.details["missing_sessions"] == ["2024-01-09"]
     assert finding.details["gap_type"] == GAP_INTERIOR

@@ -828,22 +828,22 @@ def session_gap_findings(analysis: GapAnalysis, *, symbol: str, timeframe: str) 
         what = _sessions_text(gap)
         if gap.kind == GAP_INTERIOR:
             status = CheckStatus.FAILED
-            message = f"Missing data: {what} between stored bars have no bar"
+            message = f"Missing data: no bar for {what} between stored bars"
         elif gap.kind == GAP_LEADING:
             status = CheckStatus.WARNING
             message = (
-                f"History starts later than requested: {what} before the first stored bar "
-                "have no bar. The provider's history for this feed may simply begin later."
+                f"History starts later than requested: no bar for {what} before the first "
+                "stored bar. The provider's history for this feed may simply begin later."
             )
         elif gap.kind == GAP_TRAILING:
             status = CheckStatus.WARNING
             message = (
-                f"Data is not up to date: {what} after the last stored bar have no bar. "
+                f"Data is not up to date: no bar for {what} after the last stored bar. "
                 "Run the ingestion again to update."
             )
         else:
             status = CheckStatus.WARNING
-            message = f"No data: none of the {what} in the window has a stored bar"
+            message = f"No data: no bar is stored for {what} in the window"
 
         listed = gap.sessions[:_MAX_LISTED_SESSIONS]
         findings.append(
