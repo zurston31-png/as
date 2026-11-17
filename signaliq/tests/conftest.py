@@ -10,7 +10,7 @@ TESTB) are deliberately fake, and the mocked HTTP responses only imitate the
 *shape* of Alpaca's documented bars payload.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, date, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -23,7 +23,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.data.alpaca_client import AlpacaClient
-from app.database import create_db_engine, create_session_factory, init_db
+from app.database import create_db_engine, create_session_factory, init_db, session_scope
+from app.models import Bar
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -205,3 +206,32 @@ def alpaca_client(
     )
     yield client
     client.close()
+
+
+@pytest.fixture
+def store_bars(session_factory: sessionmaker[Session]) -> Callable[..., None]:
+    """Insert SYNTHETIC daily bars straight into the database, bypassing ingestion."""
+
+    def _store(symbol: str, days: Iterable[date], *, timeframe: str = "1Day", **overrides: Any) -> None:
+        with session_scope(session_factory) as session:
+            for day in days:
+                midnight_new_york = datetime.combine(day, time(0, 0), tzinfo=NEW_YORK)
+                values: dict[str, Any] = {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "timestamp": midnight_new_york.astimezone(UTC),
+                    "open": 10.0,
+                    "high": 11.0,
+                    "low": 9.0,
+                    "close": 10.5,
+                    "volume": 1000,
+                    "vwap": 10.2,
+                    "trade_count": 25,
+                    "source": "alpaca",
+                    "feed": "iex",
+                    "adjustment": "split",
+                }
+                values.update(overrides)
+                session.add(Bar(**values))
+
+    return _store
