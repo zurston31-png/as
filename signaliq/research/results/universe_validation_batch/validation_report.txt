@@ -1,0 +1,237 @@
+SIP UNIVERSE VALIDATION BATCH - research data only, no strategy, no backtest
+Research database: sip_research.db
+Bars: SIP daily, 2016-01-01 to 2024-12-31 (nothing from 2025 on was read)
+
+1. BATCH
+  Tickers requested: 136  by selection: {'known_case': 54, 'discovered': 36, 'random': 46}
+  By category: {'acquired_cash': 11, 'acquired_stock': 3, 'acquired_stock_cash': 4, 'active': 9, 'bankrupt': 18, 'cash_merger_acquiree': 12, 'failed': 3, 'linked': 36, 'name_change_old_symbol': 12, 'renamed': 5, 'split_2016_2018': 10, 'stock_merger_acquiree': 12, 'ticker_reuse': 1}
+  Discovered through renames: BOWX (from WE), EXE (from CHK), FB (from META), RADCQ (from RAD), WEWKQ (from WE), WEKWQ (from WE), BIGGQ (from BIG), EXPRQ (from EXPR), SAVEQ (from SAVE), YELLQ (from YELL), YRCW (from YELL), ELV (from ANTM), FI (from FISV), RTX (from UTX), BTNB (from PGRU), CFII (from VIEW), CNVS (from CIDM), AIVL (from DTN), NAMS (from FLAC), IMVTW (from HSACW), NHWK (from HTBX), STEC (from HYW), RATE (from IRHG), MONDW (from ITHXW), JMPNL (from JMPD), NOVVW (from RMSGW), BRLSW (from OXUSW), SMMC (from BTRS), VIEWQ (from VIEW), YGFGF (from YGF), NUWE (from CHFS), XLYO (from MDGS), XPRO (from FI), SCPX (from NHWK), XYLO (from XLYO), SCPXD (from SCPX)
+  Rename discovery complete (no new ticker in the last round): True
+  Tickers with no SIP bars 2016-2024 (23): AQFH, BIGGQ, BUYWX, CVQTX, DGTCX, EXPRQ, IDMAX, JHBBX, LCATX, MRIRF, MTOKX, PLTKX, RADCQ, SAVEQ, SCPXD, TFSIX, UECN, VIEWQ, WEKWQ, WEWKQ, WFSDX, YELLQ, YGFGF
+  Filler bars (no trade, price copied) dropped: 8,171 in 48 tickers; most: RATE 1268, SHLD 1094, MON 791, OILD 554, FSBC 506, NOVVW 489, DO 486, SBNY 455, FI 421, HTZ 258, BACA 246, CETUR 230
+
+2. SECURITIES (internal ids)
+  Securities: 124; status {'trading': 34, 'ended': 90}
+  Exit types: {'bankruptcy_otc': 6, 'cash_merger': 20, 'none': 34, 'stock_and_cash_merger': 2, 'stock_merger': 6, 'unexplained': 56}
+  Securities with more than one ticker (renames linked): 21
+  Tickers used by more than one security: 19: BACA -> ids [98, 123], CETUR -> ids [108, 110, 112, 118, 119], CHK -> ids [12, 86], CRC -> ids [14, 82], DO -> ids [18, 100], FI -> ids [24, 25], FSBC -> ids [71, 90], HSACW -> ids [75, 77], HTZ -> ids [31, 95], MDGS -> ids [66, 67], META -> ids [23, 91], MON -> ids [38, 87], NOVVW -> ids [93, 104, 106, 107, 111, 114, 115, 116, 117, 120, 122], OILD -> ids [70, 72, 96], RATE -> ids [46, 101], SCPX -> ids [30, 121], SHLD -> ids [52, 83, 92, 113], SMMC -> ids [76, 78], WDRW -> ids [65, 68]
+
+3. KNOWN CASES: what the data shows against what really happened
+  AAPL   expected: active through 2024; same company as in the IEX data
+         id 1: AAPL 2016-01-04..2024-12-31; trading, exit none
+  MSFT   expected: active through 2024; same company as in the IEX data
+         id 39: MSFT 2016-01-04..2024-12-31; trading, exit none
+  NVDA   expected: active through 2024; same company as in the IEX data
+         id 41: NVDA 2016-01-04..2024-12-31; trading, exit none
+  AMD    expected: active through 2024; same company as in the IEX data
+         id 3: AMD 2016-01-04..2024-12-31; trading, exit none
+  AMZN   expected: active through 2024; same company as in the IEX data
+         id 4: AMZN 2016-01-04..2024-12-31; trading, exit none
+  TSLA   expected: active through 2024; same company as in the IEX data
+         id 57: TSLA 2016-01-04..2024-12-31; trading, exit none
+  GOOGL  expected: active through 2024; same company as in the IEX data
+         id 29: GOOGL 2016-01-04..2024-12-31; trading, exit none
+  META   expected: Facebook as FB until 2022-06-08, META from 2022-06-09; the ticker META belonged to an ETF from 2021-06 to 2022-01
+         id 23: FB 2016-01-04..2022-06-08 -> META 2022-06-09..2024-12-31; trading, exit none
+         id 91: META 2021-06-30..2022-01-28 -> METV 2022-01-31..2024-12-31; trading, exit none
+  SPY    expected: ETF; excluded from membership
+         id 55: SPY 2016-01-04..2024-12-31; trading, exit none
+  QQQ    expected: ETF; excluded from membership
+         id 44: QQQ 2016-01-04..2024-12-31; trading, exit none
+  SIVB   expected: bank failure; last exchange trade 2023-03-09
+         id 53: SIVB 2016-01-04..2023-03-09; ended, exit unexplained, assumed value 0.0
+  SBNY   expected: bank failure March 2023
+         id 50: SBNY 2016-01-04..2023-03-10; ended, exit unexplained, assumed value 0.0
+  FRC    expected: bank failure; last exchange trade late April 2023
+         id 26: FRC 2016-01-04..2023-04-28; ended, exit unexplained, assumed value 0.0
+  BBBY   expected: bankruptcy; delisted 2023-05
+         id 7: BBBY 2016-01-04..2023-05-02; ended, exit unexplained, assumed value 0.0
+  JCP    expected: J.C. Penney bankruptcy 2020
+         id 33: JCP 2016-01-04..2020-05-18; ended, exit unexplained, assumed value 0.0
+  FTR    expected: Frontier bankruptcy 2020; re-emerged as a new company FYBR
+         id 27: FTR 2016-01-04..2020-04-23; ended, exit unexplained, assumed value 0.0
+  CHK    expected: Chesapeake bankruptcy 2020; NEW company listed as CHK 2021-02; renamed EXE 2024-10
+         id 12: CHK 2016-01-04..2020-06-26; ended, exit unexplained, assumed value 0.0
+         id 86: CHK 2021-02-10..2024-10-01 -> EXE 2024-10-02..2024-12-31; trading, exit none
+  HTZ    expected: Hertz bankruptcy 2020; NEW company listed as HTZ 2021-11. Old shareholders were in fact paid out: a known exception to total loss
+         id 31: HTZ 2016-01-04..2020-10-29; ended, exit unexplained, assumed value 0.0
+         id 95: HTZ 2021-11-09..2024-12-31; trading, exit none
+  WE     expected: WeWork: SPAC BOWX renamed WE 2021-10; bankruptcy 2023-11 (WEWKQ)
+         id 81: BOWX 2020-10-21..2021-10-20 -> WE 2021-10-21..2023-11-03; ended, exit bankruptcy_otc, assumed value 0.0
+  RAD    expected: Rite Aid bankruptcy 2023
+         id 45: RAD 2016-01-04..2023-10-13; ended, exit bankruptcy_otc, assumed value 0.0
+  PRTY   expected: Party City bankruptcy 2023
+         id 42: PRTY 2016-01-04..2023-01-17; ended, exit unexplained, assumed value 0.0
+  YELL   expected: Yellow Corp bankruptcy 2023
+         id 64: YRCW 2016-01-04..2021-02-05 -> YELL 2021-02-08..2023-08-15; ended, exit bankruptcy_otc, assumed value 0.0
+  REV    expected: Revlon bankruptcy 2022
+         id 47: REV 2016-01-04..2022-10-20; ended, exit unexplained, assumed value 0.0
+  EXPR   expected: Express bankruptcy 2024
+         id 22: EXPR 2016-01-04..2024-03-06; ended, exit unexplained, assumed value 0.0
+  BIG    expected: Big Lots bankruptcy 2024
+         id 8: BIG 2016-01-04..2024-09-06; ended, exit bankruptcy_otc, assumed value 0.0
+  SAVE   expected: Spirit Airlines bankruptcy 2024-11
+         id 49: SAVE 2016-01-04..2024-11-15; ended, exit bankruptcy_otc, assumed value 0.0
+  ENDP   expected: Endo bankruptcy 2022
+         id 20: ENDP 2016-01-04..2022-08-25; ended, exit unexplained, assumed value 0.0
+  DO     expected: Diamond Offshore bankruptcy 2020; new company listed 2021
+         id 18: DO 2016-01-04..2020-04-24; ended, exit unexplained, assumed value 0.0
+         id 100: DO 2022-03-30..2024-09-03; ended, exit cash_merger, assumed value 5.65
+  WLL    expected: Whiting bankruptcy 2020; new WLL 2020; merged into Chord 2022
+         id 62: WLL 2016-01-04..2022-06-30; ended, exit stock_and_cash_merger
+  CRC    expected: California Resources bankruptcy 2020; new CRC listed 2020-10
+         id 14: CRC 2016-01-04..2020-07-15; ended, exit unexplained, assumed value 0.0
+         id 82: CRC 2020-10-28..2024-12-31; trading, exit none
+  SHLD   expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
+         id 52: SHLD 2016-01-04..2018-10-23; ended, exit unexplained, assumed value 0.0
+         id 83: SHLD 2020-11-06..2021-08-17; ended, exit unexplained, assumed value 0.0
+         id 92: SHLD 2021-09-02..2021-10-08; ended, exit unexplained, assumed value 0.0
+         id 113: SHLD 2023-09-14..2024-12-31; trading, exit none
+  TWTR   expected: taken private at $54.20, 2022-10-28
+         id 58: TWTR 2016-01-04..2022-10-27; ended, exit cash_merger, assumed value 54.2
+  ATVI   expected: acquired by Microsoft at $95, 2023-10-13
+         id 6: ATVI 2016-01-04..2023-10-12; ended, exit cash_merger, assumed value 95.0
+  CTXS   expected: taken private 2022-09
+         id 15: CTXS 2016-01-04..2022-09-29; ended, exit cash_merger, assumed value 104.0
+  SPLK   expected: acquired by Cisco 2024-03
+         id 54: SPLK 2016-01-04..2024-03-15; ended, exit cash_merger, assumed value 157.0
+  SGEN   expected: acquired by Pfizer 2023-12
+         id 51: SGEN 2016-01-04..2023-12-13; ended, exit cash_merger, assumed value 229.0
+  HZNP   expected: acquired by Amgen 2023-10
+         id 32: HZNP 2016-01-04..2023-10-05; ended, exit cash_merger, assumed value 116.5
+  CERN   expected: acquired by Oracle 2022-06
+         id 11: CERN 2016-01-04..2022-06-07; ended, exit cash_merger, assumed value 95.0
+  MLNX   expected: acquired by NVIDIA at $125, 2020-04-27
+         id 37: MLNX 2016-01-04..2020-04-24; ended, exit cash_merger, assumed value 125.0
+  XLNX   expected: acquired by AMD in stock, 2022-02-14
+         id 63: XLNX 2016-01-04..2022-02-11; ended, exit stock_merger
+  MXIM   expected: acquired by Analog Devices in stock, 2021-08
+         id 40: MXIM 2016-01-04..2021-08-25; ended, exit stock_merger
+  PXD    expected: acquired by Exxon in stock, 2024-05
+         id 43: PXD 2016-01-04..2024-05-02; ended, exit stock_merger
+  ALXN   expected: acquired by AstraZeneca, cash and stock, 2021-07
+         id 2: ALXN 2016-01-04..2021-07-20; ended, exit stock_and_cash_merger
+  VMW    expected: acquired by Broadcom, cash and stock, 2023-11
+         id 61: VMW 2016-01-04..2023-11-21; ended, exit cash_merger, assumed value 142.5
+  LNKD   expected: acquired by Microsoft 2016-12 (before dense corporate actions)
+         id 36: LNKD 2016-01-04..2016-12-07; ended, exit unexplained, assumed value 0.0
+  MON    expected: acquired by Bayer 2018-06 (before dense corporate actions)
+         id 38: MON 2016-01-04..2018-06-06; ended, exit unexplained, assumed value 0.0
+         id 87: MON 2021-03-16..2022-12-23; ended, exit unexplained, assumed value 0.0
+  TWX    expected: acquired by AT&T 2018-06 (before dense corporate actions)
+         id 59: TWX 2016-01-04..2018-06-14; ended, exit unexplained, assumed value 0.0
+  RHT    expected: acquired by IBM 2019-07 (before dense corporate actions)
+         id 48: RHT 2016-01-04..2019-07-08; ended, exit unexplained, assumed value 0.0
+  CELG   expected: acquired by Bristol-Myers 2019-11 (before dense corporate actions)
+         id 10: CELG 2016-01-04..2019-11-20; ended, exit unexplained, assumed value 0.0
+  UTX    expected: United Technologies renamed RTX after the Raytheon merger, 2020-04
+         id 60: UTX 2016-01-04..2020-04-02 -> RTX 2020-04-03..2024-12-31; trading, exit none
+  FISV   expected: Fiserv renamed FI, 2023
+         id 25: FISV 2016-01-04..2023-06-06 -> FI 2023-06-07..2024-12-31; trading, exit none
+  ANTM   expected: Anthem renamed ELV (Elevance), 2022-06
+         id 5: ANTM 2016-01-04..2022-06-27 -> ELV 2022-06-28..2024-12-31; trading, exit none
+  DISCA  expected: Discovery merged with WarnerMedia and became WBD, 2022-04
+         id 17: DISCA 2016-01-04..2022-04-08; ended, exit unexplained, assumed value 0.0
+  METV   expected: the ETF that traded as META until 2022-01-28
+         id 91: META 2021-06-30..2022-01-28 -> METV 2022-01-31..2024-12-31; trading, exit none
+
+4. TICKER HISTORY AGAINST ALPACA'S OWN COMPANY MAPPING (raw closes and volumes)
+  Securities whose every real trade matches Alpaca's mapped series for their last ticker: 96 of 124
+    id 14 (CRC, last trade 2020-07-15): 1038 match, 0 differ, 103 not in Alpaca's mapped series
+    id 25 (FISV -> FI, last trade 2024-12-31): 395 match, 1869 differ, 0 not in Alpaca's mapped series
+    id 30 (HTBX -> NHWK -> SCPX, last trade 2024-06-14): 91 match, 0 differ, 2036 not in Alpaca's mapped series
+    id 31 (HTZ, last trade 2020-10-29): 0 match, 0 differ, 1216 not in Alpaca's mapped series
+    id 35 (LILAK, last trade 2024-12-31): 1761 match, 0 differ, 503 not in Alpaca's mapped series
+    id 45 (RAD, last trade 2023-10-13): 1130 match, 0 differ, 829 not in Alpaca's mapped series
+    id 56 (TOPS, last trade 2024-12-31): 2228 match, 0 differ, 32 not in Alpaca's mapped series
+    id 64 (YRCW -> YELL, last trade 2023-08-15): 634 match, 0 differ, 1283 not in Alpaca's mapped series
+    id 67 (MDGS -> XLYO -> XYLO, last trade 2024-12-31): 176 match, 0 differ, 1986 not in Alpaca's mapped series
+    id 70 (OILD, last trade 2016-09-07): 0 match, 0 differ, 39 not in Alpaca's mapped series
+    id 71 (FSBC, last trade 2020-04-30): 0 match, 0 differ, 704 not in Alpaca's mapped series
+    id 72 (OILD, last trade 2020-03-27): 0 match, 0 differ, 757 not in Alpaca's mapped series
+    id 74 (JMPD -> JMPNL, last trade 2021-09-10): 411 match, 0 differ, 515 not in Alpaca's mapped series
+    id 78 (SMMC -> BTRS, last trade 2022-12-15): 486 match, 0 differ, 231 not in Alpaca's mapped series
+    id 84 (BTNB -> PGRU, last trade 2024-12-12): 684 match, 0 differ, 289 not in Alpaca's mapped series
+    id 89 (HYW -> STEC, last trade 2024-12-31): 115 match, 0 differ, 828 not in Alpaca's mapped series
+    id 93 (NOVVW, last trade 2022-09-29): 0 match, 0 differ, 158 not in Alpaca's mapped series
+    id 101 (IRHG -> RATE, last trade 2024-12-31): 528 match, 79 differ, 0 not in Alpaca's mapped series
+    id 104 (NOVVW, last trade 2022-12-13): 0 match, 0 differ, 17 not in Alpaca's mapped series
+    id 106 (NOVVW, last trade 2023-01-13): 0 match, 0 differ, 6 not in Alpaca's mapped series
+    id 107 (NOVVW, last trade 2023-05-04): 0 match, 0 differ, 29 not in Alpaca's mapped series
+    id 111 (NOVVW, last trade 2023-10-05): 0 match, 0 differ, 44 not in Alpaca's mapped series
+    id 114 (NOVVW, last trade 2023-11-10): 0 match, 0 differ, 3 not in Alpaca's mapped series
+    id 115 (NOVVW, last trade 2024-01-08): 0 match, 0 differ, 8 not in Alpaca's mapped series
+    id 116 (NOVVW, last trade 2024-02-23): 0 match, 0 differ, 1 not in Alpaca's mapped series
+    id 117 (NOVVW, last trade 2024-06-25): 0 match, 0 differ, 23 not in Alpaca's mapped series
+    id 120 (NOVVW, last trade 2024-08-05): 0 match, 0 differ, 3 not in Alpaca's mapped series
+    id 122 (NOVVW, last trade 2024-09-13): 0 match, 0 differ, 7 not in Alpaca's mapped series
+
+5. RAW AGAINST SPLIT-ADJUSTED PRICES
+  Split events recorded for batch tickers: 53
+  Sessions compared (our raw/factor against Alpaca's adjusted close): 124,185; within 0.1%: 116,715
+  Securities with any session off by more than 0.1%: 8
+    id 25 (FISV -> FI): worst 6591.6% on 2020-09-30, 1869 of 2264 sessions off
+    id 101 (IRHG -> RATE): worst 149.5% on 2022-10-20, 79 of 607 sessions off
+    id 73 (CHFS -> NUWE): worst 100.0% on 2024-12-17, 1914 of 1914 sessions off
+    id 66 (MDGS): worst 99.8% on 2016-01-26, 1 of 1 sessions off
+    id 21 (ENRJ): worst 96.0% on 2016-09-15, 560 of 560 sessions off
+    id 96 (OILD): worst 90.0% on 2022-04-14, 789 of 789 sessions off
+    id 56 (TOPS): worst 90.0% on 2023-10-23, 2228 of 2228 sessions off
+    id 65 (WDRW): worst 80.0% on 2016-02-17, 30 of 30 sessions off
+  Day-to-day raw moves beyond +80%/-45%: 156; explained by a recorded split: 45; not explained: 111
+    id 7 BBBY 2023-02-06: 3.05 -> 5.86 (adjusted series jumps too (a real move))
+    id 7 BBBY 2023-02-07: 5.86 -> 3.01 (adjusted series jumps too (a real move))
+    id 12 CHK 2020-03-13: 0.1531 -> 0.3 (adjusted series jumps too (a real move))
+    id 12 CHK 2020-04-30: 26.85 -> 14.5 (adjusted series jumps too (a real move))
+    id 12 CHK 2020-06-08: 24.8 -> 69.92 (adjusted series jumps too (a real move))
+    id 12 CHK 2020-06-09: 69.92 -> 23.75 (adjusted series jumps too (a real move))
+    id 13 CIDM 2020-05-20: 0.62 -> 1.27 (adjusted series jumps too (a real move))
+    id 13 CIDM 2020-06-04: 1.31 -> 3.63 (adjusted series jumps too (a real move))
+    id 14 CRC 2020-03-09: 5.59 -> 2.62 (adjusted series jumps too (a real move))
+    id 14 CRC 2020-03-27: 2.47 -> 1.32 (adjusted series jumps too (a real move))
+    id 18 DO 2020-03-13: 1.42 -> 3.76 (adjusted series jumps too (a real move))
+    id 20 ENDP 2022-05-18: 1.16 -> 0.6201 (adjusted series jumps too (a real move))
+    id 20 ENDP 2022-06-28: 0.3831 -> 0.71 (adjusted series jumps too (a real move))
+    id 21 ENRJ 2016-01-06: 0.29 -> 0.56 (adjusted series jumps too (a real move))
+    id 21 ENRJ 2016-08-18: 0.3 -> 0.54 (adjusted series does NOT jump (split missing from our events))
+    id 22 EXPR 2021-01-25: 1.79 -> 4.15 (adjusted series jumps too (a real move))
+    id 22 EXPR 2021-01-27: 3.04 -> 9.55 (adjusted series jumps too (a real move))
+    id 22 EXPR 2021-01-28: 9.55 -> 4.7 (adjusted series jumps too (a real move))
+    id 26 FRC 2023-03-13: 81.76 -> 31.21 (adjusted series jumps too (a real move))
+    id 26 FRC 2023-03-20: 23.03 -> 12.18 (adjusted series jumps too (a real move))
+  Decisions where the $5 filter would answer differently on adjusted prices: 285 (e.g. id 12 on 2020-01-31: raw 0.51, adjusted 102.36, id 13 on 2020-01-31: raw 0.54, adjusted 10.80, id 22 on 2020-01-31: raw 4.01, adjusted 80.20)
+
+6. POINT-IN-TIME MEMBERSHIP (validation rule: top 25 of the batch)
+  Rule: {'size': 25, 'min_price': 5.0, 'min_history': 126, 'window': 63, 'min_active_sessions': 50}  fingerprint 52ef18943346f9d1
+  Decisions: 59 month-ends, 2020-01-31 to 2024-11-29
+  Members per decision: min 25, max 25
+  Distinct members: 50, of which later ended (delisted while or after being a member): 24
+    id 2 ALXN: member until the 2021-06-30 decision, last trade 2021-07-20, exit stock_and_cash_merger
+    id 6 ATVI: member until the 2023-09-29 decision, last trade 2023-10-12, exit cash_merger
+    id 7 BBBY: member until the 2022-09-30 decision, last trade 2023-05-02, exit unexplained
+    id 8 BIG: member until the 2024-02-29 decision, last trade 2024-09-06, exit bankruptcy_otc
+    id 9 BSJN: member until the 2023-11-30 decision, last trade 2023-12-15, exit cash_merger
+    id 11 CERN: member until the 2022-05-31 decision, last trade 2022-06-07, exit cash_merger
+    id 15 CTXS: member until the 2022-08-31 decision, last trade 2022-09-29, exit cash_merger
+    id 17 DISCA: member until the 2022-03-31 decision, last trade 2022-04-08, exit unexplained
+    id 26 FRC: member until the 2023-03-31 decision, last trade 2023-04-28, exit unexplained
+    id 32 HZNP: member until the 2023-09-29 decision, last trade 2023-10-05, exit cash_merger
+    id 34 LHCG: member until the 2023-01-31 decision, last trade 2023-02-21, exit cash_merger
+    id 40 MXIM: member until the 2021-07-30 decision, last trade 2021-08-25, exit stock_merger
+    id 43 PXD: member until the 2024-04-30 decision, last trade 2024-05-02, exit stock_merger
+    id 49 SAVE: member until the 2024-02-29 decision, last trade 2024-11-15, exit bankruptcy_otc
+    id 50 SBNY: member until the 2023-02-28 decision, last trade 2023-03-10, exit unexplained
+    id 51 SGEN: member until the 2023-11-30 decision, last trade 2023-12-13, exit cash_merger
+    id 53 SIVB: member until the 2023-02-28 decision, last trade 2023-03-09, exit unexplained
+    id 54 SPLK: member until the 2024-02-29 decision, last trade 2024-03-15, exit cash_merger
+    id 58 TWTR: member until the 2022-09-30 decision, last trade 2022-10-27, exit cash_merger
+    id 61 VMW: member until the 2023-10-31 decision, last trade 2023-11-21, exit cash_merger
+    id 63 XLNX: member until the 2022-01-31 decision, last trade 2022-02-11, exit stock_merger
+    id 69 RETA: member until the 2023-08-31 decision, last trade 2023-09-25, exit cash_merger
+    id 84 PGRU: member until the 2024-11-29 decision, last trade 2024-12-12, exit cash_merger
+    id 100 DO: member until the 2024-08-30 decision, last trade 2024-09-03, exit cash_merger
+  Members chosen after their last trade: 0
+  Not-eligible reasons (all decisions): {'no_trade_on_decision_session': 4064, 'raw_price_below_minimum': 628, 'excluded_type': 118, 'history_too_short': 134, 'too_few_active_sessions': 35}
+  Recomputed from data cut off at each decision: 59 of 59 identical
+  Every price and volume after 2022-06-30 multiplied by 10: decisions up to then unchanged: True
+  Members whose security type is not known (ETF/preferred/etc. not ruled out): 14: AIVL, BSJN, DES, FSBC, LHCG, LILAK, NAMS, NUWE, OILD, PGRU, RATE, RETA, TOPS, XPRO

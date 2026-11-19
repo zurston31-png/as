@@ -790,5 +790,12 @@ Agreed order. Steps 1 to 4 are done; nothing below them has started.
 5. **Strategy C, mean reversion**, built separately on the same simulator.
 6. **5-minute ingestion and intraday validation**, then Strategy B, VWAP reclaim.
 
+**SIP universe research (in progress).** A validation batch of 136 tickers tested
+security ids, ticker history, corporate actions, raw against adjusted prices and
+point-in-time membership on Alpaca's consolidated (SIP) daily bars, in a separate
+database. Results and the unresolved data problems are in
+[`research/results/universe_validation_batch/`](research/results/universe_validation_batch/README.md).
+The full universe has not been built.
+
 Still open from Milestone 1: how to treat the SPY stray bar in validation, and whether
 the consolidated SIP feed is needed (see [The SIP feed](#the-sip-feed-not-used)).
