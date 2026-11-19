@@ -220,12 +220,19 @@ class AlpacaClient:
         start: datetime,
         end: datetime,
         limit: int | None = None,
+        asof: str | None = None,
     ) -> Iterator[BarsPage]:
         """Yield every page of bars for ``symbols`` between ``start`` and ``end``.
 
         ``start`` and ``end`` must be timezone-aware; both ends are inclusive.
         Pages are requested one after another with ``next_page_token`` until
         the provider reports that no further page exists.
+
+        ``asof`` is passed to the provider's symbol mapping. Left out (the
+        default, and what market data ingestion uses), a symbol is mapped to the
+        company that holds it today, with that company's whole history under
+        earlier tickers. ``"-"`` turns the mapping off: the symbol means exactly
+        the ticker as it traded on each date.
         """
         symbols = list(symbols)
         if not symbols:
@@ -253,6 +260,8 @@ class AlpacaClient:
             "currency": self._currency,
             "sort": "asc",
         }
+        if asof is not None:
+            params["asof"] = asof
 
         seen_tokens: set[str] = set()
         page_token: str | None = None
@@ -292,11 +301,12 @@ class AlpacaClient:
         start: datetime,
         end: datetime,
         limit: int | None = None,
+        asof: str | None = None,
     ) -> dict[str, list[Any]]:
         """Return all bars for ``symbols``, following pagination to the end."""
         collected: dict[str, list[Any]] = {}
         for page in self.iter_bar_pages(
-            symbols, timeframe=timeframe, start=start, end=end, limit=limit
+            symbols, timeframe=timeframe, start=start, end=end, limit=limit, asof=asof
         ):
             for symbol, items in page.bars.items():
                 collected.setdefault(symbol, []).extend(items)
@@ -304,30 +314,47 @@ class AlpacaClient:
 
     # -- request handling -------------------------------------------------------
 
+    def get_json(self, path: str, params: dict[str, str | int]) -> dict[str, Any]:
+        """GET another read-only market data endpoint (for example corporate actions).
+
+        Uses the same credentials, retries and rate-limit handling as the bars
+        requests. Returns the decoded JSON object.
+        """
+        if not path.startswith("/v") or "://" in path:
+            raise ValueError(f"expected an API path such as /v1/corporate-actions, got {path!r}")
+        described = " ".join(f"{key}={value}" for key, value in params.items())
+        response = self._request(path, params, f"GET {path} {described}")
+        try:
+            payload = response.json()
+        except ValueError:
+            raise AlpacaResponseError(
+                f"Alpaca returned a response from {path} that is not JSON."
+            ) from None
+        if not isinstance(payload, dict):
+            raise AlpacaResponseError(f"Alpaca returned an unexpected JSON shape from {path}.")
+        return payload
+
     def _send(self, params: dict[str, str | int], page_number: int) -> httpx.Response:
-        """Send one page request, retrying transient failures."""
+        """Send one bars page request, retrying transient failures."""
+        described = (
+            f"GET {ALPACA_BARS_PATH} symbols={params['symbols']} timeframe={params['timeframe']} "
+            f"start={params['start']} end={params['end']} feed={params['feed']} "
+            f"adjustment={params['adjustment']} limit={params['limit']}"
+            + (f" asof={params['asof']}" if "asof" in params else "")
+            + f" page={page_number}"
+        )
+        return self._request(ALPACA_BARS_PATH, params, described)
+
+    def _request(self, path: str, params: dict[str, str | int], described: str) -> httpx.Response:
+        """Send one request, retrying transient failures. ``described`` is logged."""
         max_attempts = self._max_retries + 1
         for attempt in range(1, max_attempts + 1):
             self._wait_for_rate_limit_window()
-            logger.info(
-                "Alpaca request: GET %s symbols=%s timeframe=%s start=%s end=%s feed=%s "
-                "adjustment=%s limit=%s page=%d attempt=%d/%d",
-                ALPACA_BARS_PATH,
-                params["symbols"],
-                params["timeframe"],
-                params["start"],
-                params["end"],
-                params["feed"],
-                params["adjustment"],
-                params["limit"],
-                page_number,
-                attempt,
-                max_attempts,
-            )
+            logger.info("Alpaca request: %s attempt=%d/%d", described, attempt, max_attempts)
             started = time.monotonic()
             failure: AlpacaAPIError
             try:
-                response = self._http.get(ALPACA_BARS_PATH, params=params)
+                response = self._http.get(path, params=params)
             except httpx.TimeoutException as exc:
                 failure = AlpacaNetworkError(
                     f"The request to Alpaca timed out after {self._timeout_seconds:g} seconds "
