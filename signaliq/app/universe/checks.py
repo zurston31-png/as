@@ -76,13 +76,30 @@ def large_jumps(session: Session) -> list[Jump]:
     return jumps
 
 
+def held_out(session: Session) -> dict[int, str]:
+    from app.universe.models import SplitCheck
+
+    return {
+        check.security_id: "price_adjustment_under_review"
+        for check in session.execute(
+            select(SplitCheck).where(SplitCheck.verdict == "magnitude_mismatch")
+        ).scalars()
+        if check.security_id is not None
+    }
+
+
 def load_history(session: Session) -> tuple[dict[int, list[DailyRow]], dict[int, str]]:
     history: dict[int, list[DailyRow]] = defaultdict(list)
     for bar in session.execute(
         select(SecurityBar).order_by(SecurityBar.security_id, SecurityBar.session)
     ).scalars():
         history[bar.security_id].append(DailyRow(bar.session, bar.close, bar.volume))
-    types = {s.security_id: s.declared_type for s in session.execute(select(Security)).scalars()}
+    types = {
+        s.security_id: s.security_type
+        if s.type_status in ("confirmed", "single_source")
+        else "unknown"
+        for s in session.execute(select(Security)).scalars()
+    }
     return dict(history), types
 
 
@@ -98,6 +115,7 @@ def recompute_with_truncated_data(
 ) -> list[date]:
     """Recompute every decision from data cut off at that decision. Returns sessions that differ."""
     history, types = load_history(session)
+    held = held_out(session)
     stored = stored_members(session)
     decisions = sorted({r.decision_session for r in session.execute(select(Membership)).scalars()})
     calendar = trading_days(data_start, max(decisions)) if decisions else []
@@ -106,7 +124,7 @@ def recompute_with_truncated_data(
         truncated = {sid: [r for r in rows if r.session <= when] for sid, rows in history.items()}
         again = {
             d.security_id
-            for d in decide(when, truncated, types, rule, [s for s in calendar if s <= when])
+            for d in decide(when, truncated, types, rule, [s for s in calendar if s <= when], held)
             if d.member
         }
         if again != stored.get(when, set()):
@@ -120,6 +138,7 @@ def tamper_future(session: Session, rule: MembershipRule, data_start: date, cut:
     No decision up to ``cut`` may change.
     """
     history, types = load_history(session)
+    held = held_out(session)
     stored = stored_members(session)
     tampered = {
         sid: [
@@ -133,7 +152,7 @@ def tamper_future(session: Session, rule: MembershipRule, data_start: date, cut:
     for when in decisions:
         again = {
             d.security_id
-            for d in decide(when, tampered, types, rule, [s for s in calendar if s <= when])
+            for d in decide(when, tampered, types, rule, [s for s in calendar if s <= when], held)
             if d.member
         }
         if again != stored[when]:

@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Run the SIP universe validation batch and print the findings.
 
-Downloads SIP daily bars (raw and split-adjusted) and corporate actions for
-the validation batch, up to 2024-12-31, and writes everything to the SIP
-research database (data/sip_research.db by default). The market data database
-and the Strategy A results are not read or written. Nothing is simulated.
+Downloads SIP daily bars and corporate actions for the validation batch, up to
+2024-12-31, gathers independent evidence (OpenFIGI, Wikidata, hand-entered
+corrections checked against prices) and writes everything to the SIP research
+database (data/sip_research.db by default). The market data database and the
+Strategy A results are not read or written. Nothing is simulated.
 
-    python scripts/universe_validation_batch.py [--report FILE]
+    python scripts/universe_validation_batch.py [--report FILE] [--refresh]
+
+OpenFIGI and Wikidata answers are stored and reused on later runs; --refresh
+asks them again.
 """
 
 import argparse
@@ -21,8 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from sqlalchemy import delete, func, select
 
 from app.config import configure_logging, get_settings
+from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
-from app.universe import checks
+from app.universe import checks, evidence
 from app.universe import pipeline as p
 from app.universe.batch import KNOWN_CASES
 from app.universe.database import open_research_database, research_database_url
@@ -30,28 +35,32 @@ from app.universe.membership import MembershipRule
 from app.universe.models import (
     BatchSymbol,
     CorporateAction,
+    ExitEvidence,
+    ExternalResponse,
     Membership,
     Security,
+    SpinOff,
+    SplitCheck,
     TickerBar,
     TickerHistory,
+    TypeEvidence,
 )
 
 RULE = MembershipRule()
 MAX_DISCOVERY_ROUNDS = 6
 
 
-def run(settings) -> dict:
+def run(settings, refresh: bool) -> dict:
     engine = open_research_database()
     factory = create_session_factory(engine)
     facts: dict = {"database": Path(research_database_url().removeprefix("sqlite:///")).name}
     try:
         with p.sip_client(settings) as client:
             with session_scope(factory) as session:
-                batch = p.build_batch(session, client)
-                facts["batch_size_initial"] = len(batch)
+                facts["batch_size_initial"] = len(p.build_batch(session, client))
             with session_scope(factory) as session:
-                # Every run starts from no stored events, so its result never depends on an
-                # earlier run. Renames are then followed until no new ticker appears.
+                # Every run starts from no stored corporate actions, so its result never
+                # depends on an earlier run. Renames are followed until no new ticker appears.
                 session.execute(delete(CorporateAction))
                 to_fetch = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
                 facts["discovered"] = []
@@ -73,6 +82,13 @@ def run(settings) -> dict:
                     if not to_fetch:
                         break
                 facts["discovery_complete"] = not to_fetch
+                # Spin-off records name the parent "source_symbol", which a symbol filter misses.
+                facts["spin_off_records"] = p.store_corporate_actions(
+                    session,
+                    p.fetch_corporate_actions(
+                        client, symbols=None, types="spin_off", first=p.DATA_START, last=p.DATA_END
+                    ),
+                )
             with session_scope(factory) as session:
                 symbols = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
                 p.store_ticker_bars(session, p.fetch_literal_bars(client, symbols))
@@ -82,6 +98,20 @@ def run(settings) -> dict:
                 p.store_security_bars(session, assembled)
                 facts["fillers"] = assembled.fillers_by_symbol
                 facts["entity_check"] = p.attach_alpaca_adjusted(session, client, settings)
+            with session_scope(factory) as session:
+                evidence.apply_price_adjustments(session, client, p.utc_window)
+            with session_scope(factory) as session:
+                tickers = evidence.plain_tickers(session)
+                facts["openfigi_requests"] = evidence.fetch_openfigi(
+                    session, tickers, refresh=refresh
+                )
+            with session_scope(factory) as session:
+                facts["wikidata_requests"], facts["wikidata_missing"] = evidence.fetch_wikidata(
+                    session, tickers, refresh=refresh
+                )
+            with session_scope(factory) as session:
+                evidence.resolve_types(session)
+                evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
             with session_scope(factory) as session:
                 facts["decisions"] = p.decide_membership(session, RULE)
     finally:
@@ -103,153 +133,207 @@ def report(facts: dict) -> str:
         for sid, items in history.items():
             for h in items:
                 by_symbol[h.symbol].append(sid)
+        path = lambda sid: " -> ".join(h.symbol for h in history[sid])  # noqa: E731
         bar_counts = dict(
             s.execute(select(TickerBar.symbol, func.count()).group_by(TickerBar.symbol)).all()
         )
+        exit_ev = defaultdict(list)
+        for e in s.execute(select(ExitEvidence).order_by(ExitEvidence.id)).scalars():
+            exit_ev[e.security_id].append(e)
+        type_ev = defaultdict(list)
+        for e in s.execute(select(TypeEvidence).order_by(TypeEvidence.id)).scalars():
+            type_ev[e.security_id].append(e)
 
-        print("SIP UNIVERSE VALIDATION BATCH - research data only, no strategy, no backtest")
+        print("SIP UNIVERSE VALIDATION BATCH (v2) - research data only, no strategy, no backtest")
         print(f"Research database: {facts['database']}")
-        print("Bars: SIP daily, 2016-01-01 to 2024-12-31 (nothing from 2025 on was read)\n")
+        print(
+            "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
+        )
+        print(
+            "Independent sources: Alpaca corporate actions, OpenFIGI (security type), Wikidata (company records),"
+        )
+        print(
+            "hand-entered corrections checked against prices. SEC: paused until a contact address is provided.\n"
+        )
 
         print("1. BATCH")
         print(
-            f"  Tickers requested: {len(batch)}  by selection: {dict(Counter(b.selection.split(':')[0] for b in batch))}"
-        )
-        print(f"  By category: {dict(sorted(Counter(b.category for b in batch).items()))}")
-        print(
-            f"  Discovered through renames: {', '.join(f'{a} (from {b})' for a, b in facts['discovered']) or 'none'}"
+            f"  Tickers: {len(batch)}  by selection: {dict(Counter(b.selection.split(':')[0] for b in batch))}"
         )
         print(
-            f"  Rename discovery complete (no new ticker in the last round): {facts['discovery_complete']}"
+            f"  Rename discovery complete: {facts['discovery_complete']}; discovered: {len(facts['discovered'])}"
         )
         no_bars = sorted(b.symbol for b in batch if bar_counts.get(b.symbol, 0) == 0)
+        print(f"  Tickers with no SIP bars 2016-2024 ({len(no_bars)}): {', '.join(no_bars)}")
+        print(f"  Filler bars dropped: {sum(facts['fillers'].values()):,}")
         print(
-            f"  Tickers with no SIP bars 2016-2024 ({len(no_bars)}): {', '.join(no_bars) or 'none'}"
-        )
-        total_fill = sum(facts["fillers"].values())
-        heavy = sorted(((v, k) for k, v in facts["fillers"].items() if v), reverse=True)[:12]
-        print(
-            f"  Filler bars (no trade, price copied) dropped: {total_fill:,} in "
-            f"{sum(1 for v in facts['fillers'].values() if v)} tickers; most: "
-            + ", ".join(f"{k} {v}" for v, k in heavy)
+            f"  Securities: {len(securities)}; status {dict(Counter(x.status for x in securities.values()))}; "
+            f"with more than one ticker: {sum(1 for v in history.values() if len(v) > 1)}"
         )
 
-        print("\n2. SECURITIES (internal ids)")
+        print("\n2. SOURCE COVERAGE")
+        figi = {
+            r.request_key: r.response
+            for r in s.execute(
+                select(ExternalResponse).where(ExternalResponse.source == "openfigi")
+            ).scalars()
+        }
+        wiki = {
+            r.request_key: r.response
+            for r in s.execute(
+                select(ExternalResponse).where(ExternalResponse.source == "wikidata")
+            ).scalars()
+        }
         print(
-            f"  Securities: {len(securities)}; status {dict(Counter(x.status for x in securities.values()))}"
+            f"  OpenFIGI: {sum(1 for v in figi.values() if v)} of {len(figi)} tickers found "
+            f"(requests this run: {facts.get('openfigi_requests', 0)})"
         )
         print(
-            f"  Exit types: {dict(sorted(Counter(x.exit_type for x in securities.values()).items()))}"
+            f"  Wikidata: {sum(1 for v in wiki.values() if v)} of {len(wiki)} tickers have a company item "
+            f"(requests this run: {facts.get('wikidata_requests', 0)})"
         )
-        multi = [sid for sid, items in history.items() if len(items) > 1]
-        print(f"  Securities with more than one ticker (renames linked): {len(multi)}")
-        reused = {sym: sids for sym, sids in by_symbol.items() if len(set(sids)) > 1}
+        missing = facts.get("wikidata_missing", [])
         print(
-            f"  Tickers used by more than one security: {len(reused)}: "
-            + ", ".join(f"{k} -> ids {sorted(set(v))}" for k, v in sorted(reused.items()))
+            f"  Wikidata did not answer for {len(missing)} tickers this run (not looked up, not guessed)"
+            + (f": {', '.join(missing)}" if missing else "")
+        )
+        print(f"  Alpaca spin-off records 2016-2024: {facts.get('spin_off_records', 0)}")
+
+        print("\n3. SECURITY TYPES")
+        grid = Counter((x.security_type, x.type_status) for x in securities.values())
+        for (kind, status), n in sorted(grid.items()):
+            print(f"  {kind:12} {status:14} {n:4}")
+        print("  Conflicts (sources disagree):")
+        for sid, x in sorted(securities.items()):
+            if x.type_status == "conflict":
+                print(
+                    f"    id {sid} {path(sid)}: "
+                    + "; ".join(
+                        f"{e.source}={e.security_type} ({e.detail[:60]})"
+                        for e in type_ev[sid]
+                        if e.source != "declared"
+                    )
+                )
+        unknown = [sid for sid, x in securities.items() if x.type_status == "unknown"]
+        print(
+            f"  Unknown type ({len(unknown)}): "
+            + ", ".join(f"id {sid} {path(sid)}" for sid in sorted(unknown))
+        )
+        mism = []
+        for sid, x in securities.items():
+            declared = {e.security_type for e in type_ev[sid] if e.source == "declared"}
+            if declared and x.security_type not in declared:
+                mism.append(
+                    f"id {sid} {path(sid)}: declared {'/'.join(declared)}, resolved {x.security_type} ({x.type_status})"
+                )
+        print(
+            f"  Known cases whose resolved type differs from the declared one: {len(mism)}"
+            + "".join(f"\n    {m}" for m in mism)
         )
 
-        print("\n3. KNOWN CASES: what the data shows against what really happened")
+        print("\n4. EXIT OUTCOMES (ended securities)")
+        ended = {sid: x for sid, x in securities.items() if x.status == "ended"}
+        grid = Counter((x.outcome, x.outcome_status) for x in ended.values())
+        for (outcome, status), n in sorted(grid.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+            print(f"  {outcome:24} {status:14} {n:4}")
+        print(
+            f"  Value assumed: {sum(1 for x in ended.values() if x.assumed_exit_value is not None)} "
+            f"(total loss {sum(1 for x in ended.values() if x.assumed_exit_value == 0.0)}); "
+            f"no value assumed: {sum(1 for x in ended.values() if x.assumed_exit_value is None)}"
+        )
+        for status in ("confirmed", "single_source", "conflict", "unresolved"):
+            rows = sorted((sid, x) for sid, x in ended.items() if x.outcome_status == status)
+            print(f"  --- {status} ({len(rows)}) ---")
+            for sid, x in rows:
+                value = "none" if x.assumed_exit_value is None else x.assumed_exit_value
+                print(
+                    f"    id {sid} {path(sid)} (last trade {x.last_trade_session}): {x.outcome}, value {value}"
+                )
+                for e in exit_ev[sid]:
+                    print(f"        [{e.source}] {e.category}: {e.detail[:140]}")
+        print("  Known cases (expected against the evidence):")
         for case in KNOWN_CASES:
-            sids = sorted(set(by_symbol.get(case.symbol, [])))
-            print(f"  {case.symbol:6} expected: {case.expected}")
-            if not sids:
-                print(
-                    "         RESULT: no security found (no SIP bars for this ticker in 2016-2024)"
-                )
-            for sid in sids:
-                sec = securities[sid]
-                path = " -> ".join(f"{h.symbol} {h.valid_from}..{h.valid_to}" for h in history[sid])
-                value = (
-                    ""
-                    if sec.assumed_exit_value is None
-                    else f", assumed value {sec.assumed_exit_value}"
-                )
-                print(f"         id {sid}: {path}; {sec.status}, exit {sec.exit_type}{value}")
+            for sid in sorted(set(by_symbol.get(case.symbol, []))):
+                x = securities[sid]
+                if x.status == "ended":
+                    print(
+                        f"    {case.symbol:6} id {sid}: {x.outcome} ({x.outcome_status}) | expected: {case.expected}"
+                    )
 
-        print("\n4. TICKER HISTORY AGAINST ALPACA'S OWN COMPANY MAPPING (raw closes and volumes)")
-        ec = facts["entity_check"]
-        full = sum(1 for v in ec.values() if v["mismatch"] == 0 and v["missing"] == 0)
-        print(
-            f"  Securities whose every real trade matches Alpaca's mapped series for their last ticker: {full} of {len(ec)}"
-        )
-        for sid, v in sorted(ec.items()):
-            if v["mismatch"] or v["missing"]:
-                sec = securities[sid]
-                print(
-                    f"    id {sid} ({' -> '.join(h.symbol for h in history[sid])}, last trade {sec.last_trade_session}): "
-                    f"{v['match']} match, {v['mismatch']} differ, {v['missing']} not in Alpaca's mapped series"
-                )
-
-        print("\n5. RAW AGAINST SPLIT-ADJUSTED PRICES")
-        diffs = checks.adjustment_differences(s)
-        splits_n = s.execute(
-            select(func.count())
-            .select_from(CorporateAction)
-            .where(
-                CorporateAction.action_type.in_(("forward_split", "reverse_split", "unit_split"))
+        print("\n5. SPLITS AND SPIN-OFFS")
+        verdicts = Counter(c.verdict for c in s.execute(select(SplitCheck)).scalars())
+        print(f"  Splits owned by batch securities, checked against prices: {dict(verdicts)}")
+        for c in s.execute(select(SplitCheck).where(SplitCheck.verdict != "consistent")).scalars():
+            print(
+                f"    {c.verdict}: {c.symbol} {c.ex_date} ratio {c.ratio:g}, close before {c.close_before}, on {c.close_on}"
+                + (" -> NOT applied" if c.verdict == "contradicted" else " -> applied, unverified")
             )
-        ).scalar_one()
+        for so in s.execute(select(SpinOff)).scalars():
+            kids = ", ".join(
+                f"{c['ratio']:g} {c['symbol']} at {c['close_on_ex_date']}" for c in so.children
+            )
+            print(
+                f"  Spin-off id {so.security_id} {so.parent_symbol} {so.ex_date} [{so.source}]: {kids}; parent close "
+                f"{so.parent_close_before} -> {so.parent_close_on}; distributed value {so.distribution_value}; "
+                f"holder return {'n/a' if so.holder_return is None else f'{so.holder_return:+.1%}'}; factor "
+                f"{so.factor}; {so.status}"
+                + (" -> applied" if so.status == "price_consistent" else " -> NOT applied")
+            )
+        diffs = checks.adjustment_differences(s)
         compared = sum(v["compared"] for v in diffs.values())
         within = sum(v["within"] for v in diffs.values())
-        print(f"  Split events recorded for batch tickers: {splits_n}")
         print(
-            f"  Sessions compared (our raw/factor against Alpaca's adjusted close): {compared:,}; within 0.1%: {within:,}"
+            f"  Our split adjustment against Alpaca's split-adjusted close: {within:,} of {compared:,} sessions within 0.1%"
         )
-        bad = sorted(
+        for worst, sid, v in sorted(
             ((v["worst"], sid, v) for sid, v in diffs.items() if v["worst"] > 1e-3), reverse=True
-        )
-        print(f"  Securities with any session off by more than 0.1%: {len(bad)}")
-        for worst, sid, v in bad[:15]:
+        ):
             print(
-                f"    id {sid} ({' -> '.join(h.symbol for h in history[sid])}): worst {worst:.1%} on {v['worst_session']}, "
-                f"{v['compared'] - v['within']} of {v['compared']} sessions off"
+                f"    id {sid} ({path(sid)}): {v['compared'] - v['within']} of {v['compared']} sessions off, worst {worst:.1%} on {v['worst_session']}"
             )
         jumps = checks.large_jumps(s)
         unexplained = [j for j in jumps if not j.explained_by_split]
         print(
-            f"  Day-to-day raw moves beyond +80%/-45%: {len(jumps)}; explained by a recorded split: "
-            f"{len(jumps) - len(unexplained)}; not explained: {len(unexplained)}"
+            f"  Raw moves beyond +80%/-45%: {len(jumps)}; at an applied split {len(jumps) - len(unexplained)}; "
+            f"real moves {sum(1 for j in unexplained if j.adjusted_also_jumps)}; split missing "
+            f"{sum(1 for j in unexplained if j.adjusted_also_jumps is False)}; no adjusted price "
+            f"{sum(1 for j in unexplained if j.adjusted_also_jumps is None)}"
         )
-        for j in unexplained[:20]:
-            note = {
-                True: "adjusted series jumps too (a real move)",
-                False: "adjusted series does NOT jump (split missing from our events)",
-                None: "no adjusted price",
-            }[j.adjusted_also_jumps]
-            print(
-                f"    id {j.security_id} {j.symbol} {j.session}: {j.previous_close} -> {j.close} ({note})"
-            )
-        leaks = checks.adjusted_price_would_change_eligibility(s, RULE)
-        print(
-            f"  Decisions where the $5 filter would answer differently on adjusted prices: {len(leaks)}"
-            + (
-                f" (e.g. {', '.join(f'id {sid} on {d}: raw {r:.2f}, adjusted {a:.2f}' for d, sid, r, a in leaks[:3])})"
-                if leaks
-                else ""
-            )
-        )
+        for j in unexplained:
+            if j.adjusted_also_jumps is False:
+                print(
+                    f"    missing split? id {j.security_id} {j.symbol} {j.session}: {j.previous_close} -> {j.close}"
+                )
 
-        print("\n6. POINT-IN-TIME MEMBERSHIP (validation rule: top 25 of the batch)")
+        print(
+            "\n6. POINT-IN-TIME MEMBERSHIP (validation rule: top 25 eligible common stocks of the batch)"
+        )
         print(f"  Rule: {RULE.to_dict()}  fingerprint {RULE.fingerprint()[:16]}")
         decisions = facts["decisions"]
-        print(f"  Decisions: {len(decisions)} month-ends, {decisions[0]} to {decisions[-1]}")
         members = checks.stored_members(s)
         sizes = [len(v) for v in members.values()]
-        print(f"  Members per decision: min {min(sizes)}, max {max(sizes)}")
-        ended = {sid for sid, x in securities.items() if x.status == "ended"}
-        ever = {sid for v in members.values() for sid in v}
-        ended_members = sorted(ever & ended)
         print(
-            f"  Distinct members: {len(ever)}, of which later ended (delisted while or after being a member): {len(ended_members)}"
+            f"  Decisions: {len(decisions)} ({decisions[0]} to {decisions[-1]}); members per decision {min(sizes)}-{max(sizes)}"
         )
-        for sid in ended_members:
-            sec = securities[sid]
-            last_member = max(d for d, v in members.items() if sid in v)
-            print(
-                f"    id {sid} {sec.last_symbol}: member until the {last_member} decision, last trade "
-                f"{sec.last_trade_session}, exit {sec.exit_type}"
-            )
+        ever = {sid for v in members.values() for sid in v}
+        print(
+            f"  Distinct members: {len(ever)}; types: {dict(Counter((securities[sid].security_type, securities[sid].type_status) for sid in ever))}"
+        )
+        reasons = Counter(
+            r.reason
+            for r in s.execute(select(Membership).where(Membership.eligible == 0)).scalars()
+        )
+        print(f"  Not-eligible reasons (all decisions): {dict(reasons)}")
+        print("  Members that later ended:")
+        for sid in sorted(ever):
+            x = securities[sid]
+            if x.status == "ended":
+                last_member = max(d for d, v in members.items() if sid in v)
+                value = "none" if x.assumed_exit_value is None else x.assumed_exit_value
+                print(
+                    f"    id {sid} {path(sid)}: member until {last_member}, last trade {x.last_trade_session}, "
+                    f"{x.outcome} ({x.outcome_status}), value {value}"
+                )
         after_exit = [
             (sid, d)
             for d, v in members.items()
@@ -257,29 +341,18 @@ def report(facts: dict) -> str:
             if d > securities[sid].last_trade_session
         ]
         print(f"  Members chosen after their last trade: {len(after_exit)}")
-        reasons = Counter(
-            r.reason
-            for r in s.execute(select(Membership).where(Membership.eligible == 0)).scalars()
-        )
-        print(f"  Not-eligible reasons (all decisions): {dict(reasons)}")
         differ = checks.recompute_with_truncated_data(s, RULE, p.DATA_START)
         print(
             f"  Recomputed from data cut off at each decision: {len(decisions) - len(differ)} of {len(decisions)} identical"
         )
         cut = decisions[len(decisions) // 2]
         print(
-            f"  Every price and volume after {cut} multiplied by 10: decisions up to then unchanged: "
+            f"  Every price and volume after {cut} multiplied by 10: earlier decisions unchanged: "
             f"{checks.tamper_future(s, RULE, p.DATA_START, cut)}"
         )
-        unknown = sorted(
-            {
-                securities[sid].last_symbol
-                for sid in ever
-                if securities[sid].declared_type == "unknown"
-            }
-        )
+        leaks = checks.adjusted_price_would_change_eligibility(s, RULE)
         print(
-            f"  Members whose security type is not known (ETF/preferred/etc. not ruled out): {len(unknown)}: {', '.join(unknown)}"
+            f"  Decisions where the $5 filter would answer differently on adjusted prices: {len(leaks)}"
         )
     engine.dispose()
     return out.getvalue()
@@ -288,17 +361,10 @@ def report(facts: dict) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python scripts/universe_validation_batch.py")
     parser.add_argument("--report", type=Path, help="also write the report to this file")
-    parser.add_argument(
-        "--report-only", action="store_true", help="report on the stored batch without fetching"
-    )
+    parser.add_argument("--refresh", action="store_true", help="ask OpenFIGI and Wikidata again")
     args = parser.parse_args(argv)
-    settings = get_settings()
     configure_logging("WARNING")
-    facts = {} if args.report_only else run(settings)
-    if args.report_only:
-        print("--report-only needs the facts of a run; run without it.", file=sys.stderr)
-        return 2
-    text = report(facts)
+    text = report(run(get_settings(), args.refresh))
     print(text)
     if args.report:
         args.report.write_text(text)

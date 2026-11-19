@@ -297,6 +297,7 @@ def test_a_security_trading_at_the_end_of_the_data_has_no_exit():
 
 CAL = trading_days(date(2022, 1, 3), date(2023, 12, 29))
 RULE = MembershipRule(size=2, min_price=5.0, min_history=20, window=10, min_active_sessions=8)
+COMMON = dict.fromkeys(range(1, 20), "common")
 
 
 def rows(days, price, volume):
@@ -312,13 +313,39 @@ def test_members_are_the_most_traded_eligible_securities():
         5: rows(CAL[285:300], 100.0, 9000),  # history too short (15 < 20 sessions)
         6: rows(CAL[:300], 99.0, 99_000),  # an ETF
     }
-    decisions = {d.security_id: d for d in decide(CAL[299], history, {6: "etf"}, RULE, CAL[:300])}
+    types = {1: "common", 2: "common", 3: "common", 4: "common", 5: "common", 6: "etf"}
+    decisions = {d.security_id: d for d in decide(CAL[299], history, types, RULE, CAL[:300])}
 
     assert {sid for sid, d in decisions.items() if d.member} == {3, 1}
     assert [decisions[3].rank, decisions[1].rank, decisions[2].rank] == [1, 2, 3]
     assert decisions[4].reason == "raw_price_below_minimum"
     assert decisions[5].reason == "history_too_short"
-    assert decisions[6].reason == "excluded_type"
+    assert decisions[6].reason == "not_common_stock"
+
+
+def test_securities_of_unknown_type_are_not_eligible():
+    history = {1: rows(CAL[:300], 50.0, 9000), 2: rows(CAL[:300], 20.0, 1000)}
+
+    decisions = {
+        d.security_id: d for d in decide(CAL[299], history, {2: "common"}, RULE, CAL[:300])
+    }
+
+    assert (decisions[1].eligible, decisions[1].reason) == (False, "not_common_stock")
+    assert decisions[2].member
+
+
+def test_a_security_held_out_for_review_is_not_chosen_and_the_reason_is_recorded():
+    history = {1: rows(CAL[:300], 50.0, 9000), 2: rows(CAL[:300], 20.0, 1000)}
+
+    decisions = {
+        d.security_id: d
+        for d in decide(
+            CAL[299], history, COMMON, RULE, CAL[:300], {1: "price_adjustment_under_review"}
+        )
+    }
+
+    assert (decisions[1].member, decisions[1].reason) == (False, "price_adjustment_under_review")
+    assert decisions[2].member
 
 
 def test_a_delisted_security_is_a_member_until_it_stops_trading_and_never_after():
@@ -328,7 +355,7 @@ def test_a_delisted_security_is_a_member_until_it_stops_trading_and_never_after(
     member_months = {
         when: {
             d.security_id
-            for d in decide(when, history, {}, RULE, [s for s in CAL if s <= when])
+            for d in decide(when, history, COMMON, RULE, [s for s in CAL if s <= when])
             if d.member
         }
         for when in months
@@ -342,11 +369,11 @@ def test_no_decision_depends_on_a_later_bar():
     history = {i: rows(CAL[: 200 + 30 * i], 10.0 + i, 1000 * (10 - i)) for i in range(1, 8)}
     for when in month_end_sessions(CAL[30], CAL[-1]):
         calendar = [s for s in CAL if s <= when]
-        full = decide(when, history, {}, RULE, calendar)
+        full = decide(when, history, COMMON, RULE, calendar)
         cut = decide(
             when,
             {k: [r for r in v if r.session <= when] for k, v in history.items()},
-            {},
+            COMMON,
             RULE,
             calendar,
         )
@@ -357,7 +384,7 @@ def test_no_decision_depends_on_a_later_bar():
             ]
             for k, v in history.items()
         }
-        assert full == cut == decide(when, changed, {}, RULE, calendar)
+        assert full == cut == decide(when, changed, COMMON, RULE, calendar)
 
 
 def test_month_end_sessions_are_the_last_trading_day_of_each_month():

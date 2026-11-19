@@ -24,11 +24,15 @@ from app.universe.membership import DailyRow, MembershipRule, decide, month_end_
 from app.universe.models import (
     BatchSymbol,
     CorporateAction,
+    ExitEvidence,
     Membership,
     Security,
     SecurityBar,
+    SpinOff,
+    SplitCheck,
     TickerBar,
     TickerHistory,
+    TypeEvidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,12 +125,15 @@ def store_corporate_actions(session: Session, events: Iterable[dict]) -> int:
                 process_date=_date(event.get("process_date")),
                 ex_date=_date(event.get("ex_date")),
                 effective_date=_date(event.get("effective_date")),
-                symbol=event.get("symbol"),
+                # Spin-offs name the parent "source_symbol" and its rate "source_rate".
+                symbol=event.get("symbol") or event.get("source_symbol"),
                 old_symbol=event.get("old_symbol"),
                 new_symbol=event.get("new_symbol"),
                 acquiree_symbol=event.get("acquiree_symbol"),
                 acquirer_symbol=event.get("acquirer_symbol"),
-                old_rate=_num(event.get("old_rate")),
+                old_rate=_num(event.get("old_rate"))
+                if event.get("old_rate") is not None
+                else _num(event.get("source_rate")),
                 new_rate=_num(event.get("new_rate")),
                 rate=_num(event.get("rate")),
                 cash_rate=_num(event.get("cash_rate")),
@@ -380,7 +387,17 @@ def classify_exit(chain: seg.Chain, events: list[CorporateAction], data_end_sess
 
 
 def store_securities(session: Session, assembled: Assembled) -> list[Security]:
-    for table in (Membership, SecurityBar, TickerHistory, Security):
+    # Children first: every table that refers to a security is cleared before the securities.
+    for table in (
+        Membership,
+        ExitEvidence,
+        TypeEvidence,
+        SpinOff,
+        SplitCheck,
+        SecurityBar,
+        TickerHistory,
+        Security,
+    ):
         session.execute(delete(table))
     calendar = trading_days(DATA_START, DATA_END)
     batch = {row.symbol: row for row in session.execute(select(BatchSymbol)).scalars()}
@@ -522,12 +539,26 @@ def decide_membership(session: Session, rule: MembershipRule) -> list[date]:
         select(SecurityBar).order_by(SecurityBar.security_id, SecurityBar.session)
     ).scalars():
         history[bar.security_id].append(DailyRow(bar.session, bar.close, bar.volume))
-    types = {s.security_id: s.declared_type for s in session.execute(select(Security)).scalars()}
+    # Only a type backed by independent evidence counts; anything else is not eligible.
+    types = {
+        s.security_id: s.security_type
+        if s.type_status in ("confirmed", "single_source")
+        else "unknown"
+        for s in session.execute(select(Security)).scalars()
+    }
     calendar = trading_days(DATA_START, DATA_END)
     decisions = month_end_sessions(MEMBERSHIP_FIRST_DECISION, MEMBERSHIP_LAST_DECISION)
+    # A split whose size the prices do not confirm keeps the security out until reviewed.
+    held_out = {
+        check.security_id: "price_adjustment_under_review"
+        for check in session.execute(
+            select(SplitCheck).where(SplitCheck.verdict == "magnitude_mismatch")
+        ).scalars()
+        if check.security_id is not None
+    }
     fingerprint = rule.fingerprint()
     for when in decisions:
-        for d in decide(when, history, types, rule, [s for s in calendar if s <= when]):
+        for d in decide(when, history, types, rule, [s for s in calendar if s <= when], held_out):
             session.add(
                 Membership(
                     decision_session=d.session,

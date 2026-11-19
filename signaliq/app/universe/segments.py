@@ -216,6 +216,30 @@ class Split:
     ex_date: date
     #: Shares after / shares before: 4.0 for a 4-for-1 split, 0.05 for a 1-for-20 reverse split.
     ratio: float
+    event_id: str | None = None
+
+
+def owned_on(chain: Chain, symbol: str, day: date) -> bool:
+    """Whether an event recorded for ``symbol`` on ``day`` belongs to ``chain``.
+
+    A ticker owns the dates after the previous ticker's last trade (so an event
+    recorded under the new ticker on its first day, like XPRO on 2021-10-04,
+    counts) up to the first trade under the next ticker (so an event recorded
+    under the old ticker on the rename date, like UTX on 2020-04-03, counts).
+    An event on the first day of the security belongs to nothing earlier.
+    """
+    for index, segment in enumerate(chain.segments):
+        later = chain.segments[index + 1] if index + 1 < len(chain.segments) else None
+        earlier = chain.segments[index - 1] if index > 0 else None
+        start = earlier.last_session if earlier is not None else segment.first_session
+        end = later.first_session if later is not None else segment.last_session
+        if symbol == segment.symbol and start < day <= end:
+            return True
+    return False
+
+
+def owned_splits(chain: Chain, splits: Iterable[Split]) -> list[Split]:
+    return [split for split in splits if owned_on(chain, split.symbol, split.ex_date)]
 
 
 def split_factors(chain: Chain, splits: Iterable[Split]) -> dict[date, float]:
@@ -229,19 +253,7 @@ def split_factors(chain: Chain, splits: Iterable[Split]) -> dict[date, float]:
     2020-04-03) belongs to the security too: each ticker owns the dates up to
     the first trade under the next ticker.
     """
-    owned = []
-    for split in splits:
-        for index, segment in enumerate(chain.segments):
-            later = chain.segments[index + 1] if index + 1 < len(chain.segments) else None
-            earlier = chain.segments[index - 1] if index > 0 else None
-            # A ticker owns the dates after the previous ticker's last trade (so a split
-            # recorded under the new ticker on its first day, like XPRO on 2021-10-04,
-            # counts) up to the first trade under the next ticker.
-            start = earlier.last_session if earlier is not None else segment.first_session
-            end = later.first_session if later is not None else segment.last_session
-            if split.symbol == segment.symbol and start < split.ex_date <= end:
-                owned.append(split)
-                break
+    owned = owned_splits(chain, splits)
     factors = {}
     for _, bar in chain.bars():
         factor = 1.0

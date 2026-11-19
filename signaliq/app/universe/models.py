@@ -99,6 +99,18 @@ class Security(ResearchBase):
     exit_assumption: Mapped[str | None] = mapped_column(Text, nullable=True)
     declared_type: Mapped[str] = mapped_column(String(16), nullable=False)
     real_trade_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: common, etf, warrant, right, unit, preferred, fund, adr, partnership, unknown
+    security_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    #: confirmed (two sources agree), single_source, conflict, unknown
+    type_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown", server_default="unknown"
+    )
+    #: The resolved outcome for an ended security (see app.universe.outcomes).
+    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: confirmed, single_source, conflict, unresolved (None while trading)
+    outcome_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class TickerHistory(ResearchBase):
@@ -131,6 +143,10 @@ class SecurityBar(ResearchBase):
     trade_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
     #: Product of the ratios of this security's later splits (adjusted = raw / factor).
     split_factor: Mapped[float] = mapped_column(Float, nullable=False)
+    #: Product of later spin-off factors (adjusted = raw / (split_factor x distribution_factor)).
+    distribution_factor: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0, server_default="1.0"
+    )
     #: Alpaca's own split-adjusted close for the same session, for comparison.
     alpaca_adjusted_close: Mapped[float | None] = mapped_column(Float, nullable=True)
 
@@ -149,3 +165,90 @@ class Membership(ResearchBase):
     median_dollar_volume: Mapped[float | None] = mapped_column(Float, nullable=True)
     rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     member: Mapped[bool] = mapped_column(Integer, nullable=False)
+
+
+class ExternalResponse(ResearchBase):
+    """A response from an outside reference source, stored as received.
+
+    Reruns read these instead of asking again, so a report can be reproduced
+    exactly and the sources' rate limits are respected. ``--refresh`` replaces them.
+    """
+
+    __tablename__ = "external_responses"
+
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    request_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    response: Mapped[Any] = mapped_column(JSON, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utc_now)
+
+
+class ExitEvidence(ResearchBase):
+    """One piece of evidence about how a security stopped trading, from one source."""
+
+    __tablename__ = "exit_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.security_id"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: acquired, merged, bankruptcy, failure, renamed, delisted_no_reason, resumed, fragment
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    detail: Mapped[str] = mapped_column(Text, nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class TypeEvidence(ResearchBase):
+    """One piece of evidence about what kind of security it is, from one source."""
+
+    __tablename__ = "type_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.security_id"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    security_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SplitCheck(ResearchBase):
+    """Whether a recorded split agrees with the prices on either side of it."""
+
+    __tablename__ = "split_checks"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    security_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    ex_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    close_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_on: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: consistent, contradicted (not applied), no_prices (applied, unverified)
+    verdict: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class SpinOff(ResearchBase):
+    """A distribution of shares of another company to a security's holders."""
+
+    __tablename__ = "spin_offs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.security_id"), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)  # alpaca or curated
+    reference: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    ex_date: Mapped[date] = mapped_column(Date, nullable=False)
+    #: JSON list of {"symbol", "ratio", "close_on_ex_date"} for each distributed company.
+    children: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    parent_close_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    parent_close_on: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distribution_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Raw prices before the ex-date are divided by this to make the series continuous.
+    factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Holder's return over the ex-date including the distributed shares.
+    holder_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: price_consistent, price_inconsistent, prices_missing
+    status: Mapped[str] = mapped_column(String(24), nullable=False)

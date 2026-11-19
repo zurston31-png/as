@@ -12,7 +12,10 @@ The rule (fixed before any results were looked at):
     - it has at least ``min_history`` real trading sessions up to and including D,
     - it traded on at least ``min_active_sessions`` of the last ``window`` trading
       sessions, and
-    - its declared type is not one of the excluded types.
+    - it is a common stock (its type, resolved from independent evidence by
+      ``app.universe.sectypes``, is ``common``). ETFs, warrants, rights, units,
+      preferred shares, funds, ADRs, partnerships and securities of unknown
+      type are not eligible.
 * Eligible securities are ranked by the median, over the last ``window`` trading
   sessions, of raw close x volume (sessions without a real trade count as 0).
   The ``size`` best are members; ties are broken by security id.
@@ -30,8 +33,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 
 from app.data.validation import trading_days
-
-EXCLUDED_TYPES = frozenset({"etf", "etn", "preferred", "warrant", "unit", "right", "fund"})
+from app.universe.sectypes import UNIVERSE_TYPES
 
 
 @dataclass(frozen=True)
@@ -86,11 +88,15 @@ def decide(
     types: Mapping[int, str],
     rule: MembershipRule,
     calendar: Sequence[date],
+    held_out: Mapping[int, str] | None = None,
 ) -> list[Decision]:
     """Membership decided at ``decision_session``, from data up to that session only.
 
     ``calendar`` holds trading sessions up to and including ``decision_session``.
+    ``held_out`` maps securities that must not be chosen (for example because a
+    price adjustment awaits review) to the reason.
     """
+    held_out = held_out or {}
     window_sessions = [s for s in calendar if s <= decision_session][-rule.window :]
     window_set = set(window_sessions)
     scored: list[tuple[float, int, float]] = []
@@ -99,8 +105,10 @@ def decide(
         past = [row for row in rows if row.session <= decision_session]
         today = past[-1] if past and past[-1].session == decision_session else None
         reason = None
-        if types.get(security_id, "unknown") in EXCLUDED_TYPES:
-            reason = "excluded_type"
+        if types.get(security_id, "unknown") not in UNIVERSE_TYPES:
+            reason = "not_common_stock"
+        elif security_id in held_out:
+            reason = held_out[security_id]
         elif today is None:
             reason = "no_trade_on_decision_session"
         elif today.close < rule.min_price:
