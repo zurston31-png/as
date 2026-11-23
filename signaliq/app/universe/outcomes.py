@@ -26,7 +26,10 @@ Rules (written down before looking at the results):
 1. Evidence of two different kinds of exit (acquisition, redemption, failure)
    together: ``conflict``, no value.
 2. Acquisition only: outcome acquired. Value = cash per share when a merger
-   record gives it; otherwise unknown (None) and flagged.
+   record gives it and no record shows a stock part; otherwise unknown (None)
+   and flagged. A cash record next to a stock or stock-and-cash record of the
+   same deal (Alpaca records Diamond Offshore's 2024 merger both ways) means
+   cash plus shares: the cash alone would understate the value.
    Exception: a redemption together with a cash acquisition and nothing else.
    Both say holders were paid cash; Alpaca records a SPAC's trust liquidation
    as a "cash merger" at the trust value, which SEC files as a redemption.
@@ -111,6 +114,9 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
             None,
         )
         kinds = {e.category for e in acquisitions}
+        if "acquired_cash" in kinds and kinds & {"acquired_stock", "acquired_stock_and_cash"}:
+            kinds = {"acquired_stock_and_cash"}
+            cash = None
         outcome = next(
             (
                 k

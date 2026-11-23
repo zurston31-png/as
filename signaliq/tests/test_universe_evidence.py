@@ -354,3 +354,18 @@ def test_wikidata_rows_are_matched_to_the_period_the_ticker_was_used():
     assert outcomes.wikidata_matches([meta_platforms], date(2022, 6, 9), date(2024, 12, 31)) == [
         meta_platforms
     ]
+
+
+def test_a_cash_record_next_to_a_stock_record_of_the_same_deal_is_not_a_cash_value():
+    result = resolve_outcome(
+        [
+            ev("alpaca", "acquired_cash", 5.65),
+            ev("alpaca", "acquired_stock_and_cash"),
+            ev("sec", "acquired"),
+        ]
+    )
+    assert (result.outcome, result.status, result.assumed_value) == (
+        "acquired_stock_and_cash",
+        "confirmed",
+        None,
+    )
