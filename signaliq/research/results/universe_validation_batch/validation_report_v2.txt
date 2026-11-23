@@ -1,0 +1,366 @@
+SIP UNIVERSE VALIDATION BATCH (v2) - research data only, no strategy, no backtest
+Research database: sip_research.db
+Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored.
+Independent sources: Alpaca corporate actions, OpenFIGI (security type), Wikidata (company records),
+hand-entered corrections checked against prices. SEC: paused until a contact address is provided.
+
+1. BATCH
+  Tickers: 136  by selection: {'known_case': 54, 'discovered': 36, 'random': 46}
+  Rename discovery complete: True; discovered: 36
+  Tickers with no SIP bars 2016-2024 (23): AQFH, BIGGQ, BUYWX, CVQTX, DGTCX, EXPRQ, IDMAX, JHBBX, LCATX, MRIRF, MTOKX, PLTKX, RADCQ, SAVEQ, SCPXD, TFSIX, UECN, VIEWQ, WEKWQ, WEWKQ, WFSDX, YELLQ, YGFGF
+  Filler bars dropped: 8,171
+  Securities: 124; status {'trading': 34, 'ended': 90}; with more than one ticker: 21
+
+2. SOURCE COVERAGE
+  OpenFIGI: 75 of 113 tickers found (requests this run: 0)
+  Wikidata: 60 of 113 tickers have a company item (requests this run: 0)
+  Wikidata did not answer for 0 tickers this run (not looked up, not guessed)
+  Alpaca spin-off records 2016-2024: 120
+
+3. SECURITY TYPES
+  adr          single_source     1
+  common       confirmed        31
+  common       single_source    38
+  etf          confirmed         1
+  etf          single_source    10
+  fund         single_source     1
+  right        confirmed         1
+  right        single_source     4
+  unknown      unknown          19
+  warrant      confirmed         5
+  warrant      single_source    13
+  Conflicts (sources disagree):
+  Unknown type (19): id 14 CRC, id 18 DO, id 21 ENRJ, id 27 FTR, id 38 MON, id 46 RATE, id 52 SHLD, id 65 WDRW, id 66 MDGS, id 70 OILD, id 71 FSBC, id 72 OILD, id 74 JMPD -> JMPNL, id 76 SMMC, id 80 CFII -> VIEW, id 83 SHLD, id 92 SHLD, id 98 BACA, id 109 YGF
+  Known cases whose resolved type differs from the declared one: 8
+    id 14 CRC: declared common, resolved unknown (unknown)
+    id 18 DO: declared common, resolved unknown (unknown)
+    id 27 FTR: declared common, resolved unknown (unknown)
+    id 38 MON: declared common, resolved unknown (unknown)
+    id 52 SHLD: declared common, resolved unknown (unknown)
+    id 83 SHLD: declared common, resolved unknown (unknown)
+    id 92 SHLD: declared common, resolved unknown (unknown)
+    id 113 SHLD: declared common, resolved etf (single_source)
+
+4. EXIT OUTCOMES (ended securities)
+  acquired_cash            confirmed         4
+  acquired_stock_and_cash  confirmed         1
+  acquired                 single_source     2
+  acquired_cash            single_source    16
+  acquired_stock           single_source     6
+  acquired_stock_and_cash  single_source     1
+  bankruptcy               single_source     9
+  failure                  single_source     2
+  resumed_or_fragment      unresolved       31
+  unknown                  unresolved       18
+  Value assumed: 31 (total loss 11); no value assumed: 59
+  --- confirmed (5) ---
+    id 2 ALXN (last trade 2021-07-20): acquired_stock_and_cash, value none
+        [alpaca] acquired_stock_and_cash: stock_and_cash_merger of ALXN into AZN, 60.0 cash plus shares
+        [wikidata] acquired: Alexion Pharmaceuticals: parent AstraZeneca from 2021-07-21
+    id 6 ATVI (last trade 2023-10-12): acquired_cash, value 95.0
+        [alpaca] acquired_cash: cash_merger of ATVI, 95.0 cash per share
+        [wikidata] acquired: Activision Blizzard: parent Xbox Game Studios from 2023-10-13
+    id 32 HZNP (last trade 2023-10-05): acquired_cash, value 116.5
+        [alpaca] acquired_cash: cash_merger of HZNP, 116.5 cash per share
+        [wikidata] acquired: Horizon Therapeutics: parent Amgen from 2023-10-06
+    id 37 MLNX (last trade 2020-04-24): acquired_cash, value 125.0
+        [alpaca] acquired_cash: cash_merger of MLNX into NVDA, 125.0 cash per share
+        [wikidata] acquired: Mellanox Technologies: parent Nvidia from 2020-04-27
+    id 61 VMW (last trade 2023-11-21): acquired_cash, value 142.5
+        [alpaca] acquired_cash: cash_merger of VMW, 142.5 cash per share
+        [alpaca] acquired_stock: stock_merger of VMW into AVGO
+        [alpaca] acquired_stock: stock_merger of VMW into AVGO
+        [wikidata] acquired: VMware: parent Broadcom from 2023-11-22
+  --- single_source (36) ---
+    id 8 BIG (last trade 2024-09-06): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed BIG -> BIGGQ (Q = bankruptcy)
+    id 9 BSJN (last trade 2023-12-15): acquired_cash, value 23.50319
+        [alpaca] acquired_cash: cash_merger of BSJN, 23.50319 cash per share
+    id 11 CERN (last trade 2022-06-07): acquired_cash, value 95.0
+        [alpaca] acquired_cash: cash_merger of CERN, 95.0 cash per share
+    id 12 CHK (last trade 2020-06-26): bankruptcy, value 0.0
+        [wikidata] bankruptcy: Expand Energy: bankruptcy on 2020-06-28
+        [alpaca_bars] resumed: CHK trades again later (halt, or the ticker was reused)
+    id 15 CTXS (last trade 2022-09-29): acquired_cash, value 104.0
+        [alpaca] acquired_cash: cash_merger of CTXS, 104.0 cash per share
+    id 28 GMZ (last trade 2020-09-25): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of GMZ into GER
+    id 31 HTZ (last trade 2020-10-29): bankruptcy, value 0.0
+        [wikidata] bankruptcy: Hertz Global Holdings: bankruptcy on 2020-05-22
+        [alpaca_bars] resumed: HTZ trades again later (halt, or the ticker was reused)
+    id 33 JCP (last trade 2020-05-18): bankruptcy, value 0.0
+        [wikidata] bankruptcy: J. C. Penney: bankruptcy on 2020-05-15
+    id 34 LHCG (last trade 2023-02-21): acquired_cash, value 170.0
+        [alpaca] acquired_cash: cash_merger of LHCG, 170.0 cash per share
+    id 36 LNKD (last trade 2016-12-07): acquired, value none
+        [wikidata] acquired: LinkedIn Corporation: owned by Microsoft from 2016-06-13
+    id 40 MXIM (last trade 2021-08-25): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of MXIM into ADI
+        [wikidata] delisted_no_reason: Maxim Integrated: dissolved 2021-08-26
+    id 43 PXD (last trade 2024-05-02): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of PXD into XOM
+    id 45 RAD (last trade 2023-10-13): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed RAD -> RADCQ (Q = bankruptcy)
+    id 48 RHT (last trade 2019-07-08): acquired, value none
+        [wikidata] acquired: Red Hat: parent IBM from 2019-07-09
+        [wikidata] delisted_no_reason: Red Hat: listing ended 2019-07-10
+    id 49 SAVE (last trade 2024-11-15): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed SAVE -> SAVEQ (Q = bankruptcy)
+    id 50 SBNY (last trade 2023-03-10): failure, value 0.0
+        [wikidata] failure: Signature Bank: collapse of Signature Bank on 2023-03-12
+        [wikidata] delisted_no_reason: Signature Bank: dissolved 2023-03-12
+    id 51 SGEN (last trade 2023-12-13): acquired_cash, value 229.0
+        [alpaca] acquired_cash: cash_merger of SGEN, 229.0 cash per share
+    id 53 SIVB (last trade 2023-03-09): failure, value 0.0
+        [wikidata] bankruptcy: SVB Financial Group: Chapter 11 bankruptcy on 2023-03-17
+        [wikidata] failure: SVB Financial Group: collapse of Silicon Valley Bank on 2023-03-10
+    id 54 SPLK (last trade 2024-03-15): acquired_cash, value 157.0
+        [alpaca] acquired_cash: cash_merger of SPLK, 157.0 cash per share
+    id 58 TWTR (last trade 2022-10-27): acquired_cash, value 54.2
+        [alpaca] acquired_cash: cash_merger of TWTR, 54.2 cash per share
+        [wikidata] delisted_no_reason: Twitter, Inc.: listing ended 2022-10-27
+    id 62 WLL (last trade 2022-06-30): acquired_stock_and_cash, value none
+        [alpaca] acquired_stock_and_cash: stock_and_cash_merger of WLL into OAS, 6.25 cash plus shares
+    id 63 XLNX (last trade 2022-02-11): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of XLNX into AMD
+    id 64 YRCW -> YELL (last trade 2023-08-15): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed YELL -> YELLQ (Q = bankruptcy)
+    id 69 RETA (last trade 2023-09-25): acquired_cash, value 172.5
+        [alpaca] acquired_cash: cash_merger of RETA, 172.5 cash per share
+    id 71 FSBC (last trade 2020-04-30): acquired_cash, value 17.8
+        [alpaca] acquired_cash: cash_merger of FSBC into EVBN, 17.8 cash per share
+        [alpaca] acquired_stock_and_cash: stock_and_cash_merger of FSBC into EVBN, 17.8 cash plus shares
+        [alpaca] acquired_stock: stock_merger of FSBC into EVBN
+        [alpaca_bars] resumed: FSBC trades again later (halt, or the ticker was reused)
+    id 78 SMMC -> BTRS (last trade 2022-12-15): acquired_cash, value 9.5
+        [alpaca] acquired_cash: cash_merger of BTRS, 9.5 cash per share
+    id 80 CFII -> VIEW (last trade 2024-04-04): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed VIEW -> VIEWQ (Q = bankruptcy)
+    id 81 BOWX -> WE (last trade 2023-11-03): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed WE -> WEWKQ (Q = bankruptcy)
+        [alpaca] bankruptcy: renamed WE -> WEWKQ (Q = bankruptcy)
+        [alpaca] bankruptcy: renamed WE -> WEKWQ (Q = bankruptcy)
+    id 84 BTNB -> PGRU (last trade 2024-12-12): acquired_cash, value 6.7
+        [alpaca] acquired_cash: cash_merger of PGRU, 6.7 cash per share
+    id 85 FLAC (last trade 2022-11-22): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of FLAC
+    id 97 BMAC (last trade 2023-12-07): acquired_cash, value 10.77909879
+        [alpaca] acquired_cash: cash_merger of BMAC, 10.77909879 cash per share
+    id 99 UTAA (last trade 2023-09-15): acquired_cash, value 10.67755831
+        [alpaca] acquired_cash: cash_merger of UTAA, 10.67755831 cash per share
+    id 100 DO (last trade 2024-09-03): acquired_cash, value 5.65
+        [alpaca] acquired_cash: cash_merger of DO, 5.65 cash per share
+        [alpaca] acquired_stock_and_cash: stock_and_cash_merger of DO into NE, 5.65 cash plus shares
+    id 102 PYPT (last trade 2023-08-11): acquired_cash, value 14.8779
+        [alpaca] acquired_cash: cash_merger of PYPT, 14.8779 cash per share
+    id 119 CETUR (last trade 2024-07-31): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of CETUR into MKDW
+        [alpaca_bars] fragment: only 30 real trading sessions
+    id 123 BACA (last trade 2024-09-26): acquired_cash, value 10.68496799
+        [alpaca] acquired_cash: cash_merger of BACA, 10.68496799 cash per share
+        [alpaca_bars] fragment: only 15 real trading sessions
+  --- conflict (0) ---
+  --- unresolved (49) ---
+    id 7 BBBY (last trade 2023-05-02): unknown, value none
+        [wikidata] delisted_no_reason: Bed Bath & Beyond Inc.: listing ended 2023-05-03
+    id 10 CELG (last trade 2019-11-20): unknown, value none
+    id 14 CRC (last trade 2020-07-15): resumed_or_fragment, value none
+        [alpaca_bars] resumed: CRC trades again later (halt, or the ticker was reused)
+    id 17 DISCA (last trade 2022-04-08): unknown, value none
+        [wikidata] delisted_no_reason: Discovery, Inc.: dissolved 2022-04-08
+    id 18 DO (last trade 2020-04-24): resumed_or_fragment, value none
+        [alpaca_bars] resumed: DO trades again later (halt, or the ticker was reused)
+    id 20 ENDP (last trade 2022-08-25): unknown, value none
+    id 21 ENRJ (last trade 2018-03-26): unknown, value none
+    id 22 EXPR (last trade 2024-03-06): unknown, value none
+    id 26 FRC (last trade 2023-04-28): unknown, value none
+        [wikidata] delisted_no_reason: First Republic Bank: dissolved 2023-05-01
+    id 27 FTR (last trade 2020-04-23): unknown, value none
+    id 30 HTBX -> NHWK -> SCPX (last trade 2024-06-14): resumed_or_fragment, value none
+        [alpaca_bars] resumed: SCPX trades again later (halt, or the ticker was reused)
+    id 38 MON (last trade 2018-06-06): resumed_or_fragment, value none
+        [alpaca_bars] resumed: MON trades again later (halt, or the ticker was reused)
+    id 42 PRTY (last trade 2023-01-17): unknown, value none
+    id 46 RATE (last trade 2017-11-08): resumed_or_fragment, value none
+        [alpaca_bars] resumed: RATE trades again later (halt, or the ticker was reused)
+    id 47 REV (last trade 2022-10-20): unknown, value none
+    id 52 SHLD (last trade 2018-10-23): resumed_or_fragment, value none
+        [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
+    id 59 TWX (last trade 2018-06-14): unknown, value none
+        [wikidata] delisted_no_reason: WarnerMedia: listing ended 2018-06-14
+    id 65 WDRW (last trade 2016-03-11): resumed_or_fragment, value none
+        [alpaca_bars] resumed: WDRW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 30 real trading sessions
+    id 66 MDGS (last trade 2016-01-26): resumed_or_fragment, value none
+        [alpaca_bars] resumed: MDGS trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 1 real trading sessions
+    id 68 WDRW (last trade 2020-03-27): unknown, value none
+    id 70 OILD (last trade 2016-09-07): resumed_or_fragment, value none
+        [alpaca_bars] resumed: OILD trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 39 real trading sessions
+    id 72 OILD (last trade 2020-03-27): resumed_or_fragment, value none
+        [alpaca_bars] resumed: OILD trades again later (halt, or the ticker was reused)
+    id 74 JMPD -> JMPNL (last trade 2021-09-10): unknown, value none
+    id 75 HSACW (last trade 2019-07-24): resumed_or_fragment, value none
+        [alpaca_bars] resumed: HSACW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 10 real trading sessions
+    id 76 SMMC (last trade 2019-10-29): resumed_or_fragment, value none
+        [alpaca_bars] resumed: SMMC trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 32 real trading sessions
+    id 77 HSACW (last trade 2019-12-18): resumed_or_fragment, value none
+        [alpaca_bars] fragment: only 49 real trading sessions
+    id 79 IMVTW (last trade 2020-06-15): unknown, value none
+    id 83 SHLD (last trade 2021-08-17): resumed_or_fragment, value none
+        [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
+    id 87 MON (last trade 2022-12-23): unknown, value none
+    id 88 ITHXW (last trade 2022-07-18): unknown, value none
+    id 92 SHLD (last trade 2021-10-08): resumed_or_fragment, value none
+        [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 16 real trading sessions
+    id 93 NOVVW (last trade 2022-09-29): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+    id 98 BACA (last trade 2024-08-14): resumed_or_fragment, value none
+        [alpaca_bars] resumed: BACA trades again later (halt, or the ticker was reused)
+    id 103 MONDW (last trade 2022-10-26): unknown, value none
+    id 104 NOVVW (last trade 2022-12-13): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 17 real trading sessions
+    id 106 NOVVW (last trade 2023-01-13): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 6 real trading sessions
+    id 107 NOVVW (last trade 2023-05-04): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 29 real trading sessions
+    id 108 CETUR (last trade 2023-04-19): resumed_or_fragment, value none
+        [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 14 real trading sessions
+    id 109 YGF (last trade 2024-02-08): unknown, value none
+    id 110 CETUR (last trade 2023-05-16): resumed_or_fragment, value none
+        [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 1 real trading sessions
+    id 111 NOVVW (last trade 2023-10-05): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 44 real trading sessions
+    id 112 CETUR (last trade 2024-04-10): resumed_or_fragment, value none
+        [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
+    id 114 NOVVW (last trade 2023-11-10): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 3 real trading sessions
+    id 115 NOVVW (last trade 2024-01-08): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 8 real trading sessions
+    id 116 NOVVW (last trade 2024-02-23): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 1 real trading sessions
+    id 117 NOVVW (last trade 2024-06-25): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 23 real trading sessions
+    id 118 CETUR (last trade 2024-05-16): resumed_or_fragment, value none
+        [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 2 real trading sessions
+    id 120 NOVVW (last trade 2024-08-05): resumed_or_fragment, value none
+        [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 3 real trading sessions
+    id 122 NOVVW (last trade 2024-09-13): resumed_or_fragment, value none
+        [alpaca_bars] fragment: only 7 real trading sessions
+  Known cases (expected against the evidence):
+    SIVB   id 53: failure (single_source) | expected: bank failure; last exchange trade 2023-03-09
+    SBNY   id 50: failure (single_source) | expected: bank failure March 2023
+    FRC    id 26: unknown (unresolved) | expected: bank failure; last exchange trade late April 2023
+    BBBY   id 7: unknown (unresolved) | expected: bankruptcy; delisted 2023-05
+    JCP    id 33: bankruptcy (single_source) | expected: J.C. Penney bankruptcy 2020
+    FTR    id 27: unknown (unresolved) | expected: Frontier bankruptcy 2020; re-emerged as a new company FYBR
+    CHK    id 12: bankruptcy (single_source) | expected: Chesapeake bankruptcy 2020; NEW company listed as CHK 2021-02; renamed EXE 2024-10
+    HTZ    id 31: bankruptcy (single_source) | expected: Hertz bankruptcy 2020; NEW company listed as HTZ 2021-11. Old shareholders were in fact paid out: a known exception to total loss
+    WE     id 81: bankruptcy (single_source) | expected: WeWork: SPAC BOWX renamed WE 2021-10; bankruptcy 2023-11 (WEWKQ)
+    RAD    id 45: bankruptcy (single_source) | expected: Rite Aid bankruptcy 2023
+    PRTY   id 42: unknown (unresolved) | expected: Party City bankruptcy 2023
+    YELL   id 64: bankruptcy (single_source) | expected: Yellow Corp bankruptcy 2023
+    REV    id 47: unknown (unresolved) | expected: Revlon bankruptcy 2022
+    EXPR   id 22: unknown (unresolved) | expected: Express bankruptcy 2024
+    BIG    id 8: bankruptcy (single_source) | expected: Big Lots bankruptcy 2024
+    SAVE   id 49: bankruptcy (single_source) | expected: Spirit Airlines bankruptcy 2024-11
+    ENDP   id 20: unknown (unresolved) | expected: Endo bankruptcy 2022
+    DO     id 18: resumed_or_fragment (unresolved) | expected: Diamond Offshore bankruptcy 2020; new company listed 2021
+    DO     id 100: acquired_cash (single_source) | expected: Diamond Offshore bankruptcy 2020; new company listed 2021
+    WLL    id 62: acquired_stock_and_cash (single_source) | expected: Whiting bankruptcy 2020; new WLL 2020; merged into Chord 2022
+    CRC    id 14: resumed_or_fragment (unresolved) | expected: California Resources bankruptcy 2020; new CRC listed 2020-10
+    SHLD   id 52: resumed_or_fragment (unresolved) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
+    SHLD   id 83: resumed_or_fragment (unresolved) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
+    SHLD   id 92: resumed_or_fragment (unresolved) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
+    TWTR   id 58: acquired_cash (single_source) | expected: taken private at $54.20, 2022-10-28
+    ATVI   id 6: acquired_cash (confirmed) | expected: acquired by Microsoft at $95, 2023-10-13
+    CTXS   id 15: acquired_cash (single_source) | expected: taken private 2022-09
+    SPLK   id 54: acquired_cash (single_source) | expected: acquired by Cisco 2024-03
+    SGEN   id 51: acquired_cash (single_source) | expected: acquired by Pfizer 2023-12
+    HZNP   id 32: acquired_cash (confirmed) | expected: acquired by Amgen 2023-10
+    CERN   id 11: acquired_cash (single_source) | expected: acquired by Oracle 2022-06
+    MLNX   id 37: acquired_cash (confirmed) | expected: acquired by NVIDIA at $125, 2020-04-27
+    XLNX   id 63: acquired_stock (single_source) | expected: acquired by AMD in stock, 2022-02-14
+    MXIM   id 40: acquired_stock (single_source) | expected: acquired by Analog Devices in stock, 2021-08
+    PXD    id 43: acquired_stock (single_source) | expected: acquired by Exxon in stock, 2024-05
+    ALXN   id 2: acquired_stock_and_cash (confirmed) | expected: acquired by AstraZeneca, cash and stock, 2021-07
+    VMW    id 61: acquired_cash (confirmed) | expected: acquired by Broadcom, cash and stock, 2023-11
+    LNKD   id 36: acquired (single_source) | expected: acquired by Microsoft 2016-12 (before dense corporate actions)
+    MON    id 38: resumed_or_fragment (unresolved) | expected: acquired by Bayer 2018-06 (before dense corporate actions)
+    MON    id 87: unknown (unresolved) | expected: acquired by Bayer 2018-06 (before dense corporate actions)
+    TWX    id 59: unknown (unresolved) | expected: acquired by AT&T 2018-06 (before dense corporate actions)
+    RHT    id 48: acquired (single_source) | expected: acquired by IBM 2019-07 (before dense corporate actions)
+    CELG   id 10: unknown (unresolved) | expected: acquired by Bristol-Myers 2019-11 (before dense corporate actions)
+    DISCA  id 17: unknown (unresolved) | expected: Discovery merged with WarnerMedia and became WBD, 2022-04
+
+5. SPLITS AND SPIN-OFFS
+  Splits owned by batch securities, checked against prices: {'consistent': 42, 'magnitude_mismatch': 3, 'contradicted': 2}
+    magnitude_mismatch: HTZ 2016-07-01 ratio 0.0666667, close before 11.07, on 43.87 -> applied, unverified
+    contradicted: LILAK 2016-06-21 ratio 0.124769, close before 36.35, on 35.4 -> NOT applied
+    magnitude_mismatch: TOPS 2017-06-23 ratio 0.0666667, close before 0.16, on 0.8 -> applied, unverified
+    magnitude_mismatch: TOPS 2017-08-03 ratio 0.0333333, close before 0.242, on 2.3 -> applied, unverified
+    contradicted: UTX 2020-04-03 ratio 0.5, close before 86.01, on 49.93 -> NOT applied
+  Spin-off id 60 UTX 2020-04-03 [curated]: 1 CARR at 16.92, 0.5 OTIS at 47.32; parent close 86.01 -> 49.93; distributed value 40.58; holder return +5.2%; factor 1.8127378329661525; price_consistent -> applied
+  Our split adjustment against Alpaca's split-adjusted close: 115,645 of 124,185 sessions within 0.1%
+    id 25 (FISV -> FI): 1869 of 2264 sessions off, worst 6591.6% on 2020-09-30
+    id 101 (IRHG -> RATE): 79 of 607 sessions off, worst 149.5% on 2022-10-20
+    id 73 (CHFS -> NUWE): 1914 of 1914 sessions off, worst 100.0% on 2024-12-17
+    id 66 (MDGS): 1 of 1 sessions off, worst 99.8% on 2016-01-26
+    id 21 (ENRJ): 560 of 560 sessions off, worst 96.0% on 2016-09-15
+    id 96 (OILD): 789 of 789 sessions off, worst 90.0% on 2022-04-14
+    id 56 (TOPS): 2228 of 2228 sessions off, worst 90.0% on 2023-10-23
+    id 65 (WDRW): 30 of 30 sessions off, worst 80.0% on 2016-02-17
+    id 60 (UTX -> RTX): 1070 of 2264 sessions off, worst 50.0% on 2016-01-04
+  Raw moves beyond +80%/-45%: 156; at an applied split 45; real moves 79; split missing 1; no adjusted price 31
+    missing split? id 21 ENRJ 2016-08-18: 0.3 -> 0.54
+
+6. POINT-IN-TIME MEMBERSHIP (validation rule: top 25 eligible common stocks of the batch)
+  Rule: {'size': 25, 'min_price': 5.0, 'min_history': 126, 'window': 63, 'min_active_sessions': 50}  fingerprint 52ef18943346f9d1
+  Decisions: 59 (2020-01-31 to 2024-11-29); members per decision 18-25
+  Distinct members: 43; types: {('common', 'confirmed'): 26, ('common', 'single_source'): 17}
+  Not-eligible reasons (all decisions): {'not_common_stock': 3245, 'no_trade_on_decision_session': 1444, 'raw_price_below_minimum': 396, 'price_adjustment_under_review': 118, 'history_too_short': 84, 'too_few_active_sessions': 22}
+  Members that later ended:
+    id 2 ALXN: member until 2021-06-30, last trade 2021-07-20, acquired_stock_and_cash (confirmed), value none
+    id 6 ATVI: member until 2023-09-29, last trade 2023-10-12, acquired_cash (confirmed), value 95.0
+    id 7 BBBY: member until 2022-09-30, last trade 2023-05-02, unknown (unresolved), value none
+    id 8 BIG: member until 2024-02-29, last trade 2024-09-06, bankruptcy (single_source), value 0.0
+    id 11 CERN: member until 2022-05-31, last trade 2022-06-07, acquired_cash (single_source), value 95.0
+    id 15 CTXS: member until 2022-08-31, last trade 2022-09-29, acquired_cash (single_source), value 104.0
+    id 17 DISCA: member until 2022-03-31, last trade 2022-04-08, unknown (unresolved), value none
+    id 22 EXPR: member until 2024-01-31, last trade 2024-03-06, unknown (unresolved), value none
+    id 26 FRC: member until 2023-03-31, last trade 2023-04-28, unknown (unresolved), value none
+    id 32 HZNP: member until 2023-09-29, last trade 2023-10-05, acquired_cash (confirmed), value 116.5
+    id 34 LHCG: member until 2023-01-31, last trade 2023-02-21, acquired_cash (single_source), value 170.0
+    id 40 MXIM: member until 2021-07-30, last trade 2021-08-25, acquired_stock (single_source), value none
+    id 43 PXD: member until 2024-04-30, last trade 2024-05-02, acquired_stock (single_source), value none
+    id 49 SAVE: member until 2024-02-29, last trade 2024-11-15, bankruptcy (single_source), value 0.0
+    id 50 SBNY: member until 2023-02-28, last trade 2023-03-10, failure (single_source), value 0.0
+    id 51 SGEN: member until 2023-11-30, last trade 2023-12-13, acquired_cash (single_source), value 229.0
+    id 53 SIVB: member until 2023-02-28, last trade 2023-03-09, failure (single_source), value 0.0
+    id 54 SPLK: member until 2024-02-29, last trade 2024-03-15, acquired_cash (single_source), value 157.0
+    id 58 TWTR: member until 2022-09-30, last trade 2022-10-27, acquired_cash (single_source), value 54.2
+    id 61 VMW: member until 2023-10-31, last trade 2023-11-21, acquired_cash (confirmed), value 142.5
+    id 63 XLNX: member until 2022-01-31, last trade 2022-02-11, acquired_stock (single_source), value none
+    id 69 RETA: member until 2023-08-31, last trade 2023-09-25, acquired_cash (single_source), value 172.5
+    id 84 BTNB -> PGRU: member until 2024-11-29, last trade 2024-12-12, acquired_cash (single_source), value 6.7
+    id 100 DO: member until 2024-08-30, last trade 2024-09-03, acquired_cash (single_source), value 5.65
+  Members chosen after their last trade: 0
+  Recomputed from data cut off at each decision: 59 of 59 identical
+  Every price and volume after 2022-06-30 multiplied by 10: earlier decisions unchanged: True
+  Decisions where the $5 filter would answer differently on adjusted prices: 285

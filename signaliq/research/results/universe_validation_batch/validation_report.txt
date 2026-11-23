@@ -1,8 +1,8 @@
-SIP UNIVERSE VALIDATION BATCH (v2) - research data only, no strategy, no backtest
+SIP UNIVERSE VALIDATION BATCH (v3) - research data only, no strategy, no backtest
 Research database: sip_research.db
 Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored.
 Independent sources: Alpaca corporate actions, OpenFIGI (security type), Wikidata (company records),
-hand-entered corrections checked against prices. SEC: paused until a contact address is provided.
+SEC EDGAR (delisting notices and 8-Ks, read-only), hand-entered corrections checked against prices.
 
 1. BATCH
   Tickers: 136  by selection: {'known_case': 54, 'discovered': 36, 'random': 46}
@@ -16,178 +16,293 @@ hand-entered corrections checked against prices. SEC: paused until a contact add
   Wikidata: 60 of 113 tickers have a company item (requests this run: 0)
   Wikidata did not answer for 0 tickers this run (not looked up, not guessed)
   Alpaca spin-off records 2016-2024: 120
+  SEC: 696 cached responses (requests this run: 0, failed: 0)
 
 3. SECURITY TYPES
   adr          single_source     1
-  common       confirmed        31
-  common       single_source    38
+  common       confirmed        58
+  common       single_source    19
   etf          confirmed         1
   etf          single_source    10
   fund         single_source     1
-  right        confirmed         1
-  right        single_source     4
-  unknown      unknown          19
+  right        confirmed         2
+  right        single_source     3
+  unknown      unknown          11
   warrant      confirmed         5
   warrant      single_source    13
   Conflicts (sources disagree):
-  Unknown type (19): id 14 CRC, id 18 DO, id 21 ENRJ, id 27 FTR, id 38 MON, id 46 RATE, id 52 SHLD, id 65 WDRW, id 66 MDGS, id 70 OILD, id 71 FSBC, id 72 OILD, id 74 JMPD -> JMPNL, id 76 SMMC, id 80 CFII -> VIEW, id 83 SHLD, id 92 SHLD, id 98 BACA, id 109 YGF
-  Known cases whose resolved type differs from the declared one: 8
-    id 14 CRC: declared common, resolved unknown (unknown)
-    id 18 DO: declared common, resolved unknown (unknown)
-    id 27 FTR: declared common, resolved unknown (unknown)
-    id 38 MON: declared common, resolved unknown (unknown)
-    id 52 SHLD: declared common, resolved unknown (unknown)
+  Unknown type (11): id 21 ENRJ, id 46 RATE, id 65 WDRW, id 66 MDGS, id 70 OILD, id 71 FSBC, id 72 OILD, id 74 JMPD -> JMPNL, id 76 SMMC, id 83 SHLD, id 92 SHLD
+  Known cases whose resolved type differs from the declared one: 3
     id 83 SHLD: declared common, resolved unknown (unknown)
     id 92 SHLD: declared common, resolved unknown (unknown)
     id 113 SHLD: declared common, resolved etf (single_source)
 
 4. EXIT OUTCOMES (ended securities)
-  acquired_cash            confirmed         4
-  acquired_stock_and_cash  confirmed         1
-  acquired                 single_source     2
-  acquired_cash            single_source    16
-  acquired_stock           single_source     6
+  acquired_cash            confirmed        13
+  acquired_stock           confirmed         6
+  acquired_stock_and_cash  confirmed         4
+  bankruptcy               confirmed         9
+  failure                  confirmed         1
+  redeemed                 confirmed         2
+  acquired                 single_source     6
+  acquired_cash            single_source     4
   acquired_stock_and_cash  single_source     1
   bankruptcy               single_source     9
-  failure                  single_source     2
-  resumed_or_fragment      unresolved       31
-  unknown                  unresolved       18
-  Value assumed: 31 (total loss 11); no value assumed: 59
-  --- confirmed (5) ---
+  failure                  single_source     1
+  redeemed                 single_source     3
+  resumed_or_fragment      unresolved       24
+  unknown                  unresolved        7
+  Value assumed: 39 (total loss 20); no value assumed: 51
+  --- confirmed (35) ---
     id 2 ALXN (last trade 2021-07-20): acquired_stock_and_cash, value none
         [alpaca] acquired_stock_and_cash: stock_and_cash_merger of ALXN into AZN, 60.0 cash plus shares
         [wikidata] acquired: Alexion Pharmaceuticals: parent AstraZeneca from 2021-07-21
+        [sec] acquired: 25-NSE filed 2021-07-21 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2021-07-22 (ALEXION PHARMACEUTICALS, INC.), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
     id 6 ATVI (last trade 2023-10-12): acquired_cash, value 95.0
         [alpaca] acquired_cash: cash_merger of ATVI, 95.0 cash per share
         [wikidata] acquired: Activision Blizzard: parent Xbox Game Studios from 2023-10-13
+        [sec] acquired: 25-NSE filed 2023-10-13 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2023-10-13 (Activision Blizzard, Inc.), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 8 BIG (last trade 2024-09-06): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed BIG -> BIGGQ (Q = bankruptcy)
+        [sec] delisted_no_reason: 25-NSE filed 2024-09-10 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2024-09-10 (FORMER BL STORES INC), items 1.01, 1.03, 2.04, 3.01, 7.01 and 9.01
+    id 11 CERN (last trade 2022-06-07): acquired_cash, value 95.0
+        [alpaca] acquired_cash: cash_merger of CERN, 95.0 cash per share
+        [sec] acquired: 25-NSE filed 2022-06-08 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2022-06-08 (CERNER Corp), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 12 CHK (last trade 2020-06-26): bankruptcy, value 0.0
+        [wikidata] bankruptcy: Expand Energy: bankruptcy on 2020-06-28
+        [sec] delisted_no_reason: 25-NSE filed 2020-07-20 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock; 6.625% SR NTS due 2020; 6.875% SR NTS due 2020; 6.125% SR NTS d
+        [sec] bankruptcy: 8-K filed 2020-06-29 (EXPAND ENERGY Corp), items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+        [alpaca_bars] resumed: CHK trades again later (halt, or the ticker was reused)
+    id 15 CTXS (last trade 2022-09-29): acquired_cash, value 104.0
+        [alpaca] acquired_cash: cash_merger of CTXS, 104.0 cash per share
+        [sec] acquired: 25-NSE filed 2022-09-30 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2022-10-03 (CITRIX SYSTEMS INC), items 1.01, 1.02, 2.01, 2.03, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+    id 28 GMZ (last trade 2020-09-25): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of GMZ into GER
+        [sec] acquired: 25-NSE filed 2020-09-30 by NEW YORK STOCK EXCHANGE LLC: class 'Common Shares', class replaced by other securities or cash (merger) [12d2-2(a
+    id 31 HTZ (last trade 2020-10-29): bankruptcy, value 0.0
+        [wikidata] bankruptcy: Hertz Global Holdings: bankruptcy on 2020-05-22
+        [sec] delisted_no_reason: 25-NSE filed 2020-10-30 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2020-05-26 (HERTZ GLOBAL HOLDINGS, INC), items 1.01, 1.03, 2.04, 5.02, 7.01 and 9.01
+        [alpaca_bars] resumed: HTZ trades again later (halt, or the ticker was reused)
     id 32 HZNP (last trade 2023-10-05): acquired_cash, value 116.5
         [alpaca] acquired_cash: cash_merger of HZNP, 116.5 cash per share
         [wikidata] acquired: Horizon Therapeutics: parent Amgen from 2023-10-06
+        [sec] acquired: 25-NSE filed 2023-10-06 by Nasdaq Stock Market LLC: class 'Ordinary Shares', class replaced by other securities or cash (merger) [12d2-2(a)(
+        [sec] acquired: 8-K filed 2023-10-06 (Horizon Therapeutics Public Ltd Co), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 33 JCP (last trade 2020-05-18): bankruptcy, value 0.0
+        [wikidata] bankruptcy: J. C. Penney: bankruptcy on 2020-05-15
+        [sec] delisted_no_reason: 25-NSE filed 2020-05-20 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2020-05-18 (Old COPPER Company, Inc.), items 1.01, 1.03, 2.04, 3.01, 3.03, 7.01, 8.01 and 9.01
+    id 34 LHCG (last trade 2023-02-21): acquired_cash, value 170.0
+        [alpaca] acquired_cash: cash_merger of LHCG, 170.0 cash per share
+        [sec] acquired: 25-NSE filed 2023-02-22 by Nasdaq Stock Market LLC: class 'Common stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2023-02-22 (LHC Group, Inc), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 36 LNKD (last trade 2016-12-07): acquired_cash, value 196.0
+        [wikidata] acquired: LinkedIn Corporation: owned by Microsoft from 2016-06-13
+        [sec] acquired: 25-NSE filed 2016-12-08 by NEW YORK STOCK EXCHANGE LLC: class 'Class A Common Stock', class replaced by other securities or cash (merger) [1
+        [sec] acquired_cash: 8-K filed 2016-12-08 (LINKEDIN CORP), items 1.01, 2.01, 2.04, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01; terms: At the effective time of the Mer
     id 37 MLNX (last trade 2020-04-24): acquired_cash, value 125.0
         [alpaca] acquired_cash: cash_merger of MLNX into NVDA, 125.0 cash per share
         [wikidata] acquired: Mellanox Technologies: parent Nvidia from 2020-04-27
-    id 61 VMW (last trade 2023-11-21): acquired_cash, value 142.5
+    id 40 MXIM (last trade 2021-08-25): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of MXIM into ADI
+        [wikidata] delisted_no_reason: Maxim Integrated: dissolved 2021-08-26
+        [sec] acquired: 25-NSE filed 2021-08-26 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2021-08-26 (MAXIM INTEGRATED PRODUCTS INC), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 43 PXD (last trade 2024-05-02): acquired_stock, value none
+        [alpaca] acquired_stock: stock_merger of PXD into XOM
+        [sec] acquired: 25-NSE filed 2024-05-03 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired: 8-K filed 2024-05-03 (PIONEER NATURAL RESOURCES CO), items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 5.04 and 9.01
+    id 45 RAD (last trade 2023-10-13): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed RAD -> RADCQ (Q = bankruptcy)
+        [sec] delisted_no_reason: 25-NSE filed 2023-10-31 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2023-12-27 (NEW RITE AID, LLC), items 1.01, 1.03, 8.01 and 9.01
+        [sec] bankruptcy: 8-K filed 2023-10-16 (NEW RITE AID, LLC), items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+        [sec] bankruptcy: 8-K filed 2023-10-16 (NEW RITE AID, LLC), items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+    id 49 SAVE (last trade 2024-11-15): bankruptcy, value 0.0
+        [alpaca] bankruptcy: renamed SAVE -> SAVEQ (Q = bankruptcy)
+        [sec] delisted_no_reason: 25-NSE filed 2024-12-05 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2024-11-18 (Spirit Aviation Holdings, Inc.), items 1.01, 1.03, 2.04, 5.02, 7.01 and 9.01
+    id 51 SGEN (last trade 2023-12-13): acquired_cash, value 229.0
+        [alpaca] acquired_cash: cash_merger of SGEN, 229.0 cash per share
+        [sec] acquired: 25-NSE filed 2023-12-14 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2023-12-14 (Seagen Inc.), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 53 SIVB (last trade 2023-03-09): failure, value 0.0
+        [wikidata] bankruptcy: SVB Financial Group: Chapter 11 bankruptcy on 2023-03-17
+        [wikidata] failure: SVB Financial Group: collapse of Silicon Valley Bank on 2023-03-10
+        [sec] delisted_no_reason: 25-NSE filed 2023-05-02 by Nasdaq Stock Market LLC: class 'Common stock and preferred stock', removed by the exchange for not meeting its ru
+        [sec] bankruptcy: 8-K filed 2023-03-17 (SVB FINANCIAL GROUP), items 1.03, 3.01, 5.02 and 9.01
+        [sec] bankruptcy: 8-K filed 2023-03-10 (SVB FINANCIAL GROUP), items 1.03 and 8.01
+    id 54 SPLK (last trade 2024-03-15): acquired_cash, value 157.0
+        [alpaca] acquired_cash: cash_merger of SPLK, 157.0 cash per share
+        [sec] acquired: 25-NSE filed 2024-03-18 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2024-03-18 (SPLUNK INC), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+    id 58 TWTR (last trade 2022-10-27): acquired_cash, value 54.2
+        [alpaca] acquired_cash: cash_merger of TWTR, 54.2 cash per share
+        [wikidata] delisted_no_reason: Twitter, Inc.: listing ended 2022-10-27
+        [sec] acquired: 25-NSE filed 2022-10-28 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired: 8-K filed 2022-10-31 (TWITTER, INC.), items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+    id 61 VMW (last trade 2023-11-21): acquired_stock_and_cash, value none
         [alpaca] acquired_cash: cash_merger of VMW, 142.5 cash per share
         [alpaca] acquired_stock: stock_merger of VMW into AVGO
         [alpaca] acquired_stock: stock_merger of VMW into AVGO
         [wikidata] acquired: VMware: parent Broadcom from 2023-11-22
-  --- single_source (36) ---
-    id 8 BIG (last trade 2024-09-06): bankruptcy, value 0.0
-        [alpaca] bankruptcy: renamed BIG -> BIGGQ (Q = bankruptcy)
-    id 9 BSJN (last trade 2023-12-15): acquired_cash, value 23.50319
-        [alpaca] acquired_cash: cash_merger of BSJN, 23.50319 cash per share
-    id 11 CERN (last trade 2022-06-07): acquired_cash, value 95.0
-        [alpaca] acquired_cash: cash_merger of CERN, 95.0 cash per share
-    id 12 CHK (last trade 2020-06-26): bankruptcy, value 0.0
-        [wikidata] bankruptcy: Expand Energy: bankruptcy on 2020-06-28
-        [alpaca_bars] resumed: CHK trades again later (halt, or the ticker was reused)
-    id 15 CTXS (last trade 2022-09-29): acquired_cash, value 104.0
-        [alpaca] acquired_cash: cash_merger of CTXS, 104.0 cash per share
-    id 28 GMZ (last trade 2020-09-25): acquired_stock, value none
-        [alpaca] acquired_stock: stock_merger of GMZ into GER
-    id 31 HTZ (last trade 2020-10-29): bankruptcy, value 0.0
-        [wikidata] bankruptcy: Hertz Global Holdings: bankruptcy on 2020-05-22
-        [alpaca_bars] resumed: HTZ trades again later (halt, or the ticker was reused)
-    id 33 JCP (last trade 2020-05-18): bankruptcy, value 0.0
-        [wikidata] bankruptcy: J. C. Penney: bankruptcy on 2020-05-15
-    id 34 LHCG (last trade 2023-02-21): acquired_cash, value 170.0
-        [alpaca] acquired_cash: cash_merger of LHCG, 170.0 cash per share
-    id 36 LNKD (last trade 2016-12-07): acquired, value none
-        [wikidata] acquired: LinkedIn Corporation: owned by Microsoft from 2016-06-13
-    id 40 MXIM (last trade 2021-08-25): acquired_stock, value none
-        [alpaca] acquired_stock: stock_merger of MXIM into ADI
-        [wikidata] delisted_no_reason: Maxim Integrated: dissolved 2021-08-26
-    id 43 PXD (last trade 2024-05-02): acquired_stock, value none
-        [alpaca] acquired_stock: stock_merger of PXD into XOM
-    id 45 RAD (last trade 2023-10-13): bankruptcy, value 0.0
-        [alpaca] bankruptcy: renamed RAD -> RADCQ (Q = bankruptcy)
-    id 48 RHT (last trade 2019-07-08): acquired, value none
-        [wikidata] acquired: Red Hat: parent IBM from 2019-07-09
-        [wikidata] delisted_no_reason: Red Hat: listing ended 2019-07-10
-    id 49 SAVE (last trade 2024-11-15): bankruptcy, value 0.0
-        [alpaca] bankruptcy: renamed SAVE -> SAVEQ (Q = bankruptcy)
-    id 50 SBNY (last trade 2023-03-10): failure, value 0.0
-        [wikidata] failure: Signature Bank: collapse of Signature Bank on 2023-03-12
-        [wikidata] delisted_no_reason: Signature Bank: dissolved 2023-03-12
-    id 51 SGEN (last trade 2023-12-13): acquired_cash, value 229.0
-        [alpaca] acquired_cash: cash_merger of SGEN, 229.0 cash per share
-    id 53 SIVB (last trade 2023-03-09): failure, value 0.0
-        [wikidata] bankruptcy: SVB Financial Group: Chapter 11 bankruptcy on 2023-03-17
-        [wikidata] failure: SVB Financial Group: collapse of Silicon Valley Bank on 2023-03-10
-    id 54 SPLK (last trade 2024-03-15): acquired_cash, value 157.0
-        [alpaca] acquired_cash: cash_merger of SPLK, 157.0 cash per share
-    id 58 TWTR (last trade 2022-10-27): acquired_cash, value 54.2
-        [alpaca] acquired_cash: cash_merger of TWTR, 54.2 cash per share
-        [wikidata] delisted_no_reason: Twitter, Inc.: listing ended 2022-10-27
+        [sec] acquired: 25-NSE filed 2023-11-22 by NEW YORK STOCK EXCHANGE LLC: class 'Class A Common Stock', class replaced by other securities or cash (merger) [1
+        [sec] acquired: 8-K filed 2023-11-22 (VMWARE LLC), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
     id 62 WLL (last trade 2022-06-30): acquired_stock_and_cash, value none
         [alpaca] acquired_stock_and_cash: stock_and_cash_merger of WLL into OAS, 6.25 cash plus shares
+        [sec] acquired: 25-NSE filed 2022-07-01 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired: 8-K filed 2022-07-07 (Whiting Holdings LLC), items 1.01, 1.02, 2.01, 2.02, 3.01, 3.03, 5.01, 5.02, 5.03, 7.01 and 9.01
     id 63 XLNX (last trade 2022-02-11): acquired_stock, value none
         [alpaca] acquired_stock: stock_merger of XLNX into AMD
+        [sec] acquired: 25-NSE filed 2022-02-14 by Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)(3)]
+        [sec] acquired: 8-K filed 2022-02-14 (XILINX INC), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
     id 64 YRCW -> YELL (last trade 2023-08-15): bankruptcy, value 0.0
         [alpaca] bankruptcy: renamed YELL -> YELLQ (Q = bankruptcy)
+        [sec] delisted_no_reason: 25-NSE filed 2023-09-08 by Nasdaq Stock Market LLC: class 'Common stock', removed by the exchange for not meeting its rules [12d2-2(b)]; not
+        [sec] bankruptcy: 8-K filed 2023-11-01 (Yellow Corp), items 1.01, 1.03 and 9.01
+        [sec] bankruptcy: 8-K filed 2023-09-21 (Yellow Corp), items 1.01, 1.03, 2.03 and 9.01
+        [sec] bankruptcy: 8-K filed 2023-08-07 (Yellow Corp), items 1.03, 2.03, 2.04, 5.02, 7.01, 8.01 and 9.01
     id 69 RETA (last trade 2023-09-25): acquired_cash, value 172.5
         [alpaca] acquired_cash: cash_merger of RETA, 172.5 cash per share
-    id 71 FSBC (last trade 2020-04-30): acquired_cash, value 17.8
-        [alpaca] acquired_cash: cash_merger of FSBC into EVBN, 17.8 cash per share
-        [alpaca] acquired_stock_and_cash: stock_and_cash_merger of FSBC into EVBN, 17.8 cash plus shares
-        [alpaca] acquired_stock: stock_merger of FSBC into EVBN
-        [alpaca_bars] resumed: FSBC trades again later (halt, or the ticker was reused)
+        [sec] acquired: 25-NSE filed 2023-09-26 by Nasdaq Stock Market LLC: class 'Class A Common Stock', class replaced by other securities or cash (merger) [12d2-
+        [sec] acquired: 8-K filed 2023-09-26 (REATA PHARMACEUTICALS INC), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
     id 78 SMMC -> BTRS (last trade 2022-12-15): acquired_cash, value 9.5
         [alpaca] acquired_cash: cash_merger of BTRS, 9.5 cash per share
+        [sec] acquired: 25-NSE filed 2022-12-16 by Nasdaq Stock Market LLC: class 'Class 1 Common Stock', class replaced by other securities or cash (merger) [12d2-
+        [sec] acquired: 8-K filed 2022-12-16 (BTRS Holdings Inc.), items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
     id 80 CFII -> VIEW (last trade 2024-04-04): bankruptcy, value 0.0
         [alpaca] bankruptcy: renamed VIEW -> VIEWQ (Q = bankruptcy)
+        [sec] delisted_no_reason: 25-NSE filed 2024-04-25 by Nasdaq Stock Market LLC: class 'Class A common stock and warrants', removed by the exchange for not meeting its r
+        [sec] bankruptcy: 8-K filed 2024-05-24 (View, Inc.), items 1.01, 1.03, 2.03, 3.02, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        [sec] bankruptcy: 8-K filed 2024-04-03 (View, Inc.), items 1.02, 1.03 and 8.01
     id 81 BOWX -> WE (last trade 2023-11-03): bankruptcy, value 0.0
         [alpaca] bankruptcy: renamed WE -> WEWKQ (Q = bankruptcy)
         [alpaca] bankruptcy: renamed WE -> WEWKQ (Q = bankruptcy)
         [alpaca] bankruptcy: renamed WE -> WEKWQ (Q = bankruptcy)
+        [sec] delisted_no_reason: 25-NSE filed 2023-11-22 by NEW YORK STOCK EXCHANGE LLC: class 'Class A Common Stock Class A Common Stock Purchase Rights', removed by the ex
+        [sec] bankruptcy: 8-K filed 2023-11-07 (WeWork Inc.), items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
     id 84 BTNB -> PGRU (last trade 2024-12-12): acquired_cash, value 6.7
         [alpaca] acquired_cash: cash_merger of PGRU, 6.7 cash per share
+        [sec] acquired: 25-NSE filed 2024-12-13 by NEW YORK STOCK EXCHANGE LLC: class 'Ordinary Shares', class replaced by other securities or cash (merger) [12d2-2
     id 85 FLAC (last trade 2022-11-22): acquired_stock, value none
         [alpaca] acquired_stock: stock_merger of FLAC
-    id 97 BMAC (last trade 2023-12-07): acquired_cash, value 10.77909879
-        [alpaca] acquired_cash: cash_merger of BMAC, 10.77909879 cash per share
-    id 99 UTAA (last trade 2023-09-15): acquired_cash, value 10.67755831
+        [sec] acquired: 25-NSE filed 2022-11-22 by Nasdaq Stock Market LLC: class 'Class A Ordinary Shares', class replaced by other securities or cash (merger) [12
+        [sec] acquired: 8-K filed 2022-11-23 (Frazier Lifesciences Acquisition Corp), items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 7.01 and 9.01
+    id 99 UTAA (last trade 2023-09-15): redeemed, value 10.67755831
         [alpaca] acquired_cash: cash_merger of UTAA, 10.67755831 cash per share
-    id 100 DO (last trade 2024-09-03): acquired_cash, value 5.65
+        [sec] redeemed: 25-NSE filed 2023-09-15 by Nasdaq Stock Market LLC: class 'Class A Ordinary Shares & Unit', class redeemed or retired [12d2-2(a)(1)/(2)]; no
+    id 100 DO (last trade 2024-09-03): acquired_stock_and_cash, value none
         [alpaca] acquired_cash: cash_merger of DO, 5.65 cash per share
         [alpaca] acquired_stock_and_cash: stock_and_cash_merger of DO into NE, 5.65 cash plus shares
-    id 102 PYPT (last trade 2023-08-11): acquired_cash, value 14.8779
-        [alpaca] acquired_cash: cash_merger of PYPT, 14.8779 cash per share
+        [sec] acquired: 25-NSE filed 2024-09-04 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired: 8-K filed 2024-09-04 (DIAMOND OFFSHORE DRILLING, INC.), items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
     id 119 CETUR (last trade 2024-07-31): acquired_stock, value none
         [alpaca] acquired_stock: stock_merger of CETUR into MKDW
+        [sec] acquired: 25-NSE filed 2024-07-31 by Nasdaq Stock Market LLC: class 'Class A Common Stock, Right, Warrant, Unit', class replaced by other securities o
         [alpaca_bars] fragment: only 30 real trading sessions
-    id 123 BACA (last trade 2024-09-26): acquired_cash, value 10.68496799
+    id 123 BACA (last trade 2024-09-26): redeemed, value 10.68496799
         [alpaca] acquired_cash: cash_merger of BACA, 10.68496799 cash per share
+        [sec] redeemed: 25-NSE filed 2024-10-16 by NYSE AMERICAN LLC: class 'Class A Common Stock', class redeemed or retired [12d2-2(a)(1)/(2)]
         [alpaca_bars] fragment: only 15 real trading sessions
-  --- conflict (0) ---
-  --- unresolved (49) ---
-    id 7 BBBY (last trade 2023-05-02): unknown, value none
+  --- single_source (24) ---
+    id 7 BBBY (last trade 2023-05-02): bankruptcy, value 0.0
         [wikidata] delisted_no_reason: Bed Bath & Beyond Inc.: listing ended 2023-05-03
-    id 10 CELG (last trade 2019-11-20): unknown, value none
-    id 14 CRC (last trade 2020-07-15): resumed_or_fragment, value none
+        [sec] delisted_no_reason: 25-NSE filed 2023-07-10 by Nasdaq Stock Market LLC: class 'Common stock', removed by the exchange for not meeting its rules [12d2-2(b)]; not
+        [sec] bankruptcy: 8-K filed 2023-06-22 (20230930-DK-Butterfly-1, Inc.), items 1.01 and 1.03
+        [sec] bankruptcy: 8-K filed 2023-04-24 (20230930-DK-Butterfly-1, Inc.), items 1.01, 1.03, 2.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+    id 9 BSJN (last trade 2023-12-15): acquired_cash, value 23.50319
+        [alpaca] acquired_cash: cash_merger of BSJN, 23.50319 cash per share
+    id 10 CELG (last trade 2019-11-20): acquired, value none
+        [sec] acquired: 25-NSE filed 2019-11-20 by The Nasdaq Stock Market LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired: 8-K filed 2019-11-22 (CELGENE CORP /DE/), items 2.01, 3.03 and 9.01
+        [sec] acquired: 8-K filed 2019-11-20 (CELGENE CORP /DE/), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+    id 14 CRC (last trade 2020-07-15): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2020-07-31 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2020-07-16 (California Resources Corp), items 1.01, 1.03, 2.04, 7.01 and 9.01
         [alpaca_bars] resumed: CRC trades again later (halt, or the ticker was reused)
-    id 17 DISCA (last trade 2022-04-08): unknown, value none
+    id 17 DISCA (last trade 2022-04-08): acquired, value none
         [wikidata] delisted_no_reason: Discovery, Inc.: dissolved 2022-04-08
-    id 18 DO (last trade 2020-04-24): resumed_or_fragment, value none
+        [sec] acquired: 25-NSE filed 2022-04-08 by Nasdaq Stock Market LLC: class 'Series C Common Stock', class replaced by other securities or cash (merger) [12d2
+        [sec] acquired: 25-NSE filed 2022-04-08 by Nasdaq Stock Market LLC: class 'Series B Common Stock', class replaced by other securities or cash (merger) [12d2
+        [sec] acquired: 25-NSE filed 2022-04-08 by Nasdaq Stock Market LLC: class 'Series A Common Stock', class replaced by other securities or cash (merger) [12d2
+        [sec] acquired: 8-K filed 2022-04-12 (Warner Bros. Discovery, Inc.), items 1.01, 2.01, 2.03, 3.01, 3.03, 5.02, 5.03, 5.07, 7.01, 8.01 and 9.01
+    id 18 DO (last trade 2020-04-24): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2020-05-12 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2020-04-28 (DIAMOND OFFSHORE DRILLING, INC.), items 1.03, 3.01, 7.01 and 9.01
+        [sec] bankruptcy: 8-K filed 2020-04-27 (DIAMOND OFFSHORE DRILLING, INC.), items 1.03, 2.04, 5.02, 7.01, 8.01 and 9.01
         [alpaca_bars] resumed: DO trades again later (halt, or the ticker was reused)
-    id 20 ENDP (last trade 2022-08-25): unknown, value none
+    id 20 ENDP (last trade 2022-08-25): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2022-09-14 by Nasdaq Stock Market LLC: class 'Ordinary Shares', removed by the exchange for not meeting its rules [12d2-2(b)]; 
+        [sec] bankruptcy: 8-K filed 2022-08-17 (Endo International plc), items 1.01, 1.03, 5.02, 7.01 and 9.01
+    id 22 EXPR (last trade 2024-03-06): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2024-03-14 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)]
+        [sec] bankruptcy: 8-K filed 2024-04-22 (EXP OldCo Winddown, Inc.), items 1.03, 2.03, 2.04, 5.02, 7.01 and 9.01
+    id 27 FTR (last trade 2020-04-23): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2020-04-29 by The Nasdaq Stock Market LLC: class 'Common stock', removed by the exchange for not meeting its rules [12d2-2(b)];
+        [sec] bankruptcy: 8-K filed 2020-04-15 (Frontier Communications Parent, Inc.), items 1.01, 1.03, 2.03, 2.04, 7.01, 8.01 and 9.01
+    id 38 MON (last trade 2018-06-06): acquired_cash, value 128.0
+        [sec] acquired: 25-NSE filed 2018-06-07 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired_cash: 8-K filed 2018-06-08 (MONSANTO CO /NEW/), items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01; terms: At the effective time of the
+        [alpaca_bars] resumed: MON trades again later (halt, or the ticker was reused)
+    id 42 PRTY (last trade 2023-01-17): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2023-02-03 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock, $0.01 par value per share', removed by the exchange for not mee
+        [sec] bankruptcy: 8-K filed 2023-01-18 (Party City Holdco Inc.), items 1.01, 1.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+    id 47 REV (last trade 2022-10-20): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2022-10-21 by NEW YORK STOCK EXCHANGE LLC: class 'Class A Common Stock', removed by the exchange for not meeting its rules [12d
+        [sec] bankruptcy: 8-K filed 2022-06-16 (REVLON INC /DE/), items 1.02, 1.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+    id 48 RHT (last trade 2019-07-08): acquired, value none
+        [wikidata] acquired: Red Hat: parent IBM from 2019-07-09
+        [wikidata] delisted_no_reason: Red Hat: listing ended 2019-07-10
+    id 50 SBNY (last trade 2023-03-10): failure, value 0.0
+        [wikidata] failure: Signature Bank: collapse of Signature Bank on 2023-03-12
+        [wikidata] delisted_no_reason: Signature Bank: dissolved 2023-03-12
+    id 52 SHLD (last trade 2018-10-23): bankruptcy, value 0.0
+        [sec] delisted_no_reason: 25-NSE filed 2018-11-15 by The Nasdaq Stock Market LLC: class 'Common Stock', removed by the exchange for not meeting its rules [12d2-2(b)];
+        [sec] bankruptcy: 8-K filed 2018-10-15 (SEARS HOLDINGS CORP), items 1.03, 2.03, 2.04, 2.05, 5.02, 5.03, 7.01 and 9.01
+        [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
+    id 59 TWX (last trade 2018-06-14): acquired, value none
+        [wikidata] delisted_no_reason: WarnerMedia: listing ended 2018-06-14
+        [sec] acquired: 25-NSE filed 2018-06-15 by NEW YORK STOCK EXCHANGE LLC: class 'Common Stock', class replaced by other securities or cash (merger) [12d2-2(a)
+        [sec] acquired: 8-K filed 2018-06-18 (WARNER MEDIA, LLC), items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+    id 71 FSBC (last trade 2020-04-30): acquired_stock_and_cash, value none
+        [alpaca] acquired_cash: cash_merger of FSBC into EVBN, 17.8 cash per share
+        [alpaca] acquired_stock_and_cash: stock_and_cash_merger of FSBC into EVBN, 17.8 cash plus shares
+        [alpaca] acquired_stock: stock_merger of FSBC into EVBN
+        [alpaca_bars] resumed: FSBC trades again later (halt, or the ticker was reused)
+    id 87 MON (last trade 2022-12-23): redeemed, value none
+        [sec] redeemed: 25-NSE filed 2022-12-23 by Nasdaq Stock Market LLC: class 'Class A Common Stock, Warrant, Unit', class redeemed or retired [12d2-2(a)(1)/(2)
+    id 97 BMAC (last trade 2023-12-07): acquired_cash, value 10.77909879
+        [alpaca] acquired_cash: cash_merger of BMAC, 10.77909879 cash per share
+        [sec] delisted_no_reason: 25-NSE filed 2023-12-12 by NEW YORK STOCK EXCHANGE LLC: class 'Class A Common Stock; Units, each consisting of one share of Class A common s
+    id 98 BACA (last trade 2024-08-14): redeemed, value none
+        [sec] redeemed: 25-NSE filed 2024-10-16 by NYSE AMERICAN LLC: class 'Class A Common Stock', class redeemed or retired [12d2-2(a)(1)/(2)]
+        [alpaca_bars] resumed: BACA trades again later (halt, or the ticker was reused)
+    id 102 PYPT (last trade 2023-08-11): acquired_cash, value 14.8779
+        [alpaca] acquired_cash: cash_merger of PYPT, 14.8779 cash per share
+    id 103 MONDW (last trade 2022-10-26): redeemed, value none
+        [sec] redeemed: 25-NSE filed 2022-10-26 by Nasdaq Stock Market LLC: class 'warrants', class redeemed or retired [12d2-2(a)(1)/(2)]; notice text: EX-99.25 2 
+    id 118 CETUR (last trade 2024-05-16): acquired, value none
+        [sec] acquired: 25-NSE filed 2024-07-31 by Nasdaq Stock Market LLC: class 'Class A Common Stock, Right, Warrant, Unit', class replaced by other securities o
+        [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
+        [alpaca_bars] fragment: only 2 real trading sessions
+    id 122 NOVVW (last trade 2024-09-13): acquired, value none
+        [sec] acquired: 25-NSE filed 2024-11-19 by Nasdaq Stock Market LLC: class 'Ordinary share, right, warrant, unit', class replaced by other securities or cash
+        [alpaca_bars] fragment: only 7 real trading sessions
+  --- conflict (0) ---
+  --- unresolved (31) ---
     id 21 ENRJ (last trade 2018-03-26): unknown, value none
-    id 22 EXPR (last trade 2024-03-06): unknown, value none
     id 26 FRC (last trade 2023-04-28): unknown, value none
         [wikidata] delisted_no_reason: First Republic Bank: dissolved 2023-05-01
-    id 27 FTR (last trade 2020-04-23): unknown, value none
     id 30 HTBX -> NHWK -> SCPX (last trade 2024-06-14): resumed_or_fragment, value none
         [alpaca_bars] resumed: SCPX trades again later (halt, or the ticker was reused)
-    id 38 MON (last trade 2018-06-06): resumed_or_fragment, value none
-        [alpaca_bars] resumed: MON trades again later (halt, or the ticker was reused)
-    id 42 PRTY (last trade 2023-01-17): unknown, value none
     id 46 RATE (last trade 2017-11-08): resumed_or_fragment, value none
         [alpaca_bars] resumed: RATE trades again later (halt, or the ticker was reused)
-    id 47 REV (last trade 2022-10-20): unknown, value none
-    id 52 SHLD (last trade 2018-10-23): resumed_or_fragment, value none
-        [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
-    id 59 TWX (last trade 2018-06-14): unknown, value none
-        [wikidata] delisted_no_reason: WarnerMedia: listing ended 2018-06-14
     id 65 WDRW (last trade 2016-03-11): resumed_or_fragment, value none
         [alpaca_bars] resumed: WDRW trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 30 real trading sessions
@@ -212,16 +327,12 @@ hand-entered corrections checked against prices. SEC: paused until a contact add
     id 79 IMVTW (last trade 2020-06-15): unknown, value none
     id 83 SHLD (last trade 2021-08-17): resumed_or_fragment, value none
         [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
-    id 87 MON (last trade 2022-12-23): unknown, value none
     id 88 ITHXW (last trade 2022-07-18): unknown, value none
     id 92 SHLD (last trade 2021-10-08): resumed_or_fragment, value none
         [alpaca_bars] resumed: SHLD trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 16 real trading sessions
     id 93 NOVVW (last trade 2022-09-29): resumed_or_fragment, value none
         [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
-    id 98 BACA (last trade 2024-08-14): resumed_or_fragment, value none
-        [alpaca_bars] resumed: BACA trades again later (halt, or the ticker was reused)
-    id 103 MONDW (last trade 2022-10-26): unknown, value none
     id 104 NOVVW (last trade 2022-12-13): resumed_or_fragment, value none
         [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 17 real trading sessions
@@ -235,6 +346,7 @@ hand-entered corrections checked against prices. SEC: paused until a contact add
         [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 14 real trading sessions
     id 109 YGF (last trade 2024-02-08): unknown, value none
+        [sec] delisted_no_reason: 25-NSE filed 2024-04-09 by Nasdaq Stock Market LLC: class 'Ordinary Shares', removed by the exchange for not meeting its rules [12d2-2(b)]; 
     id 110 CETUR (last trade 2023-05-16): resumed_or_fragment, value none
         [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 1 real trading sessions
@@ -255,59 +367,314 @@ hand-entered corrections checked against prices. SEC: paused until a contact add
     id 117 NOVVW (last trade 2024-06-25): resumed_or_fragment, value none
         [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 23 real trading sessions
-    id 118 CETUR (last trade 2024-05-16): resumed_or_fragment, value none
-        [alpaca_bars] resumed: CETUR trades again later (halt, or the ticker was reused)
-        [alpaca_bars] fragment: only 2 real trading sessions
     id 120 NOVVW (last trade 2024-08-05): resumed_or_fragment, value none
         [alpaca_bars] resumed: NOVVW trades again later (halt, or the ticker was reused)
         [alpaca_bars] fragment: only 3 real trading sessions
-    id 122 NOVVW (last trade 2024-09-13): resumed_or_fragment, value none
-        [alpaca_bars] fragment: only 7 real trading sessions
   Known cases (expected against the evidence):
-    SIVB   id 53: failure (single_source) | expected: bank failure; last exchange trade 2023-03-09
+    SIVB   id 53: failure (confirmed) | expected: bank failure; last exchange trade 2023-03-09
     SBNY   id 50: failure (single_source) | expected: bank failure March 2023
     FRC    id 26: unknown (unresolved) | expected: bank failure; last exchange trade late April 2023
-    BBBY   id 7: unknown (unresolved) | expected: bankruptcy; delisted 2023-05
-    JCP    id 33: bankruptcy (single_source) | expected: J.C. Penney bankruptcy 2020
-    FTR    id 27: unknown (unresolved) | expected: Frontier bankruptcy 2020; re-emerged as a new company FYBR
-    CHK    id 12: bankruptcy (single_source) | expected: Chesapeake bankruptcy 2020; NEW company listed as CHK 2021-02; renamed EXE 2024-10
-    HTZ    id 31: bankruptcy (single_source) | expected: Hertz bankruptcy 2020; NEW company listed as HTZ 2021-11. Old shareholders were in fact paid out: a known exception to total loss
-    WE     id 81: bankruptcy (single_source) | expected: WeWork: SPAC BOWX renamed WE 2021-10; bankruptcy 2023-11 (WEWKQ)
-    RAD    id 45: bankruptcy (single_source) | expected: Rite Aid bankruptcy 2023
-    PRTY   id 42: unknown (unresolved) | expected: Party City bankruptcy 2023
-    YELL   id 64: bankruptcy (single_source) | expected: Yellow Corp bankruptcy 2023
-    REV    id 47: unknown (unresolved) | expected: Revlon bankruptcy 2022
-    EXPR   id 22: unknown (unresolved) | expected: Express bankruptcy 2024
-    BIG    id 8: bankruptcy (single_source) | expected: Big Lots bankruptcy 2024
-    SAVE   id 49: bankruptcy (single_source) | expected: Spirit Airlines bankruptcy 2024-11
-    ENDP   id 20: unknown (unresolved) | expected: Endo bankruptcy 2022
-    DO     id 18: resumed_or_fragment (unresolved) | expected: Diamond Offshore bankruptcy 2020; new company listed 2021
-    DO     id 100: acquired_cash (single_source) | expected: Diamond Offshore bankruptcy 2020; new company listed 2021
-    WLL    id 62: acquired_stock_and_cash (single_source) | expected: Whiting bankruptcy 2020; new WLL 2020; merged into Chord 2022
-    CRC    id 14: resumed_or_fragment (unresolved) | expected: California Resources bankruptcy 2020; new CRC listed 2020-10
-    SHLD   id 52: resumed_or_fragment (unresolved) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
+    BBBY   id 7: bankruptcy (single_source) | expected: bankruptcy; delisted 2023-05
+    JCP    id 33: bankruptcy (confirmed) | expected: J.C. Penney bankruptcy 2020
+    FTR    id 27: bankruptcy (single_source) | expected: Frontier bankruptcy 2020; re-emerged as a new company FYBR
+    CHK    id 12: bankruptcy (confirmed) | expected: Chesapeake bankruptcy 2020; NEW company listed as CHK 2021-02; renamed EXE 2024-10
+    HTZ    id 31: bankruptcy (confirmed) | expected: Hertz bankruptcy 2020; NEW company listed as HTZ 2021-11. Old shareholders were in fact paid out: a known exception to total loss
+    WE     id 81: bankruptcy (confirmed) | expected: WeWork: SPAC BOWX renamed WE 2021-10; bankruptcy 2023-11 (WEWKQ)
+    RAD    id 45: bankruptcy (confirmed) | expected: Rite Aid bankruptcy 2023
+    PRTY   id 42: bankruptcy (single_source) | expected: Party City bankruptcy 2023
+    YELL   id 64: bankruptcy (confirmed) | expected: Yellow Corp bankruptcy 2023
+    REV    id 47: bankruptcy (single_source) | expected: Revlon bankruptcy 2022
+    EXPR   id 22: bankruptcy (single_source) | expected: Express bankruptcy 2024
+    BIG    id 8: bankruptcy (confirmed) | expected: Big Lots bankruptcy 2024
+    SAVE   id 49: bankruptcy (confirmed) | expected: Spirit Airlines bankruptcy 2024-11
+    ENDP   id 20: bankruptcy (single_source) | expected: Endo bankruptcy 2022
+    DO     id 18: bankruptcy (single_source) | expected: Diamond Offshore bankruptcy 2020; new company listed 2021
+    DO     id 100: acquired_stock_and_cash (confirmed) | expected: Diamond Offshore bankruptcy 2020; new company listed 2021
+    WLL    id 62: acquired_stock_and_cash (confirmed) | expected: Whiting bankruptcy 2020; new WLL 2020; merged into Chord 2022
+    CRC    id 14: bankruptcy (single_source) | expected: California Resources bankruptcy 2020; new CRC listed 2020-10
+    SHLD   id 52: bankruptcy (single_source) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
     SHLD   id 83: resumed_or_fragment (unresolved) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
     SHLD   id 92: resumed_or_fragment (unresolved) | expected: Sears Holdings bankruptcy 2018 (before dense corporate actions)
-    TWTR   id 58: acquired_cash (single_source) | expected: taken private at $54.20, 2022-10-28
+    TWTR   id 58: acquired_cash (confirmed) | expected: taken private at $54.20, 2022-10-28
     ATVI   id 6: acquired_cash (confirmed) | expected: acquired by Microsoft at $95, 2023-10-13
-    CTXS   id 15: acquired_cash (single_source) | expected: taken private 2022-09
-    SPLK   id 54: acquired_cash (single_source) | expected: acquired by Cisco 2024-03
-    SGEN   id 51: acquired_cash (single_source) | expected: acquired by Pfizer 2023-12
+    CTXS   id 15: acquired_cash (confirmed) | expected: taken private 2022-09
+    SPLK   id 54: acquired_cash (confirmed) | expected: acquired by Cisco 2024-03
+    SGEN   id 51: acquired_cash (confirmed) | expected: acquired by Pfizer 2023-12
     HZNP   id 32: acquired_cash (confirmed) | expected: acquired by Amgen 2023-10
-    CERN   id 11: acquired_cash (single_source) | expected: acquired by Oracle 2022-06
+    CERN   id 11: acquired_cash (confirmed) | expected: acquired by Oracle 2022-06
     MLNX   id 37: acquired_cash (confirmed) | expected: acquired by NVIDIA at $125, 2020-04-27
-    XLNX   id 63: acquired_stock (single_source) | expected: acquired by AMD in stock, 2022-02-14
-    MXIM   id 40: acquired_stock (single_source) | expected: acquired by Analog Devices in stock, 2021-08
-    PXD    id 43: acquired_stock (single_source) | expected: acquired by Exxon in stock, 2024-05
+    XLNX   id 63: acquired_stock (confirmed) | expected: acquired by AMD in stock, 2022-02-14
+    MXIM   id 40: acquired_stock (confirmed) | expected: acquired by Analog Devices in stock, 2021-08
+    PXD    id 43: acquired_stock (confirmed) | expected: acquired by Exxon in stock, 2024-05
     ALXN   id 2: acquired_stock_and_cash (confirmed) | expected: acquired by AstraZeneca, cash and stock, 2021-07
-    VMW    id 61: acquired_cash (confirmed) | expected: acquired by Broadcom, cash and stock, 2023-11
-    LNKD   id 36: acquired (single_source) | expected: acquired by Microsoft 2016-12 (before dense corporate actions)
-    MON    id 38: resumed_or_fragment (unresolved) | expected: acquired by Bayer 2018-06 (before dense corporate actions)
-    MON    id 87: unknown (unresolved) | expected: acquired by Bayer 2018-06 (before dense corporate actions)
-    TWX    id 59: unknown (unresolved) | expected: acquired by AT&T 2018-06 (before dense corporate actions)
+    VMW    id 61: acquired_stock_and_cash (confirmed) | expected: acquired by Broadcom, cash and stock, 2023-11
+    LNKD   id 36: acquired_cash (confirmed) | expected: acquired by Microsoft 2016-12 (before dense corporate actions)
+    MON    id 38: acquired_cash (single_source) | expected: acquired by Bayer 2018-06 (before dense corporate actions)
+    MON    id 87: redeemed (single_source) | expected: acquired by Bayer 2018-06 (before dense corporate actions)
+    TWX    id 59: acquired (single_source) | expected: acquired by AT&T 2018-06 (before dense corporate actions)
     RHT    id 48: acquired (single_source) | expected: acquired by IBM 2019-07 (before dense corporate actions)
-    CELG   id 10: unknown (unresolved) | expected: acquired by Bristol-Myers 2019-11 (before dense corporate actions)
-    DISCA  id 17: unknown (unresolved) | expected: Discovery merged with WarnerMedia and became WBD, 2022-04
+    CELG   id 10: acquired (single_source) | expected: acquired by Bristol-Myers 2019-11 (before dense corporate actions)
+    DISCA  id 17: acquired (single_source) | expected: Discovery merged with WarnerMedia and became WBD, 2022-04
+
+4b. SEC CROSS-CHECK (every ended security)
+  A company is accepted only if it filed a Form 25/25-NSE between 45 days before and 90 days after
+  the last trade (before 2025). Search keys (tickers, names) only propose candidates.
+  Matched: 54 of 90
+    id 2 ALXN (last trade 2021-07-20): ALEXION PHARMACEUTICALS, INC. (CIK 0000899866, SIC 2834)
+        25-NSE 2021-07-21 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2021-07-22: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_stock_and_cash (confirmed)
+    id 6 ATVI (last trade 2023-10-12): Activision Blizzard, Inc. (CIK 0000718877, SIC 7372)
+        25-NSE 2023-10-13 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2023-10-13: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 7 BBBY (last trade 2023-05-02): 20230930-DK-Butterfly-1, Inc. (CIK 0000886158, SIC 5700)
+        25-NSE 2023-07-10 Nasdaq Stock Market LLC: 'Common stock', 12d2-2(b)
+        8-K 2023-06-22: items 1.01 and 1.03
+        8-K 2023-04-24: items 1.01, 1.03, 2.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (single_source)
+    id 8 BIG (last trade 2024-09-06): FORMER BL STORES INC (CIK 0000768835, SIC 5331)
+        25-NSE 2024-09-10 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2024-09-10: items 1.01, 1.03, 2.04, 3.01, 7.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 9 BSJN (last trade 2023-12-15): NO MATCH - no Form 25 between 2023-10-31 and 2024-03-14 from 0 candidate companies
+    id 10 CELG (last trade 2019-11-20): CELGENE CORP /DE/ (CIK 0000816284, SIC 2834)
+        25-NSE 2019-11-20 The Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2019-11-22: items 2.01, 3.03 and 9.01
+        8-K 2019-11-20: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired (single_source)
+    id 11 CERN (last trade 2022-06-07): CERNER Corp (CIK 0000804753, SIC 7373)
+        25-NSE 2022-06-08 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2022-06-08: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 12 CHK (last trade 2020-06-26): EXPAND ENERGY Corp (CIK 0000895126, SIC 1311)
+        25-NSE 2020-07-20 NEW YORK STOCK EXCHANGE LLC: 'Common Stock; 6.625% SR NTS due 2020; 6.875% SR NTS due 2020; 6.125% SR NTS due 2021; 5.375% SR NTS due 2021; 4.875% Sr. Notes due 2022; 5.75% SR NTS due 2023; 4.5% Cumulative Conv. Preferred Stock', 12d2-2(b)
+        8-K 2020-06-29: items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 14 CRC (last trade 2020-07-15): California Resources Corp (CIK 0001609253, SIC 1311)
+        25-NSE 2020-07-31 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2020-07-16: items 1.01, 1.03, 2.04, 7.01 and 9.01
+        -> type common (single_source); outcome bankruptcy (single_source)
+    id 15 CTXS (last trade 2022-09-29): CITRIX SYSTEMS INC (CIK 0000877890, SIC 7372)
+        25-NSE 2022-09-30 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2022-10-03: items 1.01, 1.02, 2.01, 2.03, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 17 DISCA (last trade 2022-04-08): Warner Bros. Discovery, Inc. (CIK 0001437107, SIC 4841)
+        25-NSE 2022-04-08 Nasdaq Stock Market LLC: 'Series C Common Stock', 12d2-2(a)(3)
+        25-NSE 2022-04-08 Nasdaq Stock Market LLC: 'Series B Common Stock', 12d2-2(a)(3)
+        25-NSE 2022-04-08 Nasdaq Stock Market LLC: 'Series A Common Stock', 12d2-2(a)(3)
+        8-K 2022-04-12: items 1.01, 2.01, 2.03, 3.01, 3.03, 5.02, 5.03, 5.07, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired (single_source)
+    id 18 DO (last trade 2020-04-24): DIAMOND OFFSHORE DRILLING, INC. (CIK 0000949039, SIC 1381)
+        25-NSE 2020-05-12 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2020-04-28: items 1.03, 3.01, 7.01 and 9.01
+        8-K 2020-04-27: items 1.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+        -> type common (single_source); outcome bankruptcy (single_source)
+    id 20 ENDP (last trade 2022-08-25): Endo International plc (CIK 0001593034, SIC 2834)
+        25-NSE 2022-09-14 Nasdaq Stock Market LLC: 'Ordinary Shares', 12d2-2(b)
+        8-K 2022-08-17: items 1.01, 1.03, 5.02, 7.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (single_source)
+    id 21 ENRJ (last trade 2018-03-26): NO MATCH - no Form 25 between 2018-02-09 and 2018-06-24 from 0 candidate companies
+    id 22 EXPR (last trade 2024-03-06): EXP OldCo Winddown, Inc. (CIK 0001483510, SIC 5600)
+        25-NSE 2024-03-14 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2024-04-22: items 1.03, 2.03, 2.04, 5.02, 7.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (single_source)
+    id 26 FRC (last trade 2023-04-28): NO MATCH - no Form 25 between 2023-03-14 and 2023-07-27 from 1 candidate companies
+    id 27 FTR (last trade 2020-04-23): Frontier Communications Parent, Inc. (CIK 0000020520, SIC 4813)
+        25-NSE 2020-04-29 The Nasdaq Stock Market LLC: 'Common stock', 12d2-2(b)
+        8-K 2020-04-15: items 1.01, 1.03, 2.03, 2.04, 7.01, 8.01 and 9.01
+        -> type common (single_source); outcome bankruptcy (single_source)
+    id 28 GMZ (last trade 2020-09-25): Goldman Sachs MLP Income Opportunities Fund (CIK 0001579762, SIC none)
+        25-NSE 2020-09-30 NEW YORK STOCK EXCHANGE LLC: 'Common Shares', 12d2-2(a)(3)
+        -> type fund (single_source); outcome acquired_stock (confirmed)
+    id 30 HTBX -> NHWK -> SCPX (last trade 2024-06-14): NO MATCH - no Form 25 between 2024-04-30 and 2024-09-12 from 1 candidate companies
+    id 31 HTZ (last trade 2020-10-29): HERTZ GLOBAL HOLDINGS, INC (CIK 0001657853, SIC 7510)
+        25-NSE 2020-10-30 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2020-05-26: items 1.01, 1.03, 2.04, 5.02, 7.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 32 HZNP (last trade 2023-10-05): Horizon Therapeutics Public Ltd Co (CIK 0001492426, SIC 2834)
+        25-NSE 2023-10-06 Nasdaq Stock Market LLC: 'Ordinary Shares', 12d2-2(a)(3)
+        8-K 2023-10-06: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 33 JCP (last trade 2020-05-18): Old COPPER Company, Inc. (CIK 0001166126, SIC 5311)
+        25-NSE 2020-05-20 NEW YORK STOCK EXCHANGE LLC: '5.65% Senior Notes due June 1, 2020', 12d2-2(b)
+        25-NSE 2020-05-20 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2020-05-18: items 1.01, 1.03, 2.04, 3.01, 3.03, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 34 LHCG (last trade 2023-02-21): LHC Group, Inc (CIK 0001303313, SIC 8082)
+        25-NSE 2023-02-22 Nasdaq Stock Market LLC: 'Common stock', 12d2-2(a)(3)
+        8-K 2023-02-22: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 36 LNKD (last trade 2016-12-07): LINKEDIN CORP (CIK 0001271024, SIC 7370)
+        25-NSE 2016-12-08 NEW YORK STOCK EXCHANGE LLC: 'Class A Common Stock', 12d2-2(a)(3)
+        8-K 2016-12-08: items 1.01, 2.01, 2.04, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 37 MLNX (last trade 2020-04-24): NO MATCH - no Form 25 between 2020-03-10 and 2020-07-23 from 1 candidate companies
+    id 38 MON (last trade 2018-06-06): MONSANTO CO /NEW/ (CIK 0001110783, SIC 2870)
+        25-NSE 2018-06-07 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2018-06-08: items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (single_source); outcome acquired_cash (single_source)
+    id 40 MXIM (last trade 2021-08-25): MAXIM INTEGRATED PRODUCTS INC (CIK 0000743316, SIC 3674)
+        25-NSE 2021-08-26 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2021-08-26: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_stock (confirmed)
+    id 42 PRTY (last trade 2023-01-17): Party City Holdco Inc. (CIK 0001592058, SIC 5900)
+        25-NSE 2023-02-03 NEW YORK STOCK EXCHANGE LLC: 'Common Stock, $0.01 par value per share', 12d2-2(b)
+        8-K 2023-01-18: items 1.01, 1.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (single_source)
+    id 43 PXD (last trade 2024-05-02): PIONEER NATURAL RESOURCES CO (CIK 0001038357, SIC 1311)
+        25-NSE 2024-05-03 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2024-05-03: items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 5.04 and 9.01
+        -> type common (confirmed); outcome acquired_stock (confirmed)
+    id 45 RAD (last trade 2023-10-13): NEW RITE AID, LLC (CIK 0000084129, SIC 5912)
+        25-NSE 2023-10-31 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2023-12-27: items 1.01, 1.03, 8.01 and 9.01
+        8-K 2023-10-16: items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+        8-K 2023-10-16: items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 46 RATE (last trade 2017-11-08): NO MATCH - no Form 25 between 2017-09-24 and 2018-02-06 from 0 candidate companies
+    id 47 REV (last trade 2022-10-20): REVLON INC /DE/ (CIK 0000887921, SIC 2844)
+        25-NSE 2022-10-21 NEW YORK STOCK EXCHANGE LLC: 'Class A Common Stock', 12d2-2(b)
+        8-K 2022-06-16: items 1.02, 1.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (single_source)
+    id 48 RHT (last trade 2019-07-08): NO MATCH - no Form 25 between 2019-05-24 and 2019-10-06 from 1 candidate companies
+    id 49 SAVE (last trade 2024-11-15): Spirit Aviation Holdings, Inc. (CIK 0001498710, SIC 4512)
+        25-NSE 2024-12-05 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(b)
+        8-K 2024-11-18: items 1.01, 1.03, 2.04, 5.02, 7.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 50 SBNY (last trade 2023-03-10): NO MATCH - no Form 25 between 2023-01-24 and 2023-06-08 from 1 candidate companies
+    id 51 SGEN (last trade 2023-12-13): Seagen Inc. (CIK 0001060736, SIC 2836)
+        25-NSE 2023-12-14 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2023-12-14: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 52 SHLD (last trade 2018-10-23): SEARS HOLDINGS CORP (CIK 0001310067, SIC 5311)
+        25-NSE 2018-11-15 The Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(b)
+        8-K 2018-10-15: items 1.03, 2.03, 2.04, 2.05, 5.02, 5.03, 7.01 and 9.01
+        -> type common (single_source); outcome bankruptcy (single_source)
+    id 53 SIVB (last trade 2023-03-09): SVB FINANCIAL GROUP (CIK 0000719739, SIC 6022)
+        25-NSE 2023-05-02 Nasdaq Stock Market LLC: 'Common stock and preferred stock', 12d2-2(b)
+        8-K 2023-03-17: items 1.03, 3.01, 5.02 and 9.01
+        8-K 2023-03-10: items 1.03 and 8.01
+        -> type common (confirmed); outcome failure (confirmed)
+    id 54 SPLK (last trade 2024-03-15): SPLUNK INC (CIK 0001353283, SIC 7372)
+        25-NSE 2024-03-18 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2024-03-18: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 58 TWTR (last trade 2022-10-27): TWITTER, INC. (CIK 0001418091, SIC 7370)
+        25-NSE 2022-10-28 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2022-10-31: items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 59 TWX (last trade 2018-06-14): WARNER MEDIA, LLC (CIK 0001105705, SIC 4841)
+        25-NSE 2018-06-15 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2018-06-18: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired (single_source)
+    id 61 VMW (last trade 2023-11-21): VMWARE LLC (CIK 0001124610, SIC 7372)
+        25-NSE 2023-11-22 NEW YORK STOCK EXCHANGE LLC: 'Class A Common Stock', 12d2-2(a)(3)
+        8-K 2023-11-22: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_stock_and_cash (confirmed)
+    id 62 WLL (last trade 2022-06-30): Whiting Holdings LLC (CIK 0001255474, SIC 1311)
+        25-NSE 2022-07-01 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2022-07-07: items 1.01, 1.02, 2.01, 2.02, 3.01, 3.03, 5.01, 5.02, 5.03, 7.01 and 9.01
+        -> type common (confirmed); outcome acquired_stock_and_cash (confirmed)
+    id 63 XLNX (last trade 2022-02-11): XILINX INC (CIK 0000743988, SIC 3674)
+        25-NSE 2022-02-14 Nasdaq Stock Market LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2022-02-14: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired_stock (confirmed)
+    id 64 YRCW -> YELL (last trade 2023-08-15): Yellow Corp (CIK 0000716006, SIC 4213)
+        25-NSE 2023-09-08 Nasdaq Stock Market LLC: 'Common stock', 12d2-2(b)
+        8-K 2023-11-01: items 1.01, 1.03 and 9.01
+        8-K 2023-09-21: items 1.01, 1.03, 2.03 and 9.01
+        8-K 2023-08-07: items 1.03, 2.03, 2.04, 5.02, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 65 WDRW (last trade 2016-03-11): NO MATCH - no Form 25 between 2016-01-26 and 2016-06-09 from 0 candidate companies
+    id 66 MDGS (last trade 2016-01-26): NO MATCH - no Form 25 between 2015-12-12 and 2016-04-25 from 1 candidate companies
+    id 68 WDRW (last trade 2020-03-27): NO MATCH - no Form 25 between 2020-02-11 and 2020-06-25 from 0 candidate companies
+    id 69 RETA (last trade 2023-09-25): REATA PHARMACEUTICALS INC (CIK 0001358762, SIC 2834)
+        25-NSE 2023-09-26 Nasdaq Stock Market LLC: 'Class A Common Stock', 12d2-2(a)(3)
+        8-K 2023-09-26: items 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 70 OILD (last trade 2016-09-07): NO MATCH - no Form 25 between 2016-07-24 and 2016-12-06 from 1 candidate companies
+    id 71 FSBC (last trade 2020-04-30): NO MATCH - no Form 25 between 2020-03-16 and 2020-07-29 from 1 candidate companies
+    id 72 OILD (last trade 2020-03-27): NO MATCH - no Form 25 between 2020-02-11 and 2020-06-25 from 1 candidate companies
+    id 74 JMPD -> JMPNL (last trade 2021-09-10): NO MATCH - no Form 25 between 2021-07-27 and 2021-12-09 from 0 candidate companies
+    id 75 HSACW (last trade 2019-07-24): NO MATCH - no Form 25 between 2019-06-09 and 2019-10-22 from 0 candidate companies
+    id 76 SMMC (last trade 2019-10-29): NO MATCH - no Form 25 between 2019-09-14 and 2020-01-27 from 0 candidate companies
+    id 77 HSACW (last trade 2019-12-18): NO MATCH - no Form 25 between 2019-11-03 and 2020-03-17 from 0 candidate companies
+    id 78 SMMC -> BTRS (last trade 2022-12-15): BTRS Holdings Inc. (CIK 0001774155, SIC 7371)
+        25-NSE 2022-12-16 Nasdaq Stock Market LLC: 'Class 1 Common Stock', 12d2-2(a)(3)
+        8-K 2022-12-16: items 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 79 IMVTW (last trade 2020-06-15): NO MATCH - no Form 25 between 2020-05-01 and 2020-09-13 from 0 candidate companies
+    id 80 CFII -> VIEW (last trade 2024-04-04): View, Inc. (CIK 0001811856, SIC 3211)
+        25-NSE 2024-04-25 Nasdaq Stock Market LLC: 'Class A common stock and warrants', 12d2-2(b)
+        8-K 2024-05-24: items 1.01, 1.03, 2.03, 3.02, 3.03, 5.01, 5.02, 5.03, 8.01 and 9.01
+        8-K 2024-04-03: items 1.02, 1.03 and 8.01
+        -> type common (single_source); outcome bankruptcy (confirmed)
+    id 81 BOWX -> WE (last trade 2023-11-03): WeWork Inc. (CIK 0001813756, SIC 6512)
+        25-NSE 2023-11-22 NEW YORK STOCK EXCHANGE LLC: 'Class A Common Stock Class A Common Stock Purchase Rights', 12d2-2(b)
+        8-K 2023-11-07: items 1.01, 1.03, 2.04, 7.01, 8.01 and 9.01
+        -> type common (confirmed); outcome bankruptcy (confirmed)
+    id 83 SHLD (last trade 2021-08-17): NO MATCH - no Form 25 between 2021-07-03 and 2021-11-15 from 1 candidate companies
+    id 84 BTNB -> PGRU (last trade 2024-12-12): PROPERTYGURU GROUP LTD (CIK 0001873331, SIC 7374)
+        25-NSE 2024-12-13 NEW YORK STOCK EXCHANGE LLC: 'Ordinary Shares', 12d2-2(a)(3)
+        -> type common (confirmed); outcome acquired_cash (confirmed)
+    id 85 FLAC (last trade 2022-11-22): Frazier Lifesciences Acquisition Corp (CIK 0001828326, SIC 6770, blank check)
+        25-NSE 2022-11-22 Nasdaq Stock Market LLC: 'Warant', 12d2-2(a)(3)
+        25-NSE 2022-11-22 Nasdaq Stock Market LLC: 'Unit', 12d2-2(a)(3)
+        25-NSE 2022-11-22 Nasdaq Stock Market LLC: 'Class A Ordinary Shares', 12d2-2(a)(3)
+        8-K 2022-11-23: items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03, 7.01 and 9.01
+        -> type common (confirmed); outcome acquired_stock (confirmed)
+    id 87 MON (last trade 2022-12-23): Monument Circle Acquisition Corp. (CIK 0001828325, SIC 6770, blank check)
+        25-NSE 2022-12-23 Nasdaq Stock Market LLC: 'Class A Common Stock, Warrant, Unit', 12d2-2(a)(1)
+        -> type common (confirmed); outcome redeemed (single_source)
+    id 88 ITHXW (last trade 2022-07-18): NO MATCH - no Form 25 between 2022-06-03 and 2022-10-16 from 0 candidate companies
+    id 92 SHLD (last trade 2021-10-08): NO MATCH - no Form 25 between 2021-08-24 and 2022-01-06 from 1 candidate companies
+    id 93 NOVVW (last trade 2022-09-29): NO MATCH - no Form 25 between 2022-08-15 and 2022-12-28 from 1 candidate companies
+    id 97 BMAC (last trade 2023-12-07): Black Mountain Acquisition Corp. (CIK 0001848020, SIC 6770, blank check)
+        25-NSE 2023-12-12 NEW YORK STOCK EXCHANGE LLC: 'Class A Common Stock; Units, each consisting of one share of Class A common stock and three quarters of one warrant; Warrants, exercisable for one share of Class A Common Stock', 12d2-2(b)
+        -> type common (confirmed); outcome acquired_cash (single_source)
+    id 98 BACA (last trade 2024-08-14): Berenson Acquisition Corp. I (CIK 0001869673, SIC 6770, blank check)
+        25-NSE 2024-10-16 NYSE AMERICAN LLC: 'Class A Common Stock', 12d2-2(a)(1)
+        -> type common (single_source); outcome redeemed (single_source)
+    id 99 UTAA (last trade 2023-09-15): UTA Acquisition Corp (CIK 0001879221, SIC 6770, blank check)
+        25-NSE 2023-09-15 Nasdaq Stock Market LLC: 'Class A Ordinary Shares & Unit', 12d2-2(a)(1)
+        25-NSE 2023-09-08 Nasdaq Stock Market LLC: 'Warrants', 12d2-2(b)
+        -> type common (confirmed); outcome redeemed (confirmed)
+    id 100 DO (last trade 2024-09-03): DIAMOND OFFSHORE DRILLING, INC. (CIK 0000949039, SIC 1381)
+        25-NSE 2024-09-04 NEW YORK STOCK EXCHANGE LLC: 'Common Stock', 12d2-2(a)(3)
+        8-K 2024-09-04: items 1.01, 1.02, 2.01, 3.01, 3.03, 5.01, 5.02, 5.03 and 9.01
+        -> type common (confirmed); outcome acquired_stock_and_cash (confirmed)
+    id 102 PYPT (last trade 2023-08-11): NO MATCH - no Form 25 between 2023-06-27 and 2023-11-09 from 0 candidate companies
+    id 103 MONDW (last trade 2022-10-26): Mondee Holdings, Inc. (CIK 0001828852, SIC 4700)
+        25-NSE 2022-10-26 Nasdaq Stock Market LLC: 'warrants', 12d2-2(a)(2)
+        -> type warrant (confirmed); outcome redeemed (single_source)
+    id 104 NOVVW (last trade 2022-12-13): NO MATCH - no Form 25 between 2022-10-29 and 2023-03-13 from 1 candidate companies
+    id 106 NOVVW (last trade 2023-01-13): NO MATCH - no Form 25 between 2022-11-29 and 2023-04-13 from 1 candidate companies
+    id 107 NOVVW (last trade 2023-05-04): NO MATCH - no Form 25 between 2023-03-20 and 2023-08-02 from 1 candidate companies
+    id 108 CETUR (last trade 2023-04-19): NO MATCH - no Form 25 between 2023-03-05 and 2023-07-18 from 1 candidate companies
+    id 109 YGF (last trade 2024-02-08): YanGuFang International Group Co., Ltd (CIK 0001875496, SIC 2000)
+        25-NSE 2024-04-09 Nasdaq Stock Market LLC: 'Ordinary Shares', 12d2-2(b)
+        -> type common (single_source); outcome unknown (unresolved)
+    id 110 CETUR (last trade 2023-05-16): NO MATCH - no Form 25 between 2023-04-01 and 2023-08-14 from 1 candidate companies
+    id 111 NOVVW (last trade 2023-10-05): NO MATCH - no Form 25 between 2023-08-21 and 2024-01-03 from 1 candidate companies
+    id 112 CETUR (last trade 2024-04-10): NO MATCH - no Form 25 between 2024-02-25 and 2024-07-09 from 1 candidate companies
+    id 114 NOVVW (last trade 2023-11-10): NO MATCH - no Form 25 between 2023-09-26 and 2024-02-08 from 1 candidate companies
+    id 115 NOVVW (last trade 2024-01-08): NO MATCH - no Form 25 between 2023-11-24 and 2024-04-07 from 1 candidate companies
+    id 116 NOVVW (last trade 2024-02-23): NO MATCH - no Form 25 between 2024-01-09 and 2024-05-23 from 1 candidate companies
+    id 117 NOVVW (last trade 2024-06-25): NO MATCH - no Form 25 between 2024-05-11 and 2024-09-23 from 1 candidate companies
+    id 118 CETUR (last trade 2024-05-16): Cetus Capital Acquisition Corp. (CIK 0001936702, SIC 6770, blank check)
+        25-NSE 2024-07-31 Nasdaq Stock Market LLC: 'Class A Common Stock, Right, Warrant, Unit', 12d2-2(a)(3)
+        -> type right (confirmed); outcome acquired (single_source)
+    id 119 CETUR (last trade 2024-07-31): Cetus Capital Acquisition Corp. (CIK 0001936702, SIC 6770, blank check)
+        25-NSE 2024-07-31 Nasdaq Stock Market LLC: 'Class A Common Stock, Right, Warrant, Unit', 12d2-2(a)(3)
+        -> type right (confirmed); outcome acquired_stock (confirmed)
+    id 120 NOVVW (last trade 2024-08-05): NO MATCH - no Form 25 between 2024-06-21 and 2024-11-03 from 1 candidate companies
+    id 122 NOVVW (last trade 2024-09-13): Nova Vision Acquisition Corp (CIK 0001858028, SIC 6770, blank check)
+        25-NSE 2024-11-19 Nasdaq Stock Market LLC: 'Ordinary share, right, warrant, unit', 12d2-2(a)(3)
+        -> type warrant (confirmed); outcome acquired (single_source)
+    id 123 BACA (last trade 2024-09-26): Berenson Acquisition Corp. I (CIK 0001869673, SIC 6770, blank check)
+        25-NSE 2024-10-16 NYSE AMERICAN LLC: 'Class A Common Stock', 12d2-2(a)(1)
+        -> type common (confirmed); outcome redeemed (confirmed)
 
 5. SPLITS AND SPIN-OFFS
   Splits owned by batch securities, checked against prices: {'consistent': 42, 'magnitude_mismatch': 3, 'contradicted': 2}
@@ -333,33 +700,33 @@ hand-entered corrections checked against prices. SEC: paused until a contact add
 6. POINT-IN-TIME MEMBERSHIP (validation rule: top 25 eligible common stocks of the batch)
   Rule: {'size': 25, 'min_price': 5.0, 'min_history': 126, 'window': 63, 'min_active_sessions': 50}  fingerprint 52ef18943346f9d1
   Decisions: 59 (2020-01-31 to 2024-11-29); members per decision 18-25
-  Distinct members: 43; types: {('common', 'confirmed'): 26, ('common', 'single_source'): 17}
-  Not-eligible reasons (all decisions): {'not_common_stock': 3245, 'no_trade_on_decision_session': 1444, 'raw_price_below_minimum': 396, 'price_adjustment_under_review': 118, 'history_too_short': 84, 'too_few_active_sessions': 22}
+  Distinct members: 43; types: {('common', 'confirmed'): 36, ('common', 'single_source'): 7}
+  Not-eligible reasons (all decisions): {'not_common_stock': 2773, 'no_trade_on_decision_session': 1827, 'raw_price_below_minimum': 443, 'price_adjustment_under_review': 118, 'history_too_short': 96, 'too_few_active_sessions': 35}
   Members that later ended:
     id 2 ALXN: member until 2021-06-30, last trade 2021-07-20, acquired_stock_and_cash (confirmed), value none
     id 6 ATVI: member until 2023-09-29, last trade 2023-10-12, acquired_cash (confirmed), value 95.0
-    id 7 BBBY: member until 2022-09-30, last trade 2023-05-02, unknown (unresolved), value none
-    id 8 BIG: member until 2024-02-29, last trade 2024-09-06, bankruptcy (single_source), value 0.0
-    id 11 CERN: member until 2022-05-31, last trade 2022-06-07, acquired_cash (single_source), value 95.0
-    id 15 CTXS: member until 2022-08-31, last trade 2022-09-29, acquired_cash (single_source), value 104.0
-    id 17 DISCA: member until 2022-03-31, last trade 2022-04-08, unknown (unresolved), value none
-    id 22 EXPR: member until 2024-01-31, last trade 2024-03-06, unknown (unresolved), value none
+    id 7 BBBY: member until 2022-09-30, last trade 2023-05-02, bankruptcy (single_source), value 0.0
+    id 8 BIG: member until 2024-02-29, last trade 2024-09-06, bankruptcy (confirmed), value 0.0
+    id 11 CERN: member until 2022-05-31, last trade 2022-06-07, acquired_cash (confirmed), value 95.0
+    id 15 CTXS: member until 2022-08-31, last trade 2022-09-29, acquired_cash (confirmed), value 104.0
+    id 17 DISCA: member until 2022-03-31, last trade 2022-04-08, acquired (single_source), value none
+    id 22 EXPR: member until 2024-01-31, last trade 2024-03-06, bankruptcy (single_source), value 0.0
     id 26 FRC: member until 2023-03-31, last trade 2023-04-28, unknown (unresolved), value none
     id 32 HZNP: member until 2023-09-29, last trade 2023-10-05, acquired_cash (confirmed), value 116.5
-    id 34 LHCG: member until 2023-01-31, last trade 2023-02-21, acquired_cash (single_source), value 170.0
-    id 40 MXIM: member until 2021-07-30, last trade 2021-08-25, acquired_stock (single_source), value none
-    id 43 PXD: member until 2024-04-30, last trade 2024-05-02, acquired_stock (single_source), value none
-    id 49 SAVE: member until 2024-02-29, last trade 2024-11-15, bankruptcy (single_source), value 0.0
+    id 34 LHCG: member until 2023-01-31, last trade 2023-02-21, acquired_cash (confirmed), value 170.0
+    id 40 MXIM: member until 2021-07-30, last trade 2021-08-25, acquired_stock (confirmed), value none
+    id 43 PXD: member until 2024-04-30, last trade 2024-05-02, acquired_stock (confirmed), value none
+    id 49 SAVE: member until 2024-02-29, last trade 2024-11-15, bankruptcy (confirmed), value 0.0
     id 50 SBNY: member until 2023-02-28, last trade 2023-03-10, failure (single_source), value 0.0
-    id 51 SGEN: member until 2023-11-30, last trade 2023-12-13, acquired_cash (single_source), value 229.0
-    id 53 SIVB: member until 2023-02-28, last trade 2023-03-09, failure (single_source), value 0.0
-    id 54 SPLK: member until 2024-02-29, last trade 2024-03-15, acquired_cash (single_source), value 157.0
-    id 58 TWTR: member until 2022-09-30, last trade 2022-10-27, acquired_cash (single_source), value 54.2
-    id 61 VMW: member until 2023-10-31, last trade 2023-11-21, acquired_cash (confirmed), value 142.5
-    id 63 XLNX: member until 2022-01-31, last trade 2022-02-11, acquired_stock (single_source), value none
-    id 69 RETA: member until 2023-08-31, last trade 2023-09-25, acquired_cash (single_source), value 172.5
-    id 84 BTNB -> PGRU: member until 2024-11-29, last trade 2024-12-12, acquired_cash (single_source), value 6.7
-    id 100 DO: member until 2024-08-30, last trade 2024-09-03, acquired_cash (single_source), value 5.65
+    id 51 SGEN: member until 2023-11-30, last trade 2023-12-13, acquired_cash (confirmed), value 229.0
+    id 53 SIVB: member until 2023-02-28, last trade 2023-03-09, failure (confirmed), value 0.0
+    id 54 SPLK: member until 2024-02-29, last trade 2024-03-15, acquired_cash (confirmed), value 157.0
+    id 58 TWTR: member until 2022-09-30, last trade 2022-10-27, acquired_cash (confirmed), value 54.2
+    id 61 VMW: member until 2023-10-31, last trade 2023-11-21, acquired_stock_and_cash (confirmed), value none
+    id 63 XLNX: member until 2022-01-31, last trade 2022-02-11, acquired_stock (confirmed), value none
+    id 69 RETA: member until 2023-08-31, last trade 2023-09-25, acquired_cash (confirmed), value 172.5
+    id 84 BTNB -> PGRU: member until 2024-11-29, last trade 2024-12-12, acquired_cash (confirmed), value 6.7
+    id 100 DO: member until 2024-08-30, last trade 2024-09-03, acquired_stock_and_cash (confirmed), value none
   Members chosen after their last trade: 0
   Recomputed from data cut off at each decision: 59 of 59 identical
   Every price and volume after 2022-06-30 multiplied by 10: earlier decisions unchanged: True
