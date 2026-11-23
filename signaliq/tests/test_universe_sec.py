@@ -492,3 +492,35 @@ def test_sec_type_vote_and_outcome_reach_the_security(research, monkeypatch):
         assert two.outcome_status == "unresolved"
         sources = {e.source for e in session.query(ExitEvidence).filter_by(security_id=1)}
         assert sources == {"sec"}
+
+
+def test_a_spac_liquidation_recorded_as_cash_merger_and_redemption_is_one_cash_exit():
+    result = outcomes.resolve_outcome(
+        [
+            outcomes.Evidence("alpaca", "acquired_cash", None, "cash_merger", None, 10.68),
+            outcomes.Evidence("sec", "redeemed", None, "25-NSE (a)(1)"),
+        ]
+    )
+    assert (result.outcome, result.status, result.assumed_value) == ("redeemed", "confirmed", 10.68)
+    # A redemption with a stock merger is still a conflict.
+    result = outcomes.resolve_outcome(
+        [
+            outcomes.Evidence("alpaca", "acquired_stock", None, "stock_merger"),
+            outcomes.Evidence("sec", "redeemed", None, "25-NSE (a)(1)"),
+        ]
+    )
+    assert result.outcome == "conflict"
+
+
+def test_a_funds_common_shares_do_not_count_as_common_stock(research, monkeypatch):
+    with session_scope(research) as session:
+        add_ended(session, 1, "TSTF", date(2021, 1, 4), LAST)
+    fund = finding([("25-NSE", date(2022, 5, 2), "Common Shares", "17 CFR 240.12d2-2(a)(3)")])
+    fund.company = "TEST MLP INCOME OPPORTUNITIES FUND"
+    monkeypatch.setattr(evidence, "cached_sec_findings", lambda session: {1: fund})
+    with session_scope(research) as session:
+        evidence.resolve_types(session)
+    with session_scope(research) as session:
+        assert session.get(Security, 1).type_status == "unknown"
+        assert sec.looks_like_fund("Goldman Sachs MLP Income Opportunities Fund")
+        assert not sec.looks_like_fund("Fundamental Testing Inc")

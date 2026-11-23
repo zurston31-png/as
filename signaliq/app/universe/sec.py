@@ -249,6 +249,11 @@ def notice_type(descriptions: Iterable[str], symbol: str) -> str | None:
     return kinds.pop() if len(kinds) == 1 else None
 
 
+def looks_like_fund(company: str) -> bool:
+    """The issuer's name says it is a fund (closed-end funds call their shares "common shares")."""
+    return bool(re.search(r"\b(fund|etf|etn)\b", company, re.I))
+
+
 def rule_meaning(rule: str) -> tuple[str, str]:
     """(category for exit evidence, plain-language meaning) of a 12d2-2 provision."""
     compact = rule.replace(" ", "").lower()

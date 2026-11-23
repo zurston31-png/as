@@ -27,6 +27,10 @@ Rules (written down before looking at the results):
    together: ``conflict``, no value.
 2. Acquisition only: outcome acquired. Value = cash per share when a merger
    record gives it; otherwise unknown (None) and flagged.
+   Exception: a redemption together with a cash acquisition and nothing else.
+   Both say holders were paid cash; Alpaca records a SPAC's trust liquidation
+   as a "cash merger" at the trust value, which SEC files as a redemption.
+   Outcome redeemed, value = that cash per share.
 3. Redemption only: outcome redeemed, value unknown (None) and flagged.
 4. Failure or bankruptcy only: value 0.0, the agreed default for a confirmed
    bankruptcy or failure. Equity holders sometimes recover (old Hertz did); the
@@ -73,6 +77,19 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
     acquisitions = [e for e in evidence if e.category in ACQUISITION]
     failures = [e for e in evidence if e.category in FAILURE]
     redemptions = [e for e in evidence if e.category in REDEMPTION]
+    cash_paid = [e for e in acquisitions if e.category == "acquired_cash"]
+    if redemptions and acquisitions and not failures and len(cash_paid) == len(acquisitions):
+        cash = next((e for e in cash_paid if e.cash_per_share is not None), None)
+        if cash is not None:
+            return Outcome(
+                "redeemed",
+                "confirmed"
+                if len({e.source for e in (*redemptions, *cash_paid)}) >= 2
+                else "single_source",
+                cash.cash_per_share,
+                f"cash redemption, {cash.cash_per_share} per share ({cash.source} records it as a "
+                "cash merger; SEC as a redemption)",
+            )
     exits = [group for group in (acquisitions, redemptions, failures) if group]
     if len(exits) > 1:
         return Outcome(

@@ -494,17 +494,26 @@ def resolve_types(session: Session) -> None:
             issuer = f"{finding.company}, CIK {finding.cik}, SIC {finding.sic or 'none'}" + (
                 " (blank check)" if finding.sic == "6770" else ""
             )
-            if kind:
+            # A closed-end fund's shares are "Common Shares" in its notice (GMZ): the class
+            # name alone does not make a fund's shares common stock.
+            fund_issuer = kind == "common" and sec.looks_like_fund(finding.company or "")
+            if kind and not fund_issuer:
                 votes.append(sectypes.TypeVote("sec_form25", kind))
             for filing, notice in finding.notices:
-                used = (filing, notice) in relevant and kind is not None
+                used = (filing, notice) in relevant and kind is not None and not fund_issuer
                 note(
                     security,
                     "sec_form25" if used else "sec_form25_other",
                     security.last_symbol,
                     sec.class_type(notice.class_description, security.last_symbol) or "unknown",
                     f"{filing.form} {filing.filed}: class '{notice.class_description}' ({issuer})"
-                    + ("" if used else "; another class or unclear, not counted"),
+                    + (
+                        ""
+                        if used
+                        else "; the issuer is a fund, not counted"
+                        if fund_issuer
+                        else "; another class or unclear, not counted"
+                    ),
                 )
         security.security_type, security.type_status = sectypes.resolve_type(votes)
     session.flush()
