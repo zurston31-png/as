@@ -17,6 +17,7 @@ contact address in the User-Agent, as SEC requires.
 
 import argparse
 import io
+import re
 import sys
 from collections import Counter, defaultdict
 from contextlib import redirect_stdout
@@ -43,6 +44,7 @@ from app.universe.models import (
     IssuerSic,
     Membership,
     Security,
+    SecurityBar,
     SecurityIssuer,
     SpinOff,
     SplitCheck,
@@ -293,13 +295,20 @@ def report(facts: dict) -> str:
             rows = [x for x in ended.values() if x.outcome in kinds]
             common = sum(1 for x in rows if x.security_type == "common")
             print(f"    {label:70} {len(rows):3}  (common stock: {common})")
+        print("  Basis of the value (the status above describes the event, not the value):")
+        for basis, n in sorted(Counter(x.value_basis for x in ended.values()).items()):
+            print(f"    {basis:14} {n:3}")
+        print(
+            "    assumed_zero = event confirmed (bankruptcy or failure), shareholder recovery NOT confirmed;"
+        )
+        print("    zero is the agreed conservative modelling assumption, to be stress-tested.")
         for status in ("confirmed", "single_source", "conflict", "not_an_exit", "unresolved"):
             rows = sorted((sid, x) for sid, x in ended.items() if x.outcome_status == status)
             print(f"  --- {status} ({len(rows)}) ---")
             for sid, x in rows:
                 value = "none" if x.assumed_exit_value is None else x.assumed_exit_value
                 print(
-                    f"    id {sid} {path(sid)} (last trade {x.last_trade_session}): {x.outcome}, value {value}"
+                    f"    id {sid} {path(sid)} (last trade {x.last_trade_session}): {x.outcome}, value {value} [{x.value_basis}]"
                 )
                 for e in exit_ev[sid]:
                     print(f"        [{e.source}] {e.category}: {e.detail[:140]}")
@@ -517,6 +526,170 @@ def report(facts: dict) -> str:
         leaks = checks.adjusted_price_would_change_eligibility(s, RULE)
         print(
             f"  Decisions where the $5 filter would answer differently on adjusted prices: {len(leaks)}"
+        )
+        print(
+            "    (the filter uses raw prices, as traded on the day; split-adjusted prices would embed later splits)"
+        )
+
+        print("\n7. CROSS-CHECKS OF MERGER VALUES AND CORPORATE ACTIONS")
+        cash_pairs = []
+        for sid in sorted(ended):
+            alp = [
+                e for e in exit_ev[sid] if e.source == "alpaca" and e.category == "acquired_cash"
+            ]
+            sec_cash = [
+                e for e in exit_ev[sid] if e.source == "sec" and e.category == "acquired_cash"
+            ]
+            if alp and sec_cash:
+                cash_pairs.append((sid, alp[0].detail, sec_cash[0].detail))
+        print(f"  Cash deals stated by both Alpaca and the SEC 8-K: {len(cash_pairs)}")
+        agree = 0
+        for sid, a, b in cash_pairs:
+            first = re.search(r"([0-9]+(?:\.[0-9]+)?) cash per share", a)
+            second = re.search(r"\$\s?([0-9,]+(?:\.[0-9]+)?)", b)
+            same = bool(first and second) and float(first.group(1)) == float(
+                second.group(1).replace(",", "")
+            )
+            agree += same
+            print(
+                f"    id {sid} {path(sid)}: Alpaca {first.group(1) if first else '?'}, SEC 8-K "
+                f"{second.group(1) if second else '?'}" + ("" if same else "  <- DIFFER")
+            )
+        print(f"    agreeing on the amount: {agree} of {len(cash_pairs)}")
+        notices = {}
+        for sid, f in sec_found.items():
+            for filing, n in f.notices:
+                if "(a)(3)" in n.rule:
+                    notices.setdefault(sid, []).append(filing.filed)
+        for d in s.execute(select(DealValue).order_by(DealValue.security_id)).scalars():
+            near = notices.get(d.security_id, [])
+            off = min((abs((day - d.effective_date).days) for day in near), default=None)
+            print(
+                f"  Deal id {d.security_id} {path(d.security_id)}: effective {d.effective_date}, merger delisting notice "
+                + (f"{off} day(s) away" if off is not None else "not found")
+                + ("" if off is not None and off <= 4 else "  <- CHECK")
+            )
+        for r in curated.CURATED_RENAMES:
+            ids = [
+                sid
+                for sid in history
+                if [h.symbol for h in history[sid]][:2] == [r.old_symbol, r.new_symbol]
+                or any(
+                    a.symbol == r.old_symbol and b.symbol == r.new_symbol
+                    for a, b in zip(history[sid], history[sid][1:], strict=False)
+                )
+            ]
+            if not ids:
+                print(f"  Curated rename {r.old_symbol} -> {r.new_symbol}: NOT linked")
+                continue
+            sid = ids[0]
+            hs = history[sid]
+            k = next(
+                i
+                for i in range(len(hs) - 1)
+                if hs[i].symbol == r.old_symbol and hs[i + 1].symbol == r.new_symbol
+            )
+            from app.universe.models import SecurityBar as _SB
+
+            before = s.scalar(
+                select(_SB.close).where(_SB.security_id == sid, _SB.session == hs[k].valid_to)
+            )
+            after = s.scalar(
+                select(_SB.close).where(_SB.security_id == sid, _SB.session == hs[k + 1].valid_from)
+            )
+            print(
+                f"  Curated rename {r.old_symbol} -> {r.new_symbol}: linked in id {sid} ({path(sid)}); "
+                f"last close {before} on {hs[k].valid_to}, first close {after} on {hs[k + 1].valid_from}"
+                + (f" ({after / before - 1:+.1%})" if before and after else "")
+            )
+
+        print("\n8. SURVIVORSHIP AND LOOK-AHEAD AUDIT")
+        print("  Survivorship:")
+        print(
+            f"    Batch built from: {dict(Counter(b.selection.split(':')[0] for b in batch))} "
+            "(historical corporate-action events and named cases; not today's ticker list)"
+        )
+        print(
+            f"    Securities: {len(securities)}, of which ended before 2025: {len(ended)} "
+            f"({sum(1 for x in ended.values() if x.security_type == 'common')} common stocks)"
+        )
+        ended_members = sorted(sid for sid in ever if securities[sid].status == "ended")
+        print(f"    Members that later ended: {len(ended_members)} of {len(ever)} distinct members")
+        print(
+            f"      their exit value basis: {dict(Counter(securities[sid].value_basis for sid in ended_members))}"
+        )
+        print(
+            f"      their outcome status: {dict(Counter(securities[sid].outcome_status for sid in ended_members))}"
+        )
+        no_value = [sid for sid in ended_members if securities[sid].assumed_exit_value is None]
+        print(
+            "      members with no exit value: "
+            + (
+                ", ".join(f"id {sid} {path(sid)} ({securities[sid].outcome})" for sid in no_value)
+                or "none"
+            )
+        )
+        dropped = [
+            sid
+            for sid, x in ended.items()
+            if x.security_type == "unknown" or x.type_status in ("unknown", "conflict")
+        ]
+        print(
+            f"    Ended securities kept out only because their type is unknown: {len(dropped)}: "
+            + ", ".join(f"id {sid} {path(sid)}" for sid in sorted(dropped))
+        )
+        blank = Counter(
+            r.reason
+            for r in s.execute(
+                select(Membership).where(Membership.reason == "blank_check_company")
+            ).scalars()
+        )
+        print(f"    Decisions excluded as blank-check company: {sum(blank.values())}")
+        print("  Look-ahead:")
+        print(
+            f"    Recompute with data cut at each decision: {len(decisions) - len(differ)}/{len(decisions)} identical; "
+            f"future prices x10: earlier decisions unchanged"
+        )
+        print(f"    Members chosen after their last trade: {len(after_exit)}")
+        late = {
+            "security bars": s.scalar(select(func.max(SecurityBar.session))),
+            "exit evidence": s.scalar(select(func.max(ExitEvidence.event_date))),
+            "SIC filings": s.scalar(select(func.max(IssuerSic.as_of))),
+            "deal effective dates": s.scalar(select(func.max(DealValue.effective_date))),
+            "acquirer price sessions": s.scalar(select(func.max(DealValue.acquirer_session))),
+        }
+        print(
+            "    Latest date in: "
+            + "; ".join(f"{k} {v}" for k, v in late.items())
+            + f"  -> all before 2025: {all(v is None or v < p.DATA_END.replace(year=2025, month=1, day=1) for v in late.values())}"
+        )
+        later_sic = 0
+        dated_ex = evidence.blank_check_exclusions(s)
+        rows_sic = defaultdict(list)
+        for r in s.execute(select(IssuerSic)).scalars():
+            rows_sic[r.security_id].append((r.as_of, r.sic))
+        for m in s.execute(
+            select(Membership).where(Membership.reason == "blank_check_company")
+        ).scalars():
+            known = [
+                sic for day, sic in sorted(rows_sic[m.security_id]) if day <= m.decision_session
+            ]
+            later_sic += not (known and known[-1] == "6770")
+        print(
+            f"    Blank-check exclusions not supported by a SIC on file by the decision date: {later_sic} "
+            f"(of {sum(blank.values())}; {len(dated_ex)} securities have SIC history)"
+        )
+        print(
+            "    Membership reads: raw daily bars up to the decision, the security type, held-out split checks and"
+        )
+        print(
+            "    SIC filed by then. It never reads exit outcomes, exit values or any price after the decision."
+        )
+        print(
+            "    Known limitation: the security type comes from present-day sources and applies to the whole history"
+        )
+        print(
+            "    (a type is not a price or an outcome, but a later reclassification would be applied retroactively)."
         )
     engine.dispose()
     return out.getvalue()

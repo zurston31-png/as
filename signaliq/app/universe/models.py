@@ -97,6 +97,8 @@ class Security(ResearchBase):
     #: What a holder is assumed to receive at the exit, per share, and why.
     assumed_exit_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     exit_assumption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: stated_cash, deal_terms, assumed_zero or none (see ``outcomes.Outcome.value_basis``).
+    value_basis: Mapped[str | None] = mapped_column(String(16), nullable=True)
     declared_type: Mapped[str] = mapped_column(String(16), nullable=False)
     real_trade_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
     #: common, etf, warrant, right, unit, preferred, fund, adr, partnership, unknown

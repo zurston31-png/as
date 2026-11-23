@@ -277,3 +277,32 @@ def test_a_blank_check_company_is_excluded_only_while_it_is_one():
     assert reason[1] == "blank_check_company"
     assert [d.security_id for d in before if d.member] == [2]
     assert [d.security_id for d in after if d.member] == [1]
+
+
+def test_a_confirmed_failure_keeps_the_zero_value_labelled_as_an_assumption():
+    found = [
+        outcomes.Evidence("sec", "failure", date(2023, 5, 1), "FDIC appointed receiver (8-K)"),
+        outcomes.Evidence("sec", "failure", date(2023, 5, 1), "FDIC receiver (second 8-K)"),
+    ]
+    result = outcomes.resolve_outcome(found)
+    assert (result.outcome, result.assumed_value, result.value_basis) == (
+        "failure",
+        0.0,
+        "assumed_zero",
+    )
+    assert "not confirmed" in result.note
+    assert "modelling assumption" in result.note
+    paid = outcomes.resolve_outcome(
+        [outcomes.Evidence("alpaca", "acquired_cash", None, "cash", None, 95.0)]
+    )
+    assert paid.value_basis == "stated_cash"
+    terms = outcomes.resolve_outcome(
+        [
+            outcomes.Evidence("alpaca", "acquired_stock", None, "stock"),
+            outcomes.Evidence(
+                "sec", "deal_terms", None, "0.63 x ADI", None, 120.5, "acquired_stock"
+            ),
+        ]
+    )
+    assert terms.value_basis == "deal_terms"
+    assert outcomes.resolve_outcome([]).value_basis == "none"

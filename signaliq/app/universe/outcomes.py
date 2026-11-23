@@ -83,6 +83,24 @@ class Outcome:
     assumed_value: float | None
     note: str
 
+    @property
+    def value_basis(self) -> str:
+        """Where the value comes from (the status describes the event, not the value).
+
+        ``stated_cash``: a cash amount stated in a merger record, filing or redemption
+        notice. ``deal_terms``: terms quoted from the filing times the acquirer's price.
+        ``assumed_zero``: a confirmed failure or bankruptcy; the zero is the agreed
+        conservative modelling assumption, not a confirmed equity outcome.
+        ``none``: no value.
+        """
+        if self.assumed_value is None:
+            return "none"
+        if self.outcome in ("bankruptcy", "failure"):
+            return "assumed_zero"
+        if self.note.startswith("value ") and "verified terms" in self.note:
+            return "deal_terms"
+        return "stated_cash"
+
 
 def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
     acquisitions = [e for e in evidence if e.category in ACQUISITION]
@@ -184,8 +202,9 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
             outcome,
             status,
             0.0,
-            "total loss assumed (agreed default for a confirmed bankruptcy or failure; "
-            "equity holders occasionally recover)",
+            f"{outcome} confirmed as an event by {len(sources)} source(s); the shareholder "
+            "recovery is not confirmed by any source: 0.0 is a conservative modelling "
+            "assumption (agreed default; equity holders occasionally recover)",
         )
     gap = next((e for e in evidence if e.category in NOT_AN_EXIT), None)
     if gap is not None:

@@ -739,6 +739,7 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
             )
         security.outcome, security.outcome_status = result.outcome, result.status
         security.assumed_exit_value, security.exit_assumption = result.assumed_value, result.note
+        security.value_basis = result.value_basis
     session.flush()
 
 
