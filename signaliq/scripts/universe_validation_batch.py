@@ -423,6 +423,14 @@ def report(facts: dict) -> str:
         print(
             f"  Common stocks with an issuer (so SIC can be tested): {sum(1 for sid in common_ids if sid in issuers)} of {len(common_ids)}"
         )
+        without = [sid for sid in sorted(common_ids) if sid not in issuers]
+        print(
+            "  Common stocks with no identified issuer (a blank-check company among them would not be caught): "
+            + (
+                ", ".join(f"id {sid} {path(sid)} ({securities[sid].status})" for sid in without)
+                or "none"
+            )
+        )
         sics = defaultdict(list)
         for r in s.execute(select(IssuerSic).order_by(IssuerSic.as_of)).scalars():
             sics[r.security_id].append((r.as_of, r.sic))
@@ -546,7 +554,7 @@ def report(facts: dict) -> str:
         agree = 0
         for sid, a, b in cash_pairs:
             first = re.search(r"([0-9]+(?:\.[0-9]+)?) cash per share", a)
-            second = re.search(r"\$\s?([0-9,]+(?:\.[0-9]+)?)", b)
+            second = re.search(r"cash per share ([0-9]+(?:\.[0-9]+)?)", b)
             same = bool(first and second) and float(first.group(1)) == float(
                 second.group(1).replace(",", "")
             )
@@ -591,15 +599,18 @@ def report(facts: dict) -> str:
             )
             from app.universe.models import SecurityBar as _SB
 
-            before = s.scalar(
-                select(_SB.close).where(_SB.security_id == sid, _SB.session == hs[k].valid_to)
-            )
-            after = s.scalar(
-                select(_SB.close).where(_SB.security_id == sid, _SB.session == hs[k + 1].valid_from)
-            )
+            def adjusted(day, sid=sid):
+                bar = s.scalar(select(_SB).where(_SB.security_id == sid, _SB.session == day))
+                return (
+                    None
+                    if bar is None
+                    else bar.close / (bar.split_factor * bar.distribution_factor)
+                )
+
+            before, after = adjusted(hs[k].valid_to), adjusted(hs[k + 1].valid_from)
             print(
                 f"  Curated rename {r.old_symbol} -> {r.new_symbol}: linked in id {sid} ({path(sid)}); "
-                f"last close {before} on {hs[k].valid_to}, first close {after} on {hs[k + 1].valid_from}"
+                f"split-adjusted last close {before:.4g} on {hs[k].valid_to}, first close {after:.4g} on {hs[k + 1].valid_from}"
                 + (f" ({after / before - 1:+.1%})" if before and after else "")
             )
 
@@ -671,10 +682,18 @@ def report(facts: dict) -> str:
         for m in s.execute(
             select(Membership).where(Membership.reason == "blank_check_company")
         ).scalars():
+            # Re-derived from the rows on file and ticker changes seen by the decision date only.
             known = [
-                sic for day, sic in sorted(rows_sic[m.security_id]) if day <= m.decision_session
+                (day, sic)
+                for day, sic in sorted(rows_sic[m.security_id])
+                if day <= m.decision_session
             ]
-            later_sic += not (known and known[-1] == "6770")
+            seen = [
+                h.valid_from
+                for h in history[m.security_id][1:]
+                if h.valid_from <= m.decision_session
+            ]
+            later_sic += not evidence.blank_check_on(known, seen, m.decision_session)
         print(
             f"    Blank-check exclusions not supported by a SIC on file by the decision date: {later_sic} "
             f"(of {sum(blank.values())}; {len(dated_ex)} securities have SIC history)"

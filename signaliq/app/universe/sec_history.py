@@ -140,8 +140,18 @@ def parse_submissions(text: str) -> Submissions | None:
     )
 
 
-def header_sic(text: str) -> str | None:
-    """The SIC code in a filing's SEC header (as assigned when the filing was made)."""
+def header_sic(text: str, cik: str | None = None) -> str | None:
+    """The SIC code of company ``cik`` in a filing's SEC header (as assigned at filing).
+
+    A header can list several companies (a merger filing names the filer and the subject
+    company); only the block that holds ``cik`` is read. Without ``cik``, the first.
+    """
+    if cik is not None:
+        blocks = re.split(r"<(?:FILER|SUBJECT-COMPANY|FILED-BY|REPORTING-OWNER|ISSUER)>", text)
+        own = [b for b in blocks[1:] if re.search(rf"<CIK>\s*0*{int(cik)}\b", b)]
+        if not own:
+            return None
+        text = own[0]
     found = re.search(r"<ASSIGNED-SIC>\s*(\d{4})", text) or re.search(
         r"STANDARD INDUSTRIAL CLASSIFICATION:.*?\[(\d{4})\]", text
     )
@@ -184,7 +194,7 @@ def submissions(sec: CachedSec, cik: str) -> Submissions | None:
 def filing_sic(sec: CachedSec, cik: str, accession: str) -> str | None:
     folder = accession.replace("-", "")
     text = sec.get(f"{ARCHIVES}/Archives/edgar/data/{int(cik)}/{folder}/{accession}.hdr.sgml")
-    return header_sic(text) if text else None
+    return header_sic(text, cik) if text else None
 
 
 def sic_history(sec: CachedSec, cik: str, first: date, last: date) -> list[tuple[date, str | None]]:

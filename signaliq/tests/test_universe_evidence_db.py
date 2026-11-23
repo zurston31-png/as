@@ -13,7 +13,14 @@ from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
 from app.universe import evidence
 from app.universe.database import open_research_database
-from app.universe.models import ExitEvidence, Security, SecurityBar, TickerHistory, TypeEvidence
+from app.universe.models import (
+    CorporateAction,
+    ExitEvidence,
+    Security,
+    SecurityBar,
+    TickerHistory,
+    TypeEvidence,
+)
 
 DAYS = trading_days(date(2022, 1, 3), date(2022, 12, 30))
 
@@ -353,3 +360,37 @@ def test_the_same_instrument_after_a_pause_is_a_trading_gap_not_an_exit(research
             None,
         )
         assert evidence.TRADING_GAP_MAX_SESSIONS == 250
+
+
+def test_a_reverse_split_during_the_gap_is_allowed_for(research):
+    # Scorpius style: suspended, 1-for-200 reverse split under a temporary ticker, resumed.
+    with session_scope(research) as session:
+        add_security(session, 1, "TESTA", DAYS[0], DAYS[100], price=0.05)
+        add_security(session, 2, "TESTA", DAYS[140], DAYS[-1], status="trading", price=11.0)
+        session.add(
+            CorporateAction(
+                id="n1",
+                action_type="name_change",
+                process_date=DAYS[120],
+                old_symbol="TESTA",
+                new_symbol="TESTAD",
+                raw={},
+            )
+        )
+        session.add(
+            CorporateAction(
+                id="s1",
+                action_type="reverse_split",
+                process_date=DAYS[120],
+                ex_date=DAYS[120],
+                symbol="TESTAD",
+                old_rate=200.0,
+                new_rate=1.0,
+                raw={},
+            )
+        )
+        session.flush()
+        evidence.resolve_outcomes(session, DAYS)
+    with session_scope(research) as session:
+        first = session.get(Security, 1)
+        assert (first.outcome, first.outcome_status) == ("trading_gap", "not_an_exit")

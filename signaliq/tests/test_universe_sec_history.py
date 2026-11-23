@@ -135,7 +135,8 @@ class FakeClient:
         if url.endswith(".hdr.sgml"):
             self.header_reads += 1
             accession = url.rsplit("/", 1)[1].removesuffix(".hdr.sgml")
-            return f"<ASSIGNED-SIC>{self.sic_by_accession[accession]}"
+            sic = self.sic_by_accession[accession]
+            return f"<FILER>\n<COMPANY-DATA>\n<CIK>0000000033\n<ASSIGNED-SIC>{sic}\n</COMPANY-DATA>"
         return None
 
 
@@ -192,8 +193,9 @@ def test_every_curated_entry_cites_sec_documents_and_exact_passages():
     for deal in CURATED_DEALS:
         assert deal.effective_date >= deal.last_trade
         assert deal.effective_date < date(2025, 1, 1)
-        assert deal.shares_per_share > 0
+        assert deal.shares_per_share >= 0
         assert deal.cash_per_share >= 0
+        assert deal.shares_per_share > 0 or deal.cash_per_share > 0
 
 
 def test_verified_deal_terms_value_a_stock_acquisition():
@@ -315,9 +317,41 @@ def test_sic_history_tolerates_headers_without_a_sic_on_the_same_day():
 
     def get(url, params=None):
         text = client.get_orig(url, params)
-        return "no sic here" if text == "<ASSIGNED-SIC>" else text
+        return "no sic here" if text and text.endswith("<ASSIGNED-SIC>\n</COMPANY-DATA>") else text
 
     client.get = get
     points = sh.sic_history(client, "33", date(2020, 1, 1), date(2020, 12, 31))
     assert len({day for day, _ in points}) == len(points)
     assert sh.sic_on(points, date(2020, 7, 1)) == "6770"
+
+
+def test_header_sic_reads_the_block_of_the_company_asked_for():
+    header = (
+        "<SUBJECT-COMPANY>\n<COMPANY-DATA>\n<CONFORMED-NAME>TEST SPAC\n<CIK>0000000044\n"
+        "<ASSIGNED-SIC>6770\n</COMPANY-DATA>\n</SUBJECT-COMPANY>\n<FILED-BY>\n<COMPANY-DATA>\n"
+        "<CONFORMED-NAME>TEST PHARMA NV\n<CIK>0000000055\n<ASSIGNED-SIC>2834\n</COMPANY-DATA>"
+    )
+    assert sh.header_sic(header, "55") == "2834"
+    assert sh.header_sic(header, "44") == "6770"
+    assert sh.header_sic(header, "66") is None
+
+
+def test_the_blank_check_period_ends_at_the_de_spac_ticker_change():
+    from app.universe.evidence import blank_check_on
+
+    # SIC stays 6770 for months after the merger (BOWX -> WeWork style).
+    late = [(date(2020, 6, 1), "6770"), (date(2022, 8, 23), "6512")]
+    renames = [date(2021, 10, 21)]
+    assert blank_check_on(late, renames, date(2021, 10, 20))
+    assert not blank_check_on(late, renames, date(2021, 10, 21))
+    assert not blank_check_on(late, renames, date(2022, 6, 1))
+    # SIC changes before the merger closes (CFII -> View style): still a SPAC until the change.
+    early = [(date(2020, 5, 18), "6770"), (date(2021, 1, 4), "3211")]
+    assert blank_check_on(early, [date(2021, 3, 9)], date(2021, 2, 1))
+    assert not blank_check_on(early, [date(2021, 3, 9)], date(2021, 3, 9))
+    # No ticker change: the SIC on file decides; nothing before the first 6770 filing.
+    liquidated = [(date(2021, 7, 20), "6770")]
+    assert not blank_check_on(liquidated, [], date(2021, 7, 19))
+    assert blank_check_on(liquidated, [], date(2024, 1, 2))
+    # A ticker change before the company became a blank check does not end anything.
+    assert blank_check_on(liquidated, [date(2019, 1, 2)], date(2024, 1, 2))

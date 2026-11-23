@@ -697,6 +697,30 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
             start, sid = later[0]
             gap = seg.sessions_between(last, start)
             before, after = closes.get((security.security_id, last)), closes.get((sid, start))
+            # Splits recorded during the gap (also under a temporary ticker, like SCPXD for
+            # Scorpius's 1-for-200 reverse split) change the price the instrument resumes at.
+            interim = {symbol} | {
+                e.new_symbol
+                for e in events
+                if e.action_type == "name_change"
+                and e.old_symbol == symbol
+                and e.process_date
+                and last < e.process_date <= start
+            }
+            ratio = 1.0
+            for e in events:
+                when = e.ex_date or e.process_date
+                if (
+                    e.action_type in ("forward_split", "reverse_split", "unit_split")
+                    and e.symbol in interim
+                    and when
+                    and last < when <= start
+                    and e.new_rate
+                    and e.old_rate
+                ):
+                    ratio *= e.new_rate / e.old_rate
+            if before:
+                before = before / ratio
             low, high = TRADING_GAP_PRICE_RATIO
             no_notice = finding is None or not finding.notices
             if (
@@ -712,8 +736,9 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
                         "trading_gap",
                         start,
                         f"{symbol} trades again from {start} after {gap} sessions without a "
-                        f"trade, at {after} against {before} before the gap; no delisting "
-                        "notice in between",
+                        f"trade, at {after} against {before:g} before the gap"
+                        + (f" (after splits x{ratio:g} in the gap)" if ratio != 1.0 else "")
+                        + "; no delisting notice in between",
                     )
                 )
         if security.real_trade_sessions < FRAGMENT_SESSIONS:
@@ -765,7 +790,15 @@ def sec_evidence(
     acquisition = next(
         (k for k in finding.eight_ks if sec.eight_k_category(k.items) == "acquired"), None
     )
-    for k in finding.eight_ks:
+    # A class that was redeemed was paid off: later events of the company (JMP Group's
+    # sale two months after its notes were redeemed) are not about it.
+    redeemed_on = [f.filed for f, n in relevant if sec.rule_meaning(n.rule)[0] == "redeemed"]
+    eight_ks = [
+        k
+        for k in finding.eight_ks
+        if not redeemed_on or k.filed <= max(redeemed_on) + timedelta(days=5)
+    ]
+    for k in eight_ks:
         kind = sec.eight_k_category(k.items)
         cash, sentence = finding.cash if k is acquisition else (None, "")
         found.append(
@@ -774,7 +807,11 @@ def sec_evidence(
                 "acquired_cash" if cash is not None else kind,
                 k.filed,
                 f"8-K filed {k.filed} ({finding.company}), {k.items}"
-                + (f"; terms: {sentence[:200]}" if cash is not None else ""),
+                + (
+                    f"; cash per share {cash:g}; terms: {sentence[:180]}"
+                    if cash is not None
+                    else ""
+                ),
                 k.href[-128:],
                 cash,
             )
@@ -950,7 +987,12 @@ def value_deals(session: Session, client: AlpacaClient, utc_window) -> list[Deal
 
 
 def deal_evidence(row: DealValue) -> outcomes.Evidence:
-    kind = "acquired_stock_and_cash" if row.cash_per_share > 0 else "acquired_stock"
+    if row.shares_per_share == 0:
+        kind = "acquired_cash"
+    elif row.cash_per_share > 0:
+        kind = "acquired_stock_and_cash"
+    else:
+        kind = "acquired_stock"
     return outcomes.Evidence(
         "sec",
         "deal_terms",
@@ -1045,18 +1087,38 @@ def store_issuers(session: Session) -> None:
     session.flush()
 
 
-def blank_check_exclusions(session: Session):
-    """Per security, a test of whether its issuer was a blank-check company (SIC 6770) on a day.
+def blank_check_on(changes: list[tuple[date, str | None]], renames: list[date], day: date) -> bool:
+    """Whether the issuer counts as a blank-check company on ``day``.
 
-    Uses only SIC codes from filings made on or before that day.
+    It does from its first filing with SIC 6770 until the security's first ticker change
+    after that (the de-SPAC: CF Finance Acquisition II -> View). SEC's SIC can trail the
+    merger by months (BOWX -> WeWork kept 6770 until August 2022) or lead it (CFII's SIC
+    changed in January 2021, the merger closed in March), so the ticker change, known on
+    the day it happens, ends the period. Without a ticker change, the SIC on file decides.
+    Only filings made and ticker changes seen on or before ``day`` are used.
     """
+    first = next((d for d, sic in sorted(changes) if sic == sh.BLANK_CHECK_SIC), None)
+    if first is None or first > day:
+        return False
+    if any(first <= r <= day for r in renames):
+        return False
+    if any(r > first for r in renames):
+        return True  # still under the SPAC ticker, whatever the SIC says meanwhile
+    return sh.sic_on(changes, day) == sh.BLANK_CHECK_SIC
+
+
+def blank_check_exclusions(session: Session):
+    """Per security, a test of whether its issuer was a blank-check company on a day."""
     points: dict[int, list[tuple[date, str | None]]] = defaultdict(list)
     for row in session.execute(select(IssuerSic)).scalars():
         points[row.security_id].append((row.as_of, row.sic))
+    renames: dict[int, list[date]] = defaultdict(list)
+    for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
+        renames[h.security_id].append(h.valid_from)
+    for sid in renames:
+        renames[sid] = renames[sid][1:]  # the first segment's start is not a change
 
-    def test(changes):
-        return lambda day: (
-            "blank_check_company" if sh.sic_on(changes, day) == sh.BLANK_CHECK_SIC else None
-        )
+    def test(changes, changed):
+        return lambda day: "blank_check_company" if blank_check_on(changes, changed, day) else None
 
-    return {sid: test(sorted(changes)) for sid, changes in points.items()}
+    return {sid: test(sorted(c), renames.get(sid, [])) for sid, c in points.items()}

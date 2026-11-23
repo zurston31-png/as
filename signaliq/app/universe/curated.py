@@ -244,6 +244,21 @@ CURATED_FACTS: tuple[CuratedFact, ...] = (
         cash_per_share=0.01,
     ),
     CuratedFact(
+        "JMPNL",
+        date(2021, 9, 10),
+        "debt",
+        "redeemed",
+        date(2021, 9, 10),
+        (
+            SecQuote(
+                f"{SEC}/1302350/000143774921019464/ex_274358.htm",
+                "The redemption price per 2027 Note will be $25 plus accrued and unpaid interest",
+            ),
+        ),
+        "JMP Group redeemed its 7.25% Senior Notes due 2027 (Nasdaq: JMPNL) at $25 plus accrued interest.",
+        cash_per_share=25.0,
+    ),
+    CuratedFact(
         "FRC",
         date(2023, 4, 28),
         None,
@@ -406,26 +421,24 @@ CURATED_DEALS: tuple[CuratedDeal, ...] = (
         date(2023, 11, 21),
         "AVGO",
         date(2023, 11, 22),
-        71.25,
-        0.126,
+        142.50,
+        0.0,
         (
             SecQuote(
-                f"{SEC}/1124610/000119312523282097/d559518d8k.htm",
-                "$142.50 in cash, without interest (the",
+                f"{SEC}/1124610/000119312523266257/d573017dex991.htm",
+                "elected to receive the cash consideration or did not make a valid election or did not deliver a "
+                "valid election form prior to the Election Deadline. Each such VMware stockholder will be entitled to "
+                "receive $142.50 in cash per share of VMware common stock",
             ),
             SecQuote(
-                f"{SEC}/1124610/000119312523282097/d559518d8k.htm",
-                "0.25200 of a share of common stock, par value $0.001 per share, of Broadcom",
-            ),
-            SecQuote(
-                f"{SEC}/1124610/000119312523282097/d559518d8k.htm",
-                "equal to 50% of the aggregate number of VMware Common Shares issued and outstanding immediately "
-                "prior to the Effective Time",
+                f"{SEC}/1124610/000119312523266257/d573017dex991.htm",
+                "elected to receive the stock consideration and in accordance with the proration procedures",
             ),
         ),
-        "Broadcom: each holder elected $142.50 cash or 0.252 AVGO share, prorated so that exactly half "
-        "of all shares received each. Value used: the average per share across all holders, $71.25 "
-        "plus 0.126 AVGO share. A single holder's mix depended on its election.",
+        "Broadcom: holders chose $142.50 cash or 0.252 AVGO share. About 96% chose stock and were prorated; "
+        "shares that elected cash or made no election received $142.50 in cash. Shares bought in the market "
+        "after the election deadline could no longer elect, so a holder at the last trade received $142.50 "
+        "cash (the last close, 142.48, agrees). A holder who elected stock in time received about 52% stock.",
     ),
     CuratedDeal(
         "WLL",
