@@ -28,7 +28,7 @@ changing every bar after D.
 import hashlib
 import json
 import statistics
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
 
@@ -89,14 +89,19 @@ def decide(
     rule: MembershipRule,
     calendar: Sequence[date],
     held_out: Mapping[int, str] | None = None,
+    dated_exclusions: Mapping[int, Callable[[date], str | None]] | None = None,
 ) -> list[Decision]:
     """Membership decided at ``decision_session``, from data up to that session only.
 
     ``calendar`` holds trading sessions up to and including ``decision_session``.
     ``held_out`` maps securities that must not be chosen (for example because a
-    price adjustment awaits review) to the reason.
+    price adjustment awaits review) to the reason. ``dated_exclusions`` maps securities
+    to a test of the decision date that returns a reason when the security may not be
+    chosen on that date (for example while its issuer is a blank-check company). The
+    test must only use facts known by that date.
     """
     held_out = held_out or {}
+    dated_exclusions = dated_exclusions or {}
     window_sessions = [s for s in calendar if s <= decision_session][-rule.window :]
     window_set = set(window_sessions)
     scored: list[tuple[float, int, float]] = []
@@ -109,6 +114,10 @@ def decide(
             reason = "not_common_stock"
         elif security_id in held_out:
             reason = held_out[security_id]
+        elif security_id in dated_exclusions and (
+            excluded := dated_exclusions[security_id](decision_session)
+        ):
+            reason = excluded
         elif today is None:
             reason = "no_trade_on_decision_session"
         elif today.close < rule.min_price:

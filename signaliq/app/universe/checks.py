@@ -88,6 +88,12 @@ def held_out(session: Session) -> dict[int, str]:
     }
 
 
+def _dated(session: Session):
+    from app.universe.evidence import blank_check_exclusions
+
+    return blank_check_exclusions(session)
+
+
 def load_history(session: Session) -> tuple[dict[int, list[DailyRow]], dict[int, str]]:
     history: dict[int, list[DailyRow]] = defaultdict(list)
     for bar in session.execute(
@@ -116,6 +122,7 @@ def recompute_with_truncated_data(
     """Recompute every decision from data cut off at that decision. Returns sessions that differ."""
     history, types = load_history(session)
     held = held_out(session)
+    dated = _dated(session)
     stored = stored_members(session)
     decisions = sorted({r.decision_session for r in session.execute(select(Membership)).scalars()})
     calendar = trading_days(data_start, max(decisions)) if decisions else []
@@ -124,7 +131,9 @@ def recompute_with_truncated_data(
         truncated = {sid: [r for r in rows if r.session <= when] for sid, rows in history.items()}
         again = {
             d.security_id
-            for d in decide(when, truncated, types, rule, [s for s in calendar if s <= when], held)
+            for d in decide(
+                when, truncated, types, rule, [s for s in calendar if s <= when], held, dated
+            )
             if d.member
         }
         if again != stored.get(when, set()):
@@ -139,6 +148,7 @@ def tamper_future(session: Session, rule: MembershipRule, data_start: date, cut:
     """
     history, types = load_history(session)
     held = held_out(session)
+    dated = _dated(session)
     stored = stored_members(session)
     tampered = {
         sid: [
@@ -152,7 +162,9 @@ def tamper_future(session: Session, rule: MembershipRule, data_start: date, cut:
     for when in decisions:
         again = {
             d.security_id
-            for d in decide(when, tampered, types, rule, [s for s in calendar if s <= when], held)
+            for d in decide(
+                when, tampered, types, rule, [s for s in calendar if s <= when], held, dated
+            )
             if d.member
         }
         if again != stored[when]:

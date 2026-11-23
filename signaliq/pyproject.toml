@@ -48,3 +48,6 @@ ignore = [
 "scripts/*.py" = ["E402"]
 # The validation report is built from long f-strings that are one report line each.
 "scripts/universe_validation_batch.py" = ["E402", "E501"]
+# Curated SEC passages are quoted verbatim; splitting them would hide what is matched.
+"app/universe/curated.py" = ["E501"]
+"tests/test_universe_sec_history.py" = ["E501"]

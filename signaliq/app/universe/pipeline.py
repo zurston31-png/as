@@ -24,10 +24,13 @@ from app.universe.membership import DailyRow, MembershipRule, decide, month_end_
 from app.universe.models import (
     BatchSymbol,
     CorporateAction,
+    DealValue,
     ExitEvidence,
+    IssuerSic,
     Membership,
     Security,
     SecurityBar,
+    SecurityIssuer,
     SpinOff,
     SplitCheck,
     TickerBar,
@@ -390,6 +393,9 @@ def store_securities(session: Session, assembled: Assembled) -> list[Security]:
     # Children first: every table that refers to a security is cleared before the securities.
     for table in (
         Membership,
+        DealValue,
+        IssuerSic,
+        SecurityIssuer,
         ExitEvidence,
         TypeEvidence,
         SpinOff,
@@ -556,9 +562,15 @@ def decide_membership(session: Session, rule: MembershipRule) -> list[date]:
         ).scalars()
         if check.security_id is not None
     }
+    # A blank-check company (SIC 6770 on file by the decision date) is not chosen.
+    from app.universe.evidence import blank_check_exclusions  # evidence imports pipeline
+
+    dated = blank_check_exclusions(session)
     fingerprint = rule.fingerprint()
     for when in decisions:
-        for d in decide(when, history, types, rule, [s for s in calendar if s <= when], held_out):
+        for d in decide(
+            when, history, types, rule, [s for s in calendar if s <= when], held_out, dated
+        ):
             session.add(
                 Membership(
                     decision_session=d.session,

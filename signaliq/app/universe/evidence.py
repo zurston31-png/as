@@ -29,16 +29,27 @@ from sqlalchemy.orm import Session
 from app.config import is_valid_symbol
 from app.data.alpaca_client import AlpacaClient
 from app.universe import adjustments, outcomes, sec, sectypes
+from app.universe import sec_history as sh
 from app.universe import segments as seg
 from app.universe.batch import PLAIN_TICKER
-from app.universe.curated import CURATED_SPIN_OFFS
+from app.universe.curated import (
+    CURATED_DEALS,
+    CURATED_FACTS,
+    CURATED_RENAMES,
+    CURATED_SPIN_OFFS,
+    CuratedFact,
+    CuratedRename,
+)
 from app.universe.models import (
     BatchSymbol,
     CorporateAction,
+    DealValue,
     ExitEvidence,
     ExternalResponse,
+    IssuerSic,
     Security,
     SecurityBar,
+    SecurityIssuer,
     SpinOff,
     SplitCheck,
     TickerHistory,
@@ -371,8 +382,18 @@ def sec_findings(session: Session, client: sec.CachedSec) -> dict[int, sec.SecFi
     for security in session.execute(
         select(Security).where(Security.status == "ended").order_by(Security.security_id)
     ).scalars():
-        symbols, names = _sec_search_keys(session, history[security.security_id], shared)
-        found[security.security_id] = sec.find(client, symbols, names, security.last_trade_session)
+        tickers = history[security.security_id]
+        symbols, names = _sec_search_keys(session, tickers, shared)
+        text_ciks = []
+        for h in reversed(tickers):
+            found_text = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
+            for cik in sh.ranked_candidates(found_text):
+                # Only a company that names the ticker as its own is a candidate.
+                if sh.confirm_writer(client, found_text[cik], h.symbol):
+                    text_ciks.append(cik)
+        found[security.security_id] = sec.find(
+            client, symbols, names, security.last_trade_session, text_ciks
+        )
     return found
 
 
@@ -392,12 +413,19 @@ def cached_sec_findings(session: Session) -> dict[int, sec.SecFinding]:
     return sec_findings(session, sec.CachedSec(session, network=False))
 
 
-def _sec_relevant(finding: sec.SecFinding, symbol: str):
-    """(type, notices about that class) of a finding, for the security traded as ``symbol``."""
-    kind = sec.notice_type([n.class_description for _, n in finding.notices], symbol)
-    relevant = [
-        (f, n) for f, n in finding.notices if sec.class_type(n.class_description, symbol) == kind
-    ]
+def _sec_relevant(finding: sec.SecFinding, symbol: str, last: date | None = None):
+    """(type, notices about that class) of a finding, for the security traded as ``symbol``.
+
+    When the issuer delisted classes on different dates, only the notices filed closest
+    to the security's last trade describe it (JMP Group's notes, delisted the day the
+    JMPNL ticker last traded, rather than its common stock two months later).
+    """
+    notices = finding.notices
+    if last is not None and notices:
+        nearest = min(abs((f.filed - last).days) for f, _ in notices)
+        notices = [(f, n) for f, n in notices if abs((f.filed - last).days) == nearest]
+    kind = sec.notice_type([n.class_description for _, n in notices], symbol)
+    relevant = [(f, n) for f, n in notices if sec.class_type(n.class_description, symbol) == kind]
     return kind, relevant
 
 
@@ -414,6 +442,7 @@ def resolve_types(session: Session) -> None:
     declared = {b.symbol: b.declared_type for b in session.execute(select(BatchSymbol)).scalars()}
     shared = _shared_tickers(session)
     sec_found = cached_sec_findings(session)
+    facts = curated_facts(session)
 
     def note(security, source, symbol, kind, detail):
         session.add(
@@ -490,7 +519,9 @@ def resolve_types(session: Session) -> None:
                 )
         finding = sec_found.get(security.security_id)
         if finding is not None and finding.notices:
-            kind, relevant = _sec_relevant(finding, security.last_symbol)
+            kind, relevant = _sec_relevant(
+                finding, security.last_symbol, security.last_trade_session
+            )
             issuer = f"{finding.company}, CIK {finding.cik}, SIC {finding.sic or 'none'}" + (
                 " (blank check)" if finding.sic == "6770" else ""
             )
@@ -515,6 +546,19 @@ def resolve_types(session: Session) -> None:
                         else "; another class or unclear, not counted"
                     ),
                 )
+        for fact, missing in facts.get(security.security_id, []):
+            if fact.security_type is None:
+                continue
+            if not missing:
+                votes.append(sectypes.TypeVote("sec_text", fact.security_type))
+            note(
+                security,
+                "sec_text" if not missing else "sec_text_unverified",
+                security.last_symbol,
+                fact.security_type,
+                f"{fact.note} [{fact.quotes[0].url}]"
+                + ("" if not missing else f"; {len(missing)} quote(s) not found, not counted"),
+            )
         security.security_type, security.type_status = sectypes.resolve_type(votes)
     session.flush()
 
@@ -537,6 +581,16 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
             segments_by_symbol[h.symbol].append((h.valid_from, h.valid_to, security_id))
 
     sec_found = cached_sec_findings(session)
+    facts = curated_facts(session)
+    deals = {
+        row.security_id: row
+        for row in session.execute(
+            select(DealValue).where(DealValue.status == "verified")
+        ).scalars()
+    }
+    closes = {
+        (b.security_id, b.session): b.close for b in session.execute(select(SecurityBar)).scalars()
+    }
 
     def sessions_after(day: date, count: int) -> date:
         later = [s for s in calendar if s > day]
@@ -609,13 +663,29 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
         # SEC: the delisting notice for this class and 8-Ks on bankruptcy or a closed merger.
         finding = sec_found.get(security.security_id)
         if finding is not None and finding.cik:
-            found += sec_evidence(finding, security.last_symbol)
+            found += sec_evidence(finding, security.last_symbol, security.last_trade_session)
+        # Facts read from SEC filings by a person, applied only if every quote is found.
+        for fact, missing in facts.get(security.security_id, []):
+            if fact.category and not missing:
+                found.append(
+                    outcomes.Evidence(
+                        "sec",
+                        fact.category,
+                        fact.event_date,
+                        f'{fact.note} Quoted: "{fact.quotes[-1].text[:120]}"',
+                        fact.quotes[-1].url[-128:],
+                        fact.cash_per_share,
+                    )
+                )
+        if security.security_id in deals:
+            found.append(deal_evidence(deals[security.security_id]))
         # The same ticker trading again later, and very short runs.
-        if any(
-            start > last
+        later = sorted(
+            (start, sid)
             for start, _, sid in segments_by_symbol[symbol]
-            if sid != security.security_id
-        ):
+            if sid != security.security_id and start > last
+        )
+        if later:
             found.append(
                 outcomes.Evidence(
                     "alpaca_bars",
@@ -624,6 +694,28 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
                     f"{symbol} trades again later (halt, or the ticker was reused)",
                 )
             )
+            start, sid = later[0]
+            gap = seg.sessions_between(last, start)
+            before, after = closes.get((security.security_id, last)), closes.get((sid, start))
+            low, high = TRADING_GAP_PRICE_RATIO
+            no_notice = finding is None or not finding.notices
+            if (
+                no_notice
+                and before
+                and after
+                and gap <= TRADING_GAP_MAX_SESSIONS
+                and low <= after / before <= high
+            ):
+                found.append(
+                    outcomes.Evidence(
+                        "alpaca_bars",
+                        "trading_gap",
+                        start,
+                        f"{symbol} trades again from {start} after {gap} sessions without a "
+                        f"trade, at {after} against {before} before the gap; no delisting "
+                        "notice in between",
+                    )
+                )
         if security.real_trade_sessions < FRAGMENT_SESSIONS:
             found.append(
                 outcomes.Evidence(
@@ -650,10 +742,12 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
     session.flush()
 
 
-def sec_evidence(finding: sec.SecFinding, symbol: str) -> list[outcomes.Evidence]:
+def sec_evidence(
+    finding: sec.SecFinding, symbol: str, last: date | None = None
+) -> list[outcomes.Evidence]:
     """Exit evidence from a matched SEC company (all filings are before 2025 by construction)."""
     found = []
-    _, relevant = _sec_relevant(finding, symbol)
+    _, relevant = _sec_relevant(finding, symbol, last)
     for filing, notice in relevant:
         category, meaning = sec.rule_meaning(notice.rule)
         reason = f"; notice text: {notice.reason_text[:160]}" if notice.reason_text else ""
@@ -695,3 +789,265 @@ def plain_tickers(session: Session) -> list[str]:
             if PLAIN_TICKER.match(h.symbol)
         }
     )
+
+
+# =============================================================================
+# Curated SEC facts (renames, types, exits, deal terms), re-verified every run
+# =============================================================================
+
+#: A deal's value must lie within this fraction of the target's last close.
+DEAL_TOLERANCE = 0.10
+#: An instrument that trades again within this many sessions at a similar price,
+#: with no delisting notice in between, had a trading gap rather than an exit.
+TRADING_GAP_MAX_SESSIONS = 250
+TRADING_GAP_PRICE_RATIO = (0.5, 2.0)
+
+
+def missing_quotes(client: sec.CachedSec, quotes) -> list:
+    """Quotes not found word for word in their (cached) SEC document."""
+    missing = []
+    for quote in quotes:
+        text = sh.plain_text(client.get(quote.url))
+        if " ".join(quote.text.split()) not in text:
+            missing.append(quote)
+    return missing
+
+
+def fetch_curated_documents(
+    session: Session, *, refresh: bool = False, sleep=time.sleep
+) -> tuple[int, list[str]]:
+    """Fetch (or reuse from the cache) every SEC document a curated entry quotes."""
+    client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
+    try:
+        for entry in (*CURATED_RENAMES, *CURATED_FACTS, *CURATED_DEALS):
+            for quote in entry.quotes:
+                client.get(quote.url)
+    finally:
+        client.close()
+    return client.requests, client.failures
+
+
+def apply_curated_renames(session: Session) -> list[tuple[CuratedRename, list]]:
+    """Add each verified curated rename as a name_change event. Returns (rename, missing quotes)."""
+    client = sec.CachedSec(session, network=False)
+    results = []
+    for rename in CURATED_RENAMES:
+        missing = missing_quotes(client, rename.quotes)
+        results.append((rename, missing))
+        if missing:
+            continue
+        session.merge(
+            CorporateAction(
+                id=f"curated:{rename.old_symbol}>{rename.new_symbol}",
+                action_type="name_change",
+                process_date=rename.date,
+                old_symbol=rename.old_symbol,
+                new_symbol=rename.new_symbol,
+                raw={
+                    "source": "curated from SEC filings",
+                    "note": rename.note,
+                    "documents": sorted({q.url for q in rename.quotes}),
+                },
+            )
+        )
+    session.flush()
+    return results
+
+
+def curated_facts(session: Session) -> dict[int, list[tuple[CuratedFact, list]]]:
+    """Curated facts per security (matched by last ticker and last trade), with missing quotes."""
+    client = sec.CachedSec(session, network=False)
+    found: dict[int, list[tuple[CuratedFact, list]]] = defaultdict(list)
+    for security in session.execute(select(Security).order_by(Security.security_id)).scalars():
+        for fact in CURATED_FACTS:
+            if (
+                fact.symbol == security.last_symbol
+                and fact.last_trade == security.last_trade_session
+            ):
+                found[security.security_id].append((fact, missing_quotes(client, fact.quotes)))
+    return dict(found)
+
+
+def _acquirer_bars(
+    session: Session, client: AlpacaClient, utc_window, symbol: str, effective: date
+) -> list[seg.Bar]:
+    """Raw SIP daily bars of the acquirer's literal ticker for ten days from ``effective``."""
+    key = f"{symbol}:{effective.isoformat()}"
+    cached = _cached(session, "alpaca_deal", key)
+    if cached is None:
+        last = min(effective + timedelta(days=10), date(2024, 12, 31))
+        start, end = utc_window(effective, last)
+        items = client.fetch_bars([symbol], timeframe="1Day", start=start, end=end, asof="-").get(
+            symbol, []
+        )
+        _store(session, "alpaca_deal", key, items)
+        cached = items
+    from app.universe.pipeline import _to_bar  # local import: pipeline imports this module
+
+    return sorted((_to_bar(item) for item in cached), key=lambda b: b.session)
+
+
+def value_deals(session: Session, client: AlpacaClient, utc_window) -> list[DealValue]:
+    """Value per share of each curated stock or cash-and-stock deal, with its checks.
+
+    Value = cash + shares x the acquirer's raw close on the effective date (or the first
+    session after it with a real trade). The terms must be quoted verbatim from the SEC
+    filing, and the value must lie within ``DEAL_TOLERANCE`` of the target's last close
+    (merger arbitrage keeps them close). Otherwise the value is recorded but not used.
+    """
+    session.execute(delete(DealValue))
+    secc = sec.CachedSec(session, network=False)
+    securities = {
+        (x.last_symbol, x.last_trade_session): x
+        for x in session.execute(select(Security).where(Security.status == "ended")).scalars()
+    }
+    rows = []
+    for deal in CURATED_DEALS:
+        security = securities.get((deal.target_symbol, deal.last_trade))
+        if security is None:
+            continue
+        missing = missing_quotes(secc, deal.quotes)
+        bars = _acquirer_bars(
+            session, client, utc_window, deal.acquirer_symbol, deal.effective_date
+        )
+        first = next(
+            (b for b in bars if b.session >= deal.effective_date and not b.is_filler), None
+        )
+        last_close = session.scalar(
+            select(SecurityBar.close).where(
+                SecurityBar.security_id == security.security_id,
+                SecurityBar.session == security.last_trade_session,
+            )
+        )
+        value = deal.cash_per_share + deal.shares_per_share * first.close if first else None
+        if missing:
+            status = "quote_not_found"
+        elif value is None:
+            status = "no_acquirer_price"
+        elif last_close and abs(value / last_close - 1) > DEAL_TOLERANCE:
+            status = "value_far_from_last_close"
+        else:
+            status = "verified"
+        row = DealValue(
+            security_id=security.security_id,
+            acquirer_symbol=deal.acquirer_symbol,
+            effective_date=deal.effective_date,
+            cash_per_share=deal.cash_per_share,
+            shares_per_share=deal.shares_per_share,
+            acquirer_session=first.session if first else None,
+            acquirer_close=first.close if first else None,
+            value=value,
+            target_last_close=last_close,
+            status=status,
+            source_url=deal.quotes[0].url,
+            note=deal.note,
+        )
+        session.add(row)
+        rows.append(row)
+    session.flush()
+    return rows
+
+
+def deal_evidence(row: DealValue) -> outcomes.Evidence:
+    kind = "acquired_stock_and_cash" if row.cash_per_share > 0 else "acquired_stock"
+    return outcomes.Evidence(
+        "sec",
+        "deal_terms",
+        row.effective_date,
+        f"{row.cash_per_share:g} cash + {row.shares_per_share:g} x {row.acquirer_symbol} "
+        f"close {row.acquirer_close} on {row.acquirer_session} = {row.value:.4f} "
+        f"(target last close {row.target_last_close}); {row.note}",
+        row.source_url[-128:],
+        row.value,
+        kind,
+    )
+
+
+# =============================================================================
+# Issuers and their SIC code over time (blank-check companies)
+# =============================================================================
+
+COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+
+
+def _ticker_today(client: sec.CachedSec) -> dict[str, tuple[str, str]]:
+    import json
+
+    text = client.get(COMPANY_TICKERS_URL)
+    try:
+        rows = json.loads(text or "{}").values()
+    except ValueError:
+        return {}
+    return {r["ticker"]: (str(r["cik_str"]).zfill(10), r.get("title", "")) for r in rows}
+
+
+def issuer_records(
+    session: Session, client: sec.CachedSec, sec_found: dict[int, sec.SecFinding]
+) -> list[tuple[int, str, str, str, list[tuple[date, str | None]]]]:
+    """(security id, CIK, name, how, SIC points) for every security whose issuer is known.
+
+    An ended security's issuer is the company that filed its delisting notice. A security
+    still trading at the end of 2024 takes the ticker's holder in SEC's ticker list, only
+    if that company filed something while the security traded under the ticker.
+    """
+    today = _ticker_today(client)
+    out = []
+    for security in session.execute(select(Security).order_by(Security.security_id)).scalars():
+        finding = sec_found.get(security.security_id)
+        if finding is not None and finding.cik:
+            cik, name, how = finding.cik, finding.company or "", "form25"
+        elif security.status != "ended" and security.last_symbol in today:
+            cik, name = today[security.last_symbol]
+            company = sh.submissions(client, cik)
+            filed = [d for _, d, _ in (company.filings if company else ())]
+            if not any(security.first_session <= d <= security.last_trade_session for d in filed):
+                continue
+            how = "ticker_today"
+        else:
+            continue
+        points = sh.sic_history(
+            client, cik, security.first_session - timedelta(days=365), security.last_trade_session
+        )
+        out.append((security.security_id, cik, name, how, points))
+    return out
+
+
+def fetch_issuers(
+    session: Session, *, refresh: bool = False, sleep=time.sleep
+) -> tuple[int, list[str]]:
+    client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
+    try:
+        issuer_records(session, client, sec_findings(session, client))
+    finally:
+        client.close()
+    return client.requests, client.failures
+
+
+def store_issuers(session: Session) -> None:
+    session.execute(delete(IssuerSic))
+    session.execute(delete(SecurityIssuer))
+    client = sec.CachedSec(session, network=False)
+    for sid, cik, name, how, points in issuer_records(
+        session, client, sec_findings(session, client)
+    ):
+        session.add(SecurityIssuer(security_id=sid, cik=cik, name=name[:160], how=how))
+        for as_of, sic in points:
+            session.add(IssuerSic(security_id=sid, cik=cik, as_of=as_of, sic=sic))
+    session.flush()
+
+
+def blank_check_exclusions(session: Session):
+    """Per security, a test of whether its issuer was a blank-check company (SIC 6770) on a day.
+
+    Uses only SIC codes from filings made on or before that day.
+    """
+    points: dict[int, list[tuple[date, str | None]]] = defaultdict(list)
+    for row in session.execute(select(IssuerSic)).scalars():
+        points[row.security_id].append((row.as_of, row.sic))
+
+    def test(changes):
+        return lambda day: (
+            "blank_check_company" if sh.sic_on(changes, day) == sh.BLANK_CHECK_SIC else None
+        )
+
+    return {sid: test(sorted(changes)) for sid, changes in points.items()}

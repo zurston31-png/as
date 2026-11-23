@@ -29,7 +29,7 @@ from sqlalchemy import delete, func, select
 from app.config import configure_logging, get_settings
 from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
-from app.universe import checks, evidence
+from app.universe import checks, curated, evidence
 from app.universe import pipeline as p
 from app.universe.batch import KNOWN_CASES
 from app.universe.database import open_research_database, research_database_url
@@ -37,10 +37,13 @@ from app.universe.membership import MembershipRule
 from app.universe.models import (
     BatchSymbol,
     CorporateAction,
+    DealValue,
     ExitEvidence,
     ExternalResponse,
+    IssuerSic,
     Membership,
     Security,
+    SecurityIssuer,
     SpinOff,
     SplitCheck,
     TickerBar,
@@ -64,6 +67,14 @@ def run(settings, refresh: bool) -> dict:
                 # Every run starts from no stored corporate actions, so its result never
                 # depends on an earlier run. Renames are followed until no new ticker appears.
                 session.execute(delete(CorporateAction))
+                # Renames that Alpaca lacks, read from SEC filings and re-verified each run.
+                facts["curated_requests"], facts["curated_failures"] = (
+                    evidence.fetch_curated_documents(session, refresh=refresh)
+                )
+                facts["renames"] = [
+                    (r.old_symbol, r.new_symbol, r.date, len(r.quotes), len(missing))
+                    for r, missing in evidence.apply_curated_renames(session)
+                ]
                 to_fetch = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
                 facts["discovered"] = []
                 for _round in range(MAX_DISCOVERY_ROUNDS):
@@ -116,6 +127,13 @@ def run(settings, refresh: bool) -> dict:
                     session, refresh=refresh
                 )
             with session_scope(factory) as session:
+                facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
+                    session, refresh=refresh
+                )
+                evidence.store_issuers(session)
+            with session_scope(factory) as session:
+                evidence.value_deals(session, client, p.utc_window)
+            with session_scope(factory) as session:
                 evidence.resolve_types(session)
                 evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
             with session_scope(factory) as session:
@@ -150,7 +168,7 @@ def report(facts: dict) -> str:
         for e in s.execute(select(TypeEvidence).order_by(TypeEvidence.id)).scalars():
             type_ev[e.security_id].append(e)
 
-        print("SIP UNIVERSE VALIDATION BATCH (v3) - research data only, no strategy, no backtest")
+        print("SIP UNIVERSE VALIDATION BATCH (v4) - research data only, no strategy, no backtest")
         print(f"Research database: {facts['database']}")
         print(
             "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
@@ -159,7 +177,8 @@ def report(facts: dict) -> str:
             "Independent sources: Alpaca corporate actions, OpenFIGI (security type), Wikidata (company records),"
         )
         print(
-            "SEC EDGAR (delisting notices and 8-Ks, read-only), hand-entered corrections checked against prices.\n"
+            "SEC EDGAR (delisting notices, 8-Ks, full-text search, filing headers; read-only), facts read from SEC\n"
+            "filings by hand (each re-verified against the cached document every run), corrections checked against prices.\n"
         )
 
         print("1. BATCH")
@@ -256,7 +275,25 @@ def report(facts: dict) -> str:
             f"(total loss {sum(1 for x in ended.values() if x.assumed_exit_value == 0.0)}); "
             f"no value assumed: {sum(1 for x in ended.values() if x.assumed_exit_value is None)}"
         )
-        for status in ("confirmed", "single_source", "conflict", "unresolved"):
+        groups = {
+            "failure (bankruptcy, bank failure)": ("bankruptcy", "failure"),
+            "acquisition": (
+                "acquired",
+                "acquired_cash",
+                "acquired_stock",
+                "acquired_stock_and_cash",
+            ),
+            "redemption (SPAC trust, fund liquidation, called warrants or notes)": ("redeemed",),
+            "not an exit (trading gap of the same instrument)": ("trading_gap",),
+            "conflict": ("conflict",),
+            "unresolved": ("unknown", "resumed_or_fragment"),
+        }
+        print("  By kind of end:")
+        for label, kinds in groups.items():
+            rows = [x for x in ended.values() if x.outcome in kinds]
+            common = sum(1 for x in rows if x.security_type == "common")
+            print(f"    {label:70} {len(rows):3}  (common stock: {common})")
+        for status in ("confirmed", "single_source", "conflict", "not_an_exit", "unresolved"):
             rows = sorted((sid, x) for sid, x in ended.items() if x.outcome_status == status)
             print(f"  --- {status} ({len(rows)}) ---")
             for sid, x in rows:
@@ -306,6 +343,86 @@ def report(facts: dict) -> str:
             print(
                 f"        -> type {x.security_type} ({x.type_status}); outcome {x.outcome} ({x.outcome_status})"
             )
+
+        print(
+            "\n4c. FACTS READ FROM SEC FILINGS (re-verified: every quoted passage must be in the cached document)"
+        )
+        check = evidence.sec.CachedSec(s, network=False)
+        for label, entries in (
+            ("rename", curated.CURATED_RENAMES),
+            ("fact", curated.CURATED_FACTS),
+            ("deal", curated.CURATED_DEALS),
+        ):
+            for e in entries:
+                missing = evidence.missing_quotes(check, e.quotes)
+                name = (
+                    f"{e.old_symbol} -> {e.new_symbol} {e.date}"
+                    if label == "rename"
+                    else f"{getattr(e, 'symbol', getattr(e, 'target_symbol', ''))} (last trade {e.last_trade})"
+                )
+                print(
+                    f"  {label:6} {name:32} quotes found {len(e.quotes) - len(missing)}/{len(e.quotes)}"
+                    + ("" if not missing else "  -> NOT USED")
+                )
+        print(
+            "  Sources: "
+            + ", ".join(
+                sorted(
+                    {
+                        q.url.split("/data/")[1].split("/")[0]
+                        for e in (
+                            *curated.CURATED_RENAMES,
+                            *curated.CURATED_FACTS,
+                            *curated.CURATED_DEALS,
+                        )
+                        for q in e.quotes
+                    }
+                )
+            )
+            + " (CIKs of the filers quoted)"
+        )
+
+        print(
+            "\n4d. VALUE OF STOCK AND CASH-AND-STOCK ACQUISITIONS (terms quoted from the SEC filing)"
+        )
+        print(
+            "  value = cash + shares x acquirer's raw SIP close on the effective date (first session with a trade)"
+        )
+        print(f"  used only if within {evidence.DEAL_TOLERANCE:.0%} of the target's last close")
+        for d in s.execute(select(DealValue).order_by(DealValue.security_id)).scalars():
+            x = securities[d.security_id]
+            gap = (
+                f"{d.value / d.target_last_close - 1:+.1%}"
+                if d.value is not None and d.target_last_close
+                else "n/a"
+            )
+            print(
+                f"    id {d.security_id} {path(d.security_id):8} {d.cash_per_share:g} cash + {d.shares_per_share:g} {d.acquirer_symbol} "
+                f"@ {d.acquirer_close} ({d.acquirer_session}) = {d.value if d.value is None else round(d.value, 4)}; "
+                f"target last close {d.target_last_close} ({gap}); {d.status} -> outcome {x.outcome}, value {x.assumed_exit_value}"
+            )
+
+        print(
+            "\n4e. ISSUERS AND BLANK-CHECK COMPANIES (SIC 6770, point in time from filing headers)"
+        )
+        issuers = {i.security_id: i for i in s.execute(select(SecurityIssuer)).scalars()}
+        print(
+            f"  Issuer known for {len(issuers)} of {len(securities)} securities: "
+            f"{dict(Counter(i.how for i in issuers.values()))}"
+        )
+        common_ids = [sid for sid, x in securities.items() if x.security_type == "common"]
+        print(
+            f"  Common stocks with an issuer (so SIC can be tested): {sum(1 for sid in common_ids if sid in issuers)} of {len(common_ids)}"
+        )
+        sics = defaultdict(list)
+        for r in s.execute(select(IssuerSic).order_by(IssuerSic.as_of)).scalars():
+            sics[r.security_id].append((r.as_of, r.sic))
+        for sid in sorted(sics):
+            if any(sic == "6770" for _, sic in sics[sid]):
+                print(
+                    f"    id {sid} {path(sid)} ({issuers[sid].name}): "
+                    + ", ".join(f"{sic} from {day}" for day, sic in sics[sid])
+                )
 
         print("\n5. SPLITS AND SPIN-OFFS")
         verdicts = Counter(c.verdict for c in s.execute(select(SplitCheck)).scalars())

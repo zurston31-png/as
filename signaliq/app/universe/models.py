@@ -252,3 +252,52 @@ class SpinOff(ResearchBase):
     holder_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     #: price_consistent, price_inconsistent, prices_missing
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+
+
+class SecurityIssuer(ResearchBase):
+    """The SEC company (CIK) that issued a security, and how that was established."""
+
+    __tablename__ = "security_issuers"
+
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.security_id"), primary_key=True)
+    cik: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    #: ``form25`` (delisting notice at the last trade) or ``ticker_today`` (the
+    #: ticker's holder today, accepted only if it filed while the security traded).
+    how: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class IssuerSic(ResearchBase):
+    """The issuer's SIC code as stated in the header of a filing made on ``as_of``."""
+
+    __tablename__ = "issuer_sic"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.security_id"), nullable=False, index=True
+    )
+    cik: Mapped[str] = mapped_column(String(10), nullable=False)
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    sic: Mapped[str | None] = mapped_column(String(4), nullable=True)
+
+
+class DealValue(ResearchBase):
+    """Value per share of a stock or cash-and-stock acquisition, from verified deal terms."""
+
+    __tablename__ = "deal_values"
+
+    security_id: Mapped[int] = mapped_column(ForeignKey("securities.security_id"), primary_key=True)
+    acquirer_symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cash_per_share: Mapped[float] = mapped_column(Float, nullable=False)
+    shares_per_share: Mapped[float] = mapped_column(Float, nullable=False)
+    acquirer_session: Mapped[date | None] = mapped_column(Date, nullable=True)
+    acquirer_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_last_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: ``verified``: quote found in the cached SEC document and value near the last close;
+    #: otherwise the reason it is not used (``quote_not_found``, ``no_acquirer_price``,
+    #: ``value_far_from_last_close``).
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)

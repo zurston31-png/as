@@ -128,6 +128,11 @@ class TypeVote:
     security_type: str
 
 
+def source_family(source: str) -> str:
+    """Sources from the same origin count once: every ``sec_*`` source is SEC."""
+    return "sec" if source.startswith("sec") else source
+
+
 def resolve_type(votes: Iterable[TypeVote]) -> tuple[str, str]:
     """(type, status) from independent votes. ``declared`` votes do not count."""
     counted = [v for v in votes if v.source != "declared" and v.security_type != "unknown"]
@@ -137,7 +142,7 @@ def resolve_type(votes: Iterable[TypeVote]) -> tuple[str, str]:
     if len(kinds) > 1:
         return "unknown", "conflict"
     kind = kinds.pop()
-    sources = {v.source for v in counted}
+    sources = {source_family(v.source) for v in counted}
     return kind, "confirmed" if len(sources) >= 2 else "single_source"
 
 

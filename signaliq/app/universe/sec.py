@@ -48,7 +48,7 @@ from sqlalchemy.orm import Session
 
 from app.universe.models import ExternalResponse
 
-USER_AGENT = "SignalIQ-Research universe-validation/0.2 signaliq.research@gmail.com"
+USER_AGENT = "SignalIQ-Research universe-validation/0.3 signaliq.research@gmail.com"
 BROWSE_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
 ARCHIVES = "https://www.sec.gov"
 PAUSE_SECONDS = 0.15  # about 6 requests per second; SEC allows at most 10
@@ -444,7 +444,7 @@ class CachedSec:
             return ""
         docs = [
             d
-            for d in re.findall(r'href="(/Archives/edgar/data/[^"]+\.htm)"', index)
+            for d in re.findall(r'href="(?:/ix\?doc=)?(/Archives/edgar/data/[^"]+\.htm)"', index)
             if "-index" not in d
         ]
         text = self.get(ARCHIVES + docs[0]) if docs else ""
@@ -472,8 +472,19 @@ class SecFinding:
 _REMOVAL_FORMS = ("25", "25-NSE", "25/A", "25-NSE/A")
 
 
-def find(sec: CachedSec, tickers: Sequence[str], names: Iterable[str], last: date) -> SecFinding:
-    """Match a security that last traded on ``last`` to the SEC company that delisted it then."""
+def find(
+    sec: CachedSec,
+    tickers: Sequence[str],
+    names: Iterable[str],
+    last: date,
+    extra_ciks: Iterable[str] = (),
+) -> SecFinding:
+    """Match a security that last traded on ``last`` to the SEC company that delisted it then.
+
+    ``extra_ciks`` are further candidates, for example companies whose filings wrote the
+    ticker while it traded (full-text search). Like every candidate, one is accepted only
+    on a timely delisting notice.
+    """
     before = min(last + timedelta(days=WINDOW_AFTER + 30), SCOPE_END - timedelta(days=1))
     low, high = (
         last - timedelta(days=WINDOW_BEFORE),
@@ -493,6 +504,10 @@ def find(sec: CachedSec, tickers: Sequence[str], names: Iterable[str], last: dat
             if cik not in seen:
                 seen.add(cik)
                 candidates.append(cik)
+    for cik in extra_ciks:
+        if cik not in seen:
+            seen.add(cik)
+            candidates.append(cik)
     matches = []
     for cik in candidates:
         removals_feed = sec.company(cik, before, "25")

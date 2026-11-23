@@ -66,7 +66,7 @@ def research(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def add_security(session, sid, symbol, first, last, *, status="ended", sessions=None):
+def add_security(session, sid, symbol, first, last, *, status="ended", sessions=None, price=10.0):
     days = [d for d in DAYS if first <= d <= last]
     session.add(
         Security(
@@ -95,12 +95,12 @@ def add_security(session, sid, symbol, first, last, *, status="ended", sessions=
                 security_id=sid,
                 session=d,
                 symbol=symbol,
-                open=10,
-                high=10,
-                low=10,
-                close=10,
+                open=price,
+                high=price,
+                low=price,
+                close=price,
                 volume=1000,
-                vwap=10,
+                vwap=price,
                 trade_count=5,
                 split_factor=1.0,
             )
@@ -227,9 +227,10 @@ def test_evidence_dated_2025_or_later_is_ignored(research):
 
 
 def test_a_ticker_that_trades_again_later_is_not_an_exit_loss(research):
+    # Another price level after the pause: likely another company reusing the ticker.
     with session_scope(research) as session:
         add_security(session, 1, "TESTA", DAYS[0], DAYS[100])
-        add_security(session, 2, "TESTA", DAYS[150], DAYS[-1], status="trading")
+        add_security(session, 2, "TESTA", DAYS[150], DAYS[-1], status="trading", price=45.0)
         evidence.resolve_outcomes(session, DAYS)
     with session_scope(research) as session:
         first = session.get(Security, 1)
@@ -337,3 +338,18 @@ def test_openfigi_answer_for_a_former_ticker_of_a_trading_security_is_name_check
             .count()
             == 1
         )
+
+
+def test_the_same_instrument_after_a_pause_is_a_trading_gap_not_an_exit(research):
+    with session_scope(research) as session:
+        add_security(session, 1, "TESTA", DAYS[0], DAYS[100])
+        add_security(session, 2, "TESTA", DAYS[150], DAYS[-1], status="trading", price=11.0)
+        evidence.resolve_outcomes(session, DAYS)
+    with session_scope(research) as session:
+        first = session.get(Security, 1)
+        assert (first.outcome, first.outcome_status, first.assumed_exit_value) == (
+            "trading_gap",
+            "not_an_exit",
+            None,
+        )
+        assert evidence.TRADING_GAP_MAX_SESSIONS == 250

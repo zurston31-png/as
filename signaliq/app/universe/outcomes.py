@@ -19,6 +19,10 @@ Each source contributes evidence with a category:
   says nothing about the outcome).
 * ``resumed`` - the same ticker trades again later, so the "end" may be a long
   trading halt or a reuse of the ticker by another company.
+* ``trading_gap`` - the same instrument trades again later: no delisting notice in
+  between and the price picks up where it stopped. Not an exit.
+* ``deal_terms`` - the value per share of an acquisition paid in shares, from terms
+  quoted from the SEC filing and the acquirer's price on the effective date.
 * ``fragment`` - a very short run of trades of a thinly traded instrument.
 
 Rules (written down before looking at the results):
@@ -38,7 +42,8 @@ Rules (written down before looking at the results):
 4. Failure or bankruptcy only: value 0.0, the agreed default for a confirmed
    bankruptcy or failure. Equity holders sometimes recover (old Hertz did); the
    note says so.
-5. Only ``resumed``/``fragment`` or no evidence at all: ``unresolved``, value
+5. A trading gap and no exit evidence: ``trading_gap``, status ``not_an_exit``.
+6. Only ``resumed``/``fragment`` or no evidence at all: ``unresolved``, value
    None. An unknown exit is never treated as a total loss.
 
 Status: ``confirmed`` when two independent sources support the outcome,
@@ -53,6 +58,7 @@ ACQUISITION = {"acquired_cash", "acquired_stock", "acquired_stock_and_cash", "ac
 FAILURE = {"bankruptcy", "failure"}
 REDEMPTION = {"redeemed"}
 AMBIGUOUS = {"resumed", "fragment"}
+NOT_AN_EXIT = {"trading_gap"}
 
 #: Evidence dated on or after this day is out of scope and ignored.
 SCOPE_END = date(2025, 1, 1)
@@ -66,6 +72,8 @@ class Evidence:
     detail: str
     reference: str | None = None
     cash_per_share: float | None = None
+    #: For ``deal_terms``: the acquisition kind the terms describe.
+    kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +140,18 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
                 cash.cash_per_share,
                 f"cash per share {cash.cash_per_share} ({cash.source})",
             )
+        terms = next(
+            (e for e in evidence if e.category == "deal_terms" and e.cash_per_share is not None),
+            None,
+        )
+        if terms is not None and outcome != "acquired_cash":
+            return Outcome(
+                terms.kind or outcome,
+                status,
+                terms.cash_per_share,
+                f"value {terms.cash_per_share:.4f} per share from verified terms: "
+                f"{terms.detail[:200]}",
+            )
         note = (
             "paid in acquirer shares; value needs the acquirer's price"
             if outcome != "acquired"
@@ -140,12 +160,21 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
         return Outcome(outcome, status, None, note)
     if redemptions:
         sources = {e.source for e in redemptions}
+        status = "confirmed" if len(sources) >= 2 else "single_source"
+        paid = next((e for e in redemptions if e.cash_per_share is not None), None)
+        if paid is not None:
+            return Outcome(
+                "redeemed",
+                status,
+                paid.cash_per_share,
+                f"redeemed for {paid.cash_per_share} per share ({paid.source})",
+            )
         return Outcome(
             "redeemed",
-            "confirmed" if len(sources) >= 2 else "single_source",
+            status,
             None,
-            "class redeemed or retired for cash (a SPAC returns its trust value); "
-            "amount not in the evidence: value not assumed",
+            "class redeemed or retired for cash (a SPAC returns its trust value, a fund its net "
+            "asset value); amount not in the evidence: value not assumed",
         )
     if failures:
         sources = {e.source for e in failures}
@@ -157,6 +186,14 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
             0.0,
             "total loss assumed (agreed default for a confirmed bankruptcy or failure; "
             "equity holders occasionally recover)",
+        )
+    gap = next((e for e in evidence if e.category in NOT_AN_EXIT), None)
+    if gap is not None:
+        return Outcome(
+            "trading_gap",
+            "not_an_exit",
+            None,
+            f"not an exit: {gap.detail[:200]}",
         )
     if any(e.category in AMBIGUOUS for e in evidence):
         return Outcome(
