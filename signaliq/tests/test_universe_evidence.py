@@ -27,7 +27,7 @@ from app.universe.outcomes import Evidence, resolve_outcome
         (0.124769, 36.35, 35.4, "contradicted"),
         # Real data: Top Ships 2017-06-23, 1-for-15 recorded, price up 5x (collapse on the day).
         (1 / 15, 0.16, 0.8, "magnitude_mismatch"),
-        # Real data: Hertz 2016-07-01, 1-for-15 recorded, price up 4x (spin-off of Herc the same day).
+        # Real data: Hertz 2016-07-01, 1-for-15 recorded, price up 4x (Herc spun off that day).
         (1 / 15, 11.07, 43.87, "magnitude_mismatch"),
         (10.0, 100.0, 100.0, "contradicted"),  # a 10-for-1 split the price ignores
         (2.0, None, 50.0, "no_prices"),

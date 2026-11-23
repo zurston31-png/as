@@ -10,6 +10,9 @@ Sources, each recorded as evidence with its own detail:
   exchange-traded fund, ...).
 * ``symbol_suffix`` - Nasdaq's fifth-letter convention for five-letter tickers:
   W warrant, R right, U unit, X mutual fund.
+* ``sec_form25`` - the class of security named in the SEC delisting notice
+  (Form 25 / 25-NSE) filed when the security stopped trading
+  (``app.universe.sec``).
 
 A type is ``confirmed`` when two independent sources agree, ``single_source``
 with one, ``conflict`` when sources disagree, and ``unknown`` with none. Only
@@ -29,6 +32,7 @@ TYPES = (
     "fund",
     "adr",
     "partnership",
+    "debt",
     "unknown",
 )
 #: Types the common-stock universe accepts.

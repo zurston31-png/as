@@ -3,14 +3,16 @@
 
 Downloads SIP daily bars and corporate actions for the validation batch, up to
 2024-12-31, gathers independent evidence (OpenFIGI, Wikidata, hand-entered
-corrections checked against prices) and writes everything to the SIP research
+corrections checked against prices, SEC EDGAR delisting notices and 8-Ks) and
+writes everything to the SIP research
 database (data/sip_research.db by default). The market data database and the
 Strategy A results are not read or written. Nothing is simulated.
 
     python scripts/universe_validation_batch.py [--report FILE] [--refresh]
 
-OpenFIGI and Wikidata answers are stored and reused on later runs; --refresh
-asks them again.
+OpenFIGI, Wikidata and SEC answers are stored and reused on later runs; --refresh
+asks them again. SEC requests are read-only and identify the project with a
+contact address in the User-Agent, as SEC requires.
 """
 
 import argparse
@@ -110,6 +112,10 @@ def run(settings, refresh: bool) -> dict:
                     session, tickers, refresh=refresh
                 )
             with session_scope(factory) as session:
+                facts["sec_requests"], facts["sec_failures"] = evidence.fetch_sec(
+                    session, refresh=refresh
+                )
+            with session_scope(factory) as session:
                 evidence.resolve_types(session)
                 evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
             with session_scope(factory) as session:
@@ -144,7 +150,7 @@ def report(facts: dict) -> str:
         for e in s.execute(select(TypeEvidence).order_by(TypeEvidence.id)).scalars():
             type_ev[e.security_id].append(e)
 
-        print("SIP UNIVERSE VALIDATION BATCH (v2) - research data only, no strategy, no backtest")
+        print("SIP UNIVERSE VALIDATION BATCH (v3) - research data only, no strategy, no backtest")
         print(f"Research database: {facts['database']}")
         print(
             "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
@@ -153,7 +159,7 @@ def report(facts: dict) -> str:
             "Independent sources: Alpaca corporate actions, OpenFIGI (security type), Wikidata (company records),"
         )
         print(
-            "hand-entered corrections checked against prices. SEC: paused until a contact address is provided.\n"
+            "SEC EDGAR (delisting notices and 8-Ks, read-only), hand-entered corrections checked against prices.\n"
         )
 
         print("1. BATCH")
@@ -198,6 +204,15 @@ def report(facts: dict) -> str:
             + (f": {', '.join(missing)}" if missing else "")
         )
         print(f"  Alpaca spin-off records 2016-2024: {facts.get('spin_off_records', 0)}")
+        sec_cached = s.scalar(
+            select(func.count())
+            .select_from(ExternalResponse)
+            .where(ExternalResponse.source == "sec")
+        )
+        print(
+            f"  SEC: {sec_cached} cached responses (requests this run: {facts.get('sec_requests', 0)}, "
+            f"failed: {len(facts.get('sec_failures', []))})"
+        )
 
         print("\n3. SECURITY TYPES")
         grid = Counter((x.security_type, x.type_status) for x in securities.values())
@@ -259,6 +274,38 @@ def report(facts: dict) -> str:
                     print(
                         f"    {case.symbol:6} id {sid}: {x.outcome} ({x.outcome_status}) | expected: {case.expected}"
                     )
+
+        print("\n4b. SEC CROSS-CHECK (every ended security)")
+        print(
+            "  A company is accepted only if it filed a Form 25/25-NSE between 45 days before and 90 days after"
+        )
+        print(
+            "  the last trade (before 2025). Search keys (tickers, names) only propose candidates."
+        )
+        sec_found = evidence.cached_sec_findings(s)
+        matched = {sid: f for sid, f in sec_found.items() if f.cik}
+        print(f"  Matched: {len(matched)} of {len(sec_found)}")
+        for sid, f in sorted(sec_found.items()):
+            x = securities[sid]
+            head = f"    id {sid} {path(sid)} (last trade {x.last_trade_session}): "
+            if not f.cik:
+                print(head + f"NO MATCH - {f.note}")
+                continue
+            print(
+                head
+                + f"{f.company} (CIK {f.cik}, SIC {f.sic or 'none'}{', blank check' if f.sic == '6770' else ''})"
+            )
+            for filing, n in f.notices:
+                print(
+                    f"        {filing.form} {filing.filed} {n.exchange}: '{n.class_description}', {n.rule.replace('17 CFR 240.', '')}"
+                )
+            for k in f.eight_ks:
+                print(f"        8-K {k.filed}: {k.items}")
+            if f.note:
+                print(f"        note: {f.note}")
+            print(
+                f"        -> type {x.security_type} ({x.type_status}); outcome {x.outcome} ({x.outcome_status})"
+            )
 
         print("\n5. SPLITS AND SPIN-OFFS")
         verdicts = Counter(c.verdict for c in s.execute(select(SplitCheck)).scalars())
@@ -361,7 +408,9 @@ def report(facts: dict) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python scripts/universe_validation_batch.py")
     parser.add_argument("--report", type=Path, help="also write the report to this file")
-    parser.add_argument("--refresh", action="store_true", help="ask OpenFIGI and Wikidata again")
+    parser.add_argument(
+        "--refresh", action="store_true", help="ask OpenFIGI, Wikidata and SEC again"
+    )
     args = parser.parse_args(argv)
     configure_logging("WARNING")
     text = report(run(get_settings(), args.refresh))

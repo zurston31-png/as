@@ -276,7 +276,7 @@ def test_rebuilding_securities_clears_the_evidence_that_refers_to_them(research)
 
 
 def test_openfigi_answer_for_a_former_ticker_of_a_trading_security_is_name_checked(research):
-    # Like FB -> META: OpenFIGI says FB is now an ETF (a later reuse); the security trades on as META.
+    # Like FB -> META: OpenFIGI says FB is now an ETF (a later reuse); the company trades as META.
     FakeHttp.figi = {
         "TESTF": [
             {"name": "SOME BUFFER ETF", "securityType": "ETP", "securityType2": "Mutual Fund"}

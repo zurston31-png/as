@@ -12,6 +12,9 @@ Each source contributes evidence with a category:
   ticker, the bankruptcy convention (Alpaca).
 * ``failure`` - a recorded collapse or failure (Wikidata), for example a bank
   seized by regulators.
+* ``redeemed`` - the class was redeemed or retired for cash (SEC Form 25 under
+  rule 12d2-2(a)(1)/(a)(2)); for a blank-check company (SPAC), the trust
+  liquidation. The amount is not in the notice.
 * ``delisted_no_reason`` - only the date the listing ended (supports the date,
   says nothing about the outcome).
 * ``resumed`` - the same ticker trades again later, so the "end" may be a long
@@ -20,13 +23,15 @@ Each source contributes evidence with a category:
 
 Rules (written down before looking at the results):
 
-1. Acquisition evidence and failure evidence together: ``conflict``, no value.
+1. Evidence of two different kinds of exit (acquisition, redemption, failure)
+   together: ``conflict``, no value.
 2. Acquisition only: outcome acquired. Value = cash per share when a merger
    record gives it; otherwise unknown (None) and flagged.
-3. Failure or bankruptcy only: value 0.0, the agreed default for a confirmed
+3. Redemption only: outcome redeemed, value unknown (None) and flagged.
+4. Failure or bankruptcy only: value 0.0, the agreed default for a confirmed
    bankruptcy or failure. Equity holders sometimes recover (old Hertz did); the
    note says so.
-4. Only ``resumed``/``fragment`` or no evidence at all: ``unresolved``, value
+5. Only ``resumed``/``fragment`` or no evidence at all: ``unresolved``, value
    None. An unknown exit is never treated as a total loss.
 
 Status: ``confirmed`` when two independent sources support the outcome,
@@ -39,6 +44,7 @@ from datetime import date, timedelta
 
 ACQUISITION = {"acquired_cash", "acquired_stock", "acquired_stock_and_cash", "acquired"}
 FAILURE = {"bankruptcy", "failure"}
+REDEMPTION = {"redeemed"}
 AMBIGUOUS = {"resumed", "fragment"}
 
 #: Evidence dated on or after this day is out of scope and ignored.
@@ -66,13 +72,15 @@ class Outcome:
 def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
     acquisitions = [e for e in evidence if e.category in ACQUISITION]
     failures = [e for e in evidence if e.category in FAILURE]
-    if acquisitions and failures:
+    redemptions = [e for e in evidence if e.category in REDEMPTION]
+    exits = [group for group in (acquisitions, redemptions, failures) if group]
+    if len(exits) > 1:
         return Outcome(
             "conflict",
             "conflict",
             None,
             "sources disagree: "
-            + "; ".join(f"{e.source}: {e.category}" for e in (*acquisitions, *failures)),
+            + "; ".join(f"{e.source}: {e.category}" for group in exits for e in group),
         )
     if acquisitions:
         sources = {e.source for e in acquisitions}
@@ -107,6 +115,15 @@ def resolve_outcome(evidence: Sequence[Evidence]) -> Outcome:
             else "acquired, terms unknown: value not assumed"
         )
         return Outcome(outcome, status, None, note)
+    if redemptions:
+        sources = {e.source for e in redemptions}
+        return Outcome(
+            "redeemed",
+            "confirmed" if len(sources) >= 2 else "single_source",
+            None,
+            "class redeemed or retired for cash (a SPAC returns its trust value); "
+            "amount not in the evidence: value not assumed",
+        )
     if failures:
         sources = {e.source for e in failures}
         status = "confirmed" if len(sources) >= 2 else "single_source"

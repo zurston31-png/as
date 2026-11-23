@@ -7,9 +7,12 @@ Sources (all read-only):
 * Wikidata (query.wikidata.org) - company items listed under a ticker: owners,
   parent organisations, bankruptcy and collapse events, listing end dates,
   "instance of" classes.
+* SEC EDGAR (www.sec.gov) - the delisting notice (Form 25 / 25-NSE) filed when a
+  security stopped trading: class of security, delisting rule, and 8-K filings on
+  bankruptcy or completed acquisitions (``app.universe.sec``).
 * Hand-entered corrections (``app.universe.curated``), each checked against prices.
 
-Responses from OpenFIGI and Wikidata are stored in ``external_responses`` and
+Responses from OpenFIGI, Wikidata and SEC are stored in ``external_responses`` and
 reused on later runs, so a report can be reproduced exactly; ``refresh=True``
 asks the sources again. Any evidence dated 2025 or later is ignored.
 """
@@ -25,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.config import is_valid_symbol
 from app.data.alpaca_client import AlpacaClient
-from app.universe import adjustments, outcomes, sectypes
+from app.universe import adjustments, outcomes, sec, sectypes
 from app.universe import segments as seg
 from app.universe.batch import PLAIN_TICKER
 from app.universe.curated import CURATED_SPIN_OFFS
@@ -333,6 +336,71 @@ def _shared_tickers(session: Session) -> set[str]:
     return {symbol for symbol, ids in owners.items() if len(ids) > 1}
 
 
+# =============================================================================
+# SEC
+# =============================================================================
+
+
+def _sec_search_keys(
+    session: Session, tickers: list[TickerHistory], shared: set[str]
+) -> tuple[list[str], list[str]]:
+    """(tickers newest first, company names) a security can be looked up by at SEC.
+
+    Names come from Wikidata items listed under the security's tickers at the time,
+    OpenFIGI records of its tickers and the batch's search names. They only propose
+    candidate companies; ``sec.find`` accepts one only on a timely delisting notice.
+    """
+    names = set()
+    for h in tickers:
+        names |= {row["itemLabel"]["value"] for row in _wikidata_rows(session, h, shared)}
+        names |= {
+            r.get("name") for r in _cached(session, "openfigi", h.symbol) or [] if r.get("name")
+        }
+    extra = [n for h in tickers for n in sec.SEARCH_NAMES.get(h.symbol, ())]
+    ordered = sorted(n for n in names if n.strip())
+    return [h.symbol for h in reversed(tickers)], ordered + [n for n in extra if n not in names]
+
+
+def sec_findings(session: Session, client: sec.CachedSec) -> dict[int, sec.SecFinding]:
+    """What SEC says about every ended security: matched company, notices, 8-Ks."""
+    history = defaultdict(list)
+    for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
+        history[h.security_id].append(h)
+    shared = _shared_tickers(session)
+    found = {}
+    for security in session.execute(
+        select(Security).where(Security.status == "ended").order_by(Security.security_id)
+    ).scalars():
+        symbols, names = _sec_search_keys(session, history[security.security_id], shared)
+        found[security.security_id] = sec.find(client, symbols, names, security.last_trade_session)
+    return found
+
+
+def fetch_sec(
+    session: Session, *, refresh: bool = False, sleep=time.sleep
+) -> tuple[int, list[str]]:
+    """Ask SEC about every ended security and cache the answers. Returns (requests, failures)."""
+    client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
+    try:
+        sec_findings(session, client)
+    finally:
+        client.close()
+    return client.requests, client.failures
+
+
+def cached_sec_findings(session: Session) -> dict[int, sec.SecFinding]:
+    return sec_findings(session, sec.CachedSec(session, network=False))
+
+
+def _sec_relevant(finding: sec.SecFinding, symbol: str):
+    """(type, notices about that class) of a finding, for the security traded as ``symbol``."""
+    kind = sec.notice_type([n.class_description for _, n in finding.notices], symbol)
+    relevant = [
+        (f, n) for f, n in finding.notices if sec.class_type(n.class_description, symbol) == kind
+    ]
+    return kind, relevant
+
+
 def resolve_types(session: Session) -> None:
     session.execute(delete(TypeEvidence))
     history = defaultdict(list)
@@ -345,6 +413,7 @@ def resolve_types(session: Session) -> None:
                 latest_holder[h.symbol] = (h.valid_to, security_id)
     declared = {b.symbol: b.declared_type for b in session.execute(select(BatchSymbol)).scalars()}
     shared = _shared_tickers(session)
+    sec_found = cached_sec_findings(session)
 
     def note(security, source, symbol, kind, detail):
         session.add(
@@ -419,6 +488,24 @@ def resolve_types(session: Session) -> None:
                     declared[h.symbol],
                     "declared in the batch definition (not counted)",
                 )
+        finding = sec_found.get(security.security_id)
+        if finding is not None and finding.notices:
+            kind, relevant = _sec_relevant(finding, security.last_symbol)
+            issuer = f"{finding.company}, CIK {finding.cik}, SIC {finding.sic or 'none'}" + (
+                " (blank check)" if finding.sic == "6770" else ""
+            )
+            if kind:
+                votes.append(sectypes.TypeVote("sec_form25", kind))
+            for filing, notice in finding.notices:
+                used = (filing, notice) in relevant and kind is not None
+                note(
+                    security,
+                    "sec_form25" if used else "sec_form25_other",
+                    security.last_symbol,
+                    sec.class_type(notice.class_description, security.last_symbol) or "unknown",
+                    f"{filing.form} {filing.filed}: class '{notice.class_description}' ({issuer})"
+                    + ("" if used else "; another class or unclear, not counted"),
+                )
         security.security_type, security.type_status = sectypes.resolve_type(votes)
     session.flush()
 
@@ -439,6 +526,8 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
     for security_id, items in history.items():
         for h in items:
             segments_by_symbol[h.symbol].append((h.valid_from, h.valid_to, security_id))
+
+    sec_found = cached_sec_findings(session)
 
     def sessions_after(day: date, count: int) -> date:
         later = [s for s in calendar if s > day]
@@ -508,6 +597,10 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
         for h in history[security.security_id]:
             rows = _wikidata_rows(session, h, shared)
             found += outcomes.wikidata_evidence(rows, last)
+        # SEC: the delisting notice for this class and 8-Ks on bankruptcy or a closed merger.
+        finding = sec_found.get(security.security_id)
+        if finding is not None and finding.cik:
+            found += sec_evidence(finding, security.last_symbol)
         # The same ticker trading again later, and very short runs.
         if any(
             start > last
@@ -546,6 +639,43 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
         security.outcome, security.outcome_status = result.outcome, result.status
         security.assumed_exit_value, security.exit_assumption = result.assumed_value, result.note
     session.flush()
+
+
+def sec_evidence(finding: sec.SecFinding, symbol: str) -> list[outcomes.Evidence]:
+    """Exit evidence from a matched SEC company (all filings are before 2025 by construction)."""
+    found = []
+    _, relevant = _sec_relevant(finding, symbol)
+    for filing, notice in relevant:
+        category, meaning = sec.rule_meaning(notice.rule)
+        reason = f"; notice text: {notice.reason_text[:160]}" if notice.reason_text else ""
+        found.append(
+            outcomes.Evidence(
+                "sec",
+                category,
+                filing.filed,
+                f"{filing.form} filed {filing.filed} by {notice.exchange or 'unknown'}: "
+                f"class '{notice.class_description}', {meaning}{reason}",
+                filing.href[-128:],
+            )
+        )
+    acquisition = next(
+        (k for k in finding.eight_ks if sec.eight_k_category(k.items) == "acquired"), None
+    )
+    for k in finding.eight_ks:
+        kind = sec.eight_k_category(k.items)
+        cash, sentence = finding.cash if k is acquisition else (None, "")
+        found.append(
+            outcomes.Evidence(
+                "sec",
+                "acquired_cash" if cash is not None else kind,
+                k.filed,
+                f"8-K filed {k.filed} ({finding.company}), {k.items}"
+                + (f"; terms: {sentence[:200]}" if cash is not None else ""),
+                k.href[-128:],
+                cash,
+            )
+        )
+    return found
 
 
 def plain_tickers(session: Session) -> list[str]:
