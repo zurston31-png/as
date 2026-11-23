@@ -345,13 +345,26 @@ def test_the_blank_check_period_ends_at_the_de_spac_ticker_change():
     assert blank_check_on(late, renames, date(2021, 10, 20))
     assert not blank_check_on(late, renames, date(2021, 10, 21))
     assert not blank_check_on(late, renames, date(2022, 6, 1))
-    # SIC changes before the merger closes (CFII -> View style): still a SPAC until the change.
+    # SIC changes before the merger closes (CFII -> View style): the SIC on file decides,
+    # and a rename still to come is not known (no look-ahead).
     early = [(date(2020, 5, 18), "6770"), (date(2021, 1, 4), "3211")]
-    assert blank_check_on(early, [date(2021, 3, 9)], date(2021, 2, 1))
-    assert not blank_check_on(early, [date(2021, 3, 9)], date(2021, 3, 9))
+    assert blank_check_on(early, [date(2021, 3, 9)], date(2020, 12, 31))
+    assert not blank_check_on(early, [date(2021, 3, 9)], date(2021, 2, 1))
+    assert blank_check_on(early, [], date(2020, 12, 31)) == blank_check_on(
+        early, [date(2021, 3, 9)], date(2020, 12, 31)
+    )
     # No ticker change: the SIC on file decides; nothing before the first 6770 filing.
     liquidated = [(date(2021, 7, 20), "6770")]
     assert not blank_check_on(liquidated, [], date(2021, 7, 19))
     assert blank_check_on(liquidated, [], date(2024, 1, 2))
     # A ticker change before the company became a blank check does not end anything.
     assert blank_check_on(liquidated, [date(2019, 1, 2)], date(2024, 1, 2))
+
+
+def test_blank_check_answers_do_not_depend_on_later_renames():
+    from app.universe.evidence import blank_check_on
+
+    changes = [(date(2020, 6, 1), "6770"), (date(2021, 1, 4), "3211"), (date(2021, 5, 1), "6770")]
+    future = [date(2022, 3, 1)]
+    for day in (date(2020, 7, 1), date(2021, 2, 1), date(2021, 6, 1), date(2022, 2, 1)):
+        assert blank_check_on(changes, future, day) == blank_check_on(changes, [], day)

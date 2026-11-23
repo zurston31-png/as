@@ -1090,20 +1090,21 @@ def store_issuers(session: Session) -> None:
 def blank_check_on(changes: list[tuple[date, str | None]], renames: list[date], day: date) -> bool:
     """Whether the issuer counts as a blank-check company on ``day``.
 
-    It does from its first filing with SIC 6770 until the security's first ticker change
-    after that (the de-SPAC: CF Finance Acquisition II -> View). SEC's SIC can trail the
-    merger by months (BOWX -> WeWork kept 6770 until August 2022) or lead it (CFII's SIC
-    changed in January 2021, the merger closed in March), so the ticker change, known on
-    the day it happens, ends the period. Without a ticker change, the SIC on file decides.
-    Only filings made and ticker changes seen on or before ``day`` are used.
+    It does while the SIC on file is 6770, and stops at the security's first ticker change
+    after its first 6770 filing (the de-SPAC: BOWX -> WeWork), because SEC's SIC can trail
+    the merger by months (WeWork kept 6770 until August 2022). Only filings made and ticker
+    changes seen on or before ``day`` are used: a rename still to come is never known. So a
+    SPAC whose SIC changed before the merger closed (CF Finance Acquisition II: 3211 from
+    January 2021, merger in March) counts as operating from the SIC change, as SEC's
+    record then said.
     """
-    first = next((d for d, sic in sorted(changes) if sic == sh.BLANK_CHECK_SIC), None)
+    first = next(
+        (d for d, sic in sorted(changes, key=lambda c: c[0]) if sic == sh.BLANK_CHECK_SIC), None
+    )
     if first is None or first > day:
         return False
     if any(first <= r <= day for r in renames):
         return False
-    if any(r > first for r in renames):
-        return True  # still under the SPAC ticker, whatever the SIC says meanwhile
     return sh.sic_on(changes, day) == sh.BLANK_CHECK_SIC
 
 
