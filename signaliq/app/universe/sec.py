@@ -254,6 +254,29 @@ def looks_like_fund(company: str) -> bool:
     return bool(re.search(r"\b(fund|etf|etn)\b", company, re.I))
 
 
+_SUFFIXES = (
+    (r"\bcorporation\b", "corp"),
+    (r"\bincorporated\b", "inc"),
+    (r"\bcompany\b", "co"),
+    (r"\blimited\b", "ltd"),
+)
+
+
+def search_variants(name: str) -> list[str]:
+    """The name, plus the form EDGAR's prefix search is likelier to match.
+
+    EDGAR matches the start of its conformed name ("LINKEDIN CORP"), so a share-class
+    tail ("LINKEDIN CORP - A") or a spelled-out suffix ("LinkedIn Corporation") finds
+    nothing. Candidates found this way still need a timely delisting notice.
+    """
+    text = name.lower()
+    text = re.sub(r"\s+-\s+[a-z]$|\s+(class|cl|series)\s+[a-z]$", "", text)
+    for pattern, short in _SUFFIXES:
+        text = re.sub(pattern, short, text)
+    text = " ".join(re.sub(r"[.,]", " ", text).split())
+    return [name] if text == name.lower() else [name, text]
+
+
 def rule_meaning(rule: str) -> tuple[str, str]:
     """(category for exit evidence, plain-language meaning) of a 12d2-2 provision."""
     compact = rule.replace(" ", "").lower()
@@ -464,7 +487,8 @@ def find(sec: CachedSec, tickers: Sequence[str], names: Iterable[str], last: dat
         if company is not None and company.cik not in seen:
             seen.add(company.cik)
             candidates.append(company.cik)
-    for name in names:
+    keys = list(dict.fromkeys(v for name in names for v in search_variants(name)))
+    for name in keys:
         for _, cik in sec.search(name)[:MAX_CANDIDATES_PER_NAME]:
             if cik not in seen:
                 seen.add(cik)

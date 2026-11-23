@@ -524,3 +524,10 @@ def test_a_funds_common_shares_do_not_count_as_common_stock(research, monkeypatc
         assert session.get(Security, 1).type_status == "unknown"
         assert sec.looks_like_fund("Goldman Sachs MLP Income Opportunities Fund")
         assert not sec.looks_like_fund("Fundamental Testing Inc")
+
+
+def test_search_variants_match_edgar_conformed_names():
+    assert sec.search_variants("LINKEDIN CORP - A") == ["LINKEDIN CORP - A", "linkedin corp"]
+    assert sec.search_variants("LinkedIn Corporation") == ["LinkedIn Corporation", "linkedin corp"]
+    assert sec.search_variants("Express, Inc.") == ["Express, Inc.", "express inc"]
+    assert sec.search_variants("monsanto co /new/") == ["monsanto co /new/"]
