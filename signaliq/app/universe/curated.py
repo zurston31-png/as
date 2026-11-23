@@ -280,6 +280,27 @@ CURATED_FACTS: tuple[CuratedFact, ...] = (
         "price, so a holder lost that across the gap.",
     ),
     CuratedFact(
+        "YGF",
+        date(2024, 2, 8),
+        None,
+        "delisted_no_reason",
+        date(2024, 4, 9),
+        (
+            SecQuote(
+                f"{SEC}/1875496/000135445724000260/ygfdelistreason.txt",
+                "no longer qualified for listing on the Exchange pursuant to Listing Rules "
+                "5250(a)(1) and 5250(c)(1)",
+            ),
+            SecQuote(
+                f"{SEC}/1875496/000135445724000260/ygfdelistreason.txt",
+                "The Company securities were suspended on March 26, 2024",
+            ),
+        ),
+        "YanGuFang: Nasdaq delisted the shares under rules 5250(a)(1) (information requested by "
+        "Nasdaq) and 5250(c)(1) (periodic reports not filed); suspended 2024-03-26. Why the company "
+        "stopped reporting, and what shareholders got, is not known: no outcome or value assumed.",
+    ),
+    CuratedFact(
         "FRC",
         date(2023, 4, 28),
         None,

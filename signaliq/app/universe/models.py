@@ -256,6 +256,30 @@ class SpinOff(ResearchBase):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
 
 
+class SegmentLink(ResearchBase):
+    """A decision to treat two segments of one ticker as one security across a trading gap.
+
+    Derived on every run from the evidence recorded here; the ticker bars and segments
+    are not changed. Rejected candidates are recorded too, with the reason.
+    """
+
+    __tablename__ = "segment_links"
+
+    link_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    earlier_last: Mapped[date] = mapped_column(Date, nullable=False)
+    later_first: Mapped[date] = mapped_column(Date, nullable=False)
+    gap_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    close_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_after: Mapped[float | None] = mapped_column(Float, nullable=True)
+    split_ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    issuer_before: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    issuer_after: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    #: ``merged`` or ``kept_separate``.
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class SecurityIssuer(ResearchBase):
     """The SEC company (CIK) that issued a security, and how that was established."""
 

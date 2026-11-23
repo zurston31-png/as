@@ -21,6 +21,7 @@ import re
 import sys
 from collections import Counter, defaultdict
 from contextlib import redirect_stdout
+from itertools import pairwise
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,6 +47,7 @@ from app.universe.models import (
     Security,
     SecurityBar,
     SecurityIssuer,
+    SegmentLink,
     SpinOff,
     SplitCheck,
     TickerBar,
@@ -54,6 +56,7 @@ from app.universe.models import (
 )
 
 RULE = MembershipRule()
+MAX_MERGE_PASSES = 4
 MAX_DISCOVERY_ROUNDS = 6
 
 
@@ -107,37 +110,50 @@ def run(settings, refresh: bool) -> dict:
             with session_scope(factory) as session:
                 symbols = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
                 p.store_ticker_bars(session, p.fetch_literal_bars(client, symbols))
-            with session_scope(factory) as session:
-                assembled = p.assemble(session)
-                p.store_securities(session, assembled)
-                p.store_security_bars(session, assembled)
-                facts["fillers"] = assembled.fillers_by_symbol
-                facts["entity_check"] = p.attach_alpaca_adjusted(session, client, settings)
-            with session_scope(factory) as session:
-                evidence.apply_price_adjustments(session, client, p.utc_window)
-            with session_scope(factory) as session:
-                tickers = evidence.plain_tickers(session)
-                facts["openfigi_requests"] = evidence.fetch_openfigi(
-                    session, tickers, refresh=refresh
-                )
-            with session_scope(factory) as session:
-                facts["wikidata_requests"], facts["wikidata_missing"] = evidence.fetch_wikidata(
-                    session, tickers, refresh=refresh
-                )
-            with session_scope(factory) as session:
-                facts["sec_requests"], facts["sec_failures"] = evidence.fetch_sec(
-                    session, refresh=refresh
-                )
-            with session_scope(factory) as session:
-                facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
-                    session, refresh=refresh
-                )
-                evidence.store_issuers(session)
-            with session_scope(factory) as session:
-                evidence.value_deals(session, client, p.utc_window)
-            with session_scope(factory) as session:
-                evidence.resolve_types(session)
-                evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
+                # Trading-gap merges are derived on every run, from no stored links.
+                session.execute(delete(SegmentLink))
+            # Identity and evidence are built, then trading gaps decided from that evidence;
+            # securities are rebuilt with the merges until no new merge appears.
+            facts["merge_passes"] = 0
+            for _pass in range(MAX_MERGE_PASSES):
+                facts["merge_passes"] += 1
+                with session_scope(factory) as session:
+                    assembled = p.assemble(session)
+                    p.store_securities(session, assembled)
+                    p.store_security_bars(session, assembled)
+                    facts["fillers"] = assembled.fillers_by_symbol
+                    facts["entity_check"] = p.attach_alpaca_adjusted(session, client, settings)
+                with session_scope(factory) as session:
+                    evidence.apply_price_adjustments(session, client, p.utc_window)
+                if _pass == 0:
+                    with session_scope(factory) as session:
+                        tickers = evidence.plain_tickers(session)
+                        facts["openfigi_requests"] = evidence.fetch_openfigi(
+                            session, tickers, refresh=refresh
+                        )
+                    with session_scope(factory) as session:
+                        facts["wikidata_requests"], facts["wikidata_missing"] = (
+                            evidence.fetch_wikidata(session, tickers, refresh=refresh)
+                        )
+                with session_scope(factory) as session:
+                    facts["sec_requests"], facts["sec_failures"] = evidence.fetch_sec(
+                        session, refresh=refresh
+                    )
+                with session_scope(factory) as session:
+                    facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
+                        session, refresh=refresh
+                    )
+                    evidence.store_issuers(session)
+                with session_scope(factory) as session:
+                    evidence.value_deals(session, client, p.utc_window)
+                with session_scope(factory) as session:
+                    evidence.resolve_types(session)
+                    evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
+                with session_scope(factory) as session:
+                    new = evidence.decide_gap_links(session)
+                    if not any(row.decision == "merged" for row in new):
+                        break
+            facts["merges_stable"] = not any(row.decision == "merged" for row in new)
             with session_scope(factory) as session:
                 facts["decisions"] = p.decide_membership(session, RULE)
     finally:
@@ -170,7 +186,7 @@ def report(facts: dict) -> str:
         for e in s.execute(select(TypeEvidence).order_by(TypeEvidence.id)).scalars():
             type_ev[e.security_id].append(e)
 
-        print("SIP UNIVERSE VALIDATION BATCH (v4) - research data only, no strategy, no backtest")
+        print("SIP UNIVERSE VALIDATION BATCH (v5) - research data only, no strategy, no backtest")
         print(f"Research database: {facts['database']}")
         print(
             "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
@@ -309,6 +325,11 @@ def report(facts: dict) -> str:
                 value = "none" if x.assumed_exit_value is None else x.assumed_exit_value
                 print(
                     f"    id {sid} {path(sid)} (last trade {x.last_trade_session}): {x.outcome}, value {value} [{x.value_basis}]"
+                    + (
+                        "  LOWER CONFIDENCE: one source"
+                        if x.outcome_status == "single_source"
+                        else ""
+                    )
                 )
                 for e in exit_ev[sid]:
                     print(f"        [{e.source}] {e.category}: {e.detail[:140]}")
@@ -440,6 +461,24 @@ def report(facts: dict) -> str:
                     f"    id {sid} {path(sid)} ({issuers[sid].name}): "
                     + ", ".join(f"{sic} from {day}" for day, sic in sics[sid])
                 )
+
+        print("\n4f. TRADING-GAP MERGES (same ticker after a pause: one security or two?)")
+        print(
+            f"  Passes until stable: {facts.get('merge_passes')}; stable: {facts.get('merges_stable')}"
+        )
+        links = list(
+            s.execute(
+                select(SegmentLink).order_by(SegmentLink.symbol, SegmentLink.earlier_last)
+            ).scalars()
+        )
+        print(
+            f"  Candidates: {len(links)}; merged {sum(1 for r in links if r.decision == 'merged')}, "
+            f"kept separate {sum(1 for r in links if r.decision == 'kept_separate')}"
+        )
+        for r in links:
+            print(
+                f"    {r.decision:13} {r.symbol:6} {r.earlier_last} -> {r.later_first} ({r.gap_sessions} sessions): {r.reason[:170]}"
+            )
 
         print("\n5. SPLITS AND SPIN-OFFS")
         verdicts = Counter(c.verdict for c in s.execute(select(SplitCheck)).scalars())
@@ -709,6 +748,134 @@ def report(facts: dict) -> str:
         )
         print(
             "    (a type is not a price or an outcome, but a later reclassification would be applied retroactively)."
+        )
+        print(
+            "    Trading-gap merges use the fact that trading resumed (later data) to decide identity only; a merged"
+        )
+        print(
+            "    security's bars up to any date are the same as before the merge, and the recompute tests above hold."
+        )
+
+        print("\n9. DUPLICATE-SECURITY AUDIT")
+        owners = defaultdict(set)
+        for bar in s.execute(
+            select(SecurityBar.symbol, SecurityBar.session, SecurityBar.security_id)
+        ).all():
+            owners[(bar[0], bar[1])].add(bar[2])
+        overlaps = {k: v for k, v in owners.items() if len(v) > 1}
+        print(f"  Ticker-days held by more than one security: {len(overlaps)}")
+        link_keys = {(r.symbol, r.earlier_last, r.later_first) for r in links}
+        successors = []
+        for sid, items in history.items():
+            tail = items[-1]
+            later = sorted(
+                (h.valid_from, osid)
+                for osid in history
+                for h in history[osid]
+                if osid != sid and h.symbol == tail.symbol and h.valid_from > tail.valid_to
+            )
+            if later:
+                successors.append((tail.symbol, tail.valid_to, later[0][0], sid, later[0][1]))
+        undocumented = [x for x in successors if (x[0], x[1], x[2]) not in link_keys]
+        print(
+            f"  Same-ticker successions between two securities: {len(successors)}; each with a recorded decision: "
+            f"{len(successors) - len(undocumented)}"
+            + "".join(
+                f"\n    UNDOCUMENTED {a} {b} -> {c} (id {d} -> id {e})"
+                for a, b, c, d, e in undocumented
+            )
+        )
+        kept = [r for r in links if r.decision == "kept_separate"]
+        print(
+            f"  Kept separate, with the reason (genuinely different listings): {len(kept)} (listed in 4f)"
+        )
+        by_cik = defaultdict(list)
+        for i in issuers.values():
+            by_cik[i.cik].append(i.security_id)
+        suspects = []
+        for cik, ids in by_cik.items():
+            ids = sorted(ids, key=lambda k: securities[k].first_session)
+            for a, b in pairwise(ids):
+                xa, xb = securities[a], securities[b]
+                if (
+                    xa.security_type == xb.security_type
+                    and xb.first_session > xa.last_trade_session
+                ):
+                    gap = len(trading_days(xa.last_trade_session, xb.first_session)) - 2
+                    suspects.append((cik, a, b, gap))
+        print(
+            f"  Same issuer and same type, one after the other (could be one security): {len(suspects)}"
+            + "".join(
+                f"\n    CIK {c}: id {a} {path(a)} (to {securities[a].last_trade_session}) and id {b} {path(b)} "
+                f"(from {securities[b].first_session}), {g} sessions apart"
+                for c, a, b, g in suspects
+            )
+        )
+
+        print("\n10. EXIT-VALUE AUDIT (no value without evidence)")
+        deals = {d.security_id: d for d in s.execute(select(DealValue)).scalars()}
+        problems = []
+
+        def numbers(text):
+            return {float(n) for n in re.findall(r"(?<![\w.])\d+(?:\.\d+)?", text or "")}
+
+        for sid, x in sorted(ended.items()):
+            v = x.assumed_exit_value
+            if v is None:
+                if x.value_basis not in (None, "none"):
+                    problems.append((sid, "no value but a basis"))
+                continue
+            if x.value_basis == "assumed_zero":
+                if v != 0.0 or not any(
+                    e.category in ("bankruptcy", "failure") for e in exit_ev[sid]
+                ):
+                    problems.append((sid, "assumed zero without a bankruptcy or failure record"))
+            elif x.value_basis == "deal_terms":
+                d = deals.get(sid)
+                if (
+                    d is None
+                    or d.status != "verified"
+                    or d.value is None
+                    or abs(d.value - v) > 1e-9
+                ):
+                    problems.append((sid, "deal value without verified terms"))
+            elif x.value_basis == "stated_cash":
+                if not any(abs(n - v) < 1e-9 for e in exit_ev[sid] for n in numbers(e.detail)):
+                    problems.append((sid, f"cash {v} not stated in any evidence"))
+            else:
+                problems.append((sid, f"unknown basis {x.value_basis}"))
+        valued = [x for x in ended.values() if x.assumed_exit_value is not None]
+        print(
+            f"  Ended securities with a value: {len(valued)}; each traced to its evidence: {len(valued) - len(problems)}"
+        )
+        for sid, why in problems:
+            print(f"    PROBLEM id {sid} {path(sid)}: {why}")
+        print(
+            f"  Values by basis: {dict(Counter(x.value_basis for x in valued))}; assumed zero is a modelling assumption,"
+        )
+        print(
+            "  not an observed recovery. No value is assumed for: "
+            + ", ".join(
+                f"{path(sid)} ({x.outcome})"
+                for sid, x in sorted(ended.items())
+                if x.assumed_exit_value is None and x.outcome != "trading_gap"
+            )
+        )
+
+        print("\n11. CONFIDENCE OF OUTCOMES")
+        conf = Counter(x.outcome_status for x in ended.values())
+        print(
+            f"  Two independent sources: {conf.get('confirmed', 0)}; LOWER CONFIDENCE, one source: {conf.get('single_source', 0)}; "
+            f"not an exit: {conf.get('not_an_exit', 0)}; unresolved: {conf.get('unresolved', 0)}; conflict: {conf.get('conflict', 0)}"
+        )
+        one = sorted(sid for sid, x in ended.items() if x.outcome_status == "single_source")
+        print(
+            "  One-source outcomes: "
+            + ", ".join(f"{path(sid)} ({securities[sid].outcome})" for sid in one)
+        )
+        print(
+            "  Members that later ended, by confidence: "
+            f"{dict(Counter(securities[sid].outcome_status for sid in ended_members))}"
         )
     engine.dispose()
     return out.getvalue()

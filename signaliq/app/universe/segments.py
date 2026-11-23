@@ -84,6 +84,20 @@ class NameChange:
     process_date: date
 
 
+@dataclass(frozen=True)
+class GapLink:
+    """Two segments of one ticker that are the same security across a trading gap.
+
+    Decided from evidence (``app.universe.evidence.decide_gap_links``) and recorded with
+    it; the segments themselves are kept as they are.
+    """
+
+    link_id: str
+    symbol: str
+    earlier_last: date
+    later_first: date
+
+
 @dataclass
 class Chain:
     """One security: segments in time order, and the events that joined them."""
@@ -150,7 +164,9 @@ def _near(day: date, event_day: date, limit: int) -> bool:
 
 
 def build_chains(
-    segments_by_symbol: Mapping[str, Sequence[Segment]], name_changes: Iterable[NameChange]
+    segments_by_symbol: Mapping[str, Sequence[Segment]],
+    name_changes: Iterable[NameChange],
+    gap_links: Iterable[GapLink] = (),
 ) -> list[Chain]:
     """Link segments by rename events and return one chain per security.
 
@@ -163,6 +179,19 @@ def build_chains(
     """
     successor: dict[tuple[str, date], tuple[tuple[str, date], str]] = {}
     has_predecessor: set[tuple[str, date]] = set()
+    # Trading gaps first: the same ticker resuming is the strongest kind of link, and
+    # each was decided from evidence beforehand. A link whose segments are missing or
+    # already linked is ignored.
+    for link in sorted(gap_links, key=lambda g: (g.symbol, g.earlier_last)):
+        here = segments_by_symbol.get(link.symbol, ())
+        old = next((s for s in here if s.last_session == link.earlier_last), None)
+        new = next((s for s in here if s.first_session == link.later_first), None)
+        if old is None or new is None or old.key in successor or new.key in has_predecessor:
+            continue
+        if new.first_session <= old.last_session:
+            continue
+        successor[old.key] = (new.key, link.link_id)
+        has_predecessor.add(new.key)
     for event in sorted(name_changes, key=lambda e: (e.process_date, e.event_id)):
         if event.old_symbol == event.new_symbol:
             continue

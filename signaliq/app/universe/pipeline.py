@@ -321,7 +321,15 @@ def assemble(session: Session) -> Assembled:
         ).scalars()
         if e.old_symbol and e.new_symbol and e.process_date
     ]
-    return Assembled(seg.build_chains(segments, renames), fillers, segments)
+    from app.universe.models import SegmentLink  # derived each run, read here
+
+    gaps = [
+        seg.GapLink(row.link_id, row.symbol, row.earlier_last, row.later_first)
+        for row in session.execute(
+            select(SegmentLink).where(SegmentLink.decision == "merged")
+        ).scalars()
+    ]
+    return Assembled(seg.build_chains(segments, renames, gaps), fillers, segments)
 
 
 def classify_exit(chain: seg.Chain, events: list[CorporateAction], data_end_sessions: list[date]):

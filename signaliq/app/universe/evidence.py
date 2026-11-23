@@ -50,6 +50,7 @@ from app.universe.models import (
     Security,
     SecurityBar,
     SecurityIssuer,
+    SegmentLink,
     SpinOff,
     SplitCheck,
     TickerHistory,
@@ -697,28 +698,7 @@ def resolve_outcomes(session: Session, calendar: list[date]) -> None:
             start, sid = later[0]
             gap = seg.sessions_between(last, start)
             before, after = closes.get((security.security_id, last)), closes.get((sid, start))
-            # Splits recorded during the gap (also under a temporary ticker, like SCPXD for
-            # Scorpius's 1-for-200 reverse split) change the price the instrument resumes at.
-            interim = {symbol} | {
-                e.new_symbol
-                for e in events
-                if e.action_type == "name_change"
-                and e.old_symbol == symbol
-                and e.process_date
-                and last < e.process_date <= start
-            }
-            ratio = 1.0
-            for e in events:
-                when = e.ex_date or e.process_date
-                if (
-                    e.action_type in ("forward_split", "reverse_split", "unit_split")
-                    and e.symbol in interim
-                    and when
-                    and last < when <= start
-                    and e.new_rate
-                    and e.old_rate
-                ):
-                    ratio *= e.new_rate / e.old_rate
+            ratio = gap_split_ratio(events, symbol, last, start)
             if before:
                 before = before / ratio
             low, high = TRADING_GAP_PRICE_RATIO
@@ -1033,25 +1013,51 @@ def issuer_records(
 ) -> list[tuple[int, str, str, str, list[tuple[date, str | None]]]]:
     """(security id, CIK, name, how, SIC points) for every security whose issuer is known.
 
-    An ended security's issuer is the company that filed its delisting notice. A security
-    still trading at the end of 2024 takes the ticker's holder in SEC's ticker list, only
-    if that company filed something while the security traded under the ticker.
+    In order of preference:
+
+    1. ``form25``: the company that filed the delisting notice at the last trade.
+    2. ``ticker_today``: for a security still trading at the end of 2024, the holder in
+       SEC's ticker list of any of its tickers (newest first), only if that company filed
+       something while the security traded under that ticker.
+    3. ``full_text``: a company whose own filings name the ticker as its own ("Expro Group
+       (NYSE: XPRO)") while the security traded under it.
+
+    Identity only: SIC is then read point in time from that company's filing headers.
     """
     today = _ticker_today(client)
+    history = defaultdict(list)
+    for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
+        history[h.security_id].append(h)
     out = []
     for security in session.execute(select(Security).order_by(Security.security_id)).scalars():
         finding = sec_found.get(security.security_id)
+        tickers = list(reversed(history[security.security_id]))
+        found = None
         if finding is not None and finding.cik:
-            cik, name, how = finding.cik, finding.company or "", "form25"
-        elif security.status != "ended" and security.last_symbol in today:
-            cik, name = today[security.last_symbol]
-            company = sh.submissions(client, cik)
-            filed = [d for _, d, _ in (company.filings if company else ())]
-            if not any(security.first_session <= d <= security.last_trade_session for d in filed):
-                continue
-            how = "ticker_today"
-        else:
+            found = (finding.cik, finding.company or "", "form25")
+        if found is None and security.status != "ended":
+            for h in tickers:
+                if h.symbol not in today:
+                    continue
+                cik, name = today[h.symbol]
+                company = sh.submissions(client, cik)
+                filed = [d for _, d, _ in (company.filings if company else ())]
+                if any(h.valid_from <= d <= h.valid_to for d in filed):
+                    found = (cik, name, "ticker_today")
+                    break
+        if found is None:
+            for h in tickers:
+                candidates = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
+                for cik in sh.ranked_candidates(candidates):
+                    confirmed = sh.confirm_writer(client, candidates[cik], h.symbol)
+                    if confirmed:
+                        found = (cik, confirmed[0].name, "full_text")
+                        break
+                if found:
+                    break
+        if found is None:
             continue
+        cik, name, how = found
         points = sh.sic_history(
             client, cik, security.first_session - timedelta(days=365), security.last_trade_session
         )
@@ -1123,3 +1129,162 @@ def blank_check_exclusions(session: Session):
         return lambda day: "blank_check_company" if blank_check_on(changes, changed, day) else None
 
     return {sid: test(sorted(c), renames.get(sid, [])) for sid, c in points.items()}
+
+
+# =============================================================================
+# Trading gaps: one security, not several
+# =============================================================================
+
+
+def gap_split_ratio(events, symbol: str, last: date, start: date) -> float:
+    """Product of split ratios recorded between ``last`` and ``start`` for the ticker.
+
+    Includes splits recorded under a temporary ticker it was renamed to in between
+    (Scorpius: SCPX -> SCPXD, 1-for-200, back to SCPX).
+    """
+    interim = {symbol} | {
+        e.new_symbol
+        for e in events
+        if e.action_type == "name_change"
+        and e.old_symbol == symbol
+        and e.process_date
+        and last < e.process_date <= start
+    }
+    ratio = 1.0
+    for e in events:
+        when = e.ex_date or e.process_date
+        if (
+            e.action_type in ("forward_split", "reverse_split", "unit_split")
+            and e.symbol in interim
+            and when
+            and last < when <= start
+            and e.new_rate
+            and e.old_rate
+        ):
+            ratio *= e.new_rate / e.old_rate
+    return ratio
+
+
+EXIT_CATEGORIES = outcomes.ACQUISITION | outcomes.FAILURE | outcomes.REDEMPTION
+
+
+def decide_gap_links(session: Session) -> list[SegmentLink]:
+    """Decide, with reasons, which same-ticker segments are one security across a gap.
+
+    For each security whose last segment is followed later by another segment of the
+    same ticker that starts a different security, the two are the same security only if
+    all of these hold:
+
+    1. the gap is at most ``TRADING_GAP_MAX_SESSIONS`` sessions;
+    2. no delisting notice for the earlier security was filed before trading resumed;
+    3. no exit is recorded for it before trading resumed (an Alpaca merger, a bankruptcy
+       or merger 8-K, a curated SEC fact such as a fund liquidation);
+    4. the price resumes within ``TRADING_GAP_PRICE_RATIO`` of where it stopped, after
+       any split recorded in the gap, or SEC filings quoted in a curated fact say the
+       same shares resumed (Scorpius);
+    5. when both issuers are known, they are the same company.
+
+    Merges decided in an earlier pass are kept (their segments are now one security and
+    are no longer candidates); rejected candidates are decided afresh. Returns the new
+    rows: merged or kept separate, each with its reason.
+    """
+    session.execute(delete(SegmentLink).where(SegmentLink.decision == "kept_separate"))
+    history: dict[int, list[TickerHistory]] = defaultdict(list)
+    for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
+        history[h.security_id].append(h)
+    events = list(session.execute(select(CorporateAction)).scalars())
+    closes = {
+        (b.security_id, b.session): b.close for b in session.execute(select(SecurityBar)).scalars()
+    }
+    issuers = {i.security_id: i.cik for i in session.execute(select(SecurityIssuer)).scalars()}
+    sec_found = cached_sec_findings(session)
+    facts = curated_facts(session)
+    by_symbol: dict[str, list[tuple[date, int, bool]]] = defaultdict(list)
+    for sid, items in history.items():
+        for index, h in enumerate(items):
+            by_symbol[h.symbol].append((h.valid_from, sid, index == 0))
+    rows = []
+    for sid, items in sorted(history.items()):
+        tail = items[-1]
+        symbol, last = tail.symbol, tail.valid_to
+        later = sorted(
+            (start, other, head) for start, other, head in by_symbol[symbol] if start > last
+        )
+        if not later:
+            continue
+        start, other, head = later[0]
+        gap = seg.sessions_between(last, start)
+        ratio = gap_split_ratio(events, symbol, last, start)
+        before = closes.get((sid, last))
+        after = closes.get((other, start))
+        reasons = []
+        if not head:
+            reasons.append("the later segment continues another security (already linked)")
+        if gap > TRADING_GAP_MAX_SESSIONS:
+            reasons.append(f"gap of {gap} sessions is longer than {TRADING_GAP_MAX_SESSIONS}")
+        finding = sec_found.get(sid)
+        if finding is not None:
+            for filing, _notice in finding.notices:
+                if filing.filed < start:
+                    reasons.append(f"{filing.form} delisting notice filed {filing.filed}")
+            for k in finding.eight_ks:
+                kind = sec.eight_k_category(k.items)
+                if kind and last - timedelta(days=5) <= k.filed < start:
+                    reasons.append(f"8-K ({kind}) filed {k.filed}")
+        for e in events:
+            if (
+                e.acquiree_symbol == symbol
+                and e.action_type in ("cash_merger", "stock_merger", "stock_and_cash_merger")
+                and e.process_date
+                and last <= e.process_date < start
+            ):
+                reasons.append(f"Alpaca {e.action_type} {e.process_date}")
+        same_by_filing = False
+        for fact, missing in facts.get(sid, []):
+            if missing:
+                continue
+            if fact.category == "trading_gap":
+                same_by_filing = True
+            elif fact.category in EXIT_CATEGORIES and fact.event_date and fact.event_date < start:
+                reasons.append(f"SEC filing: {fact.category} {fact.event_date}")
+        low, high = TRADING_GAP_PRICE_RATIO
+        adjusted = before / ratio if before else None
+        price_ok = bool(adjusted and after and low <= after / adjusted <= high)
+        if not price_ok and not same_by_filing:
+            reasons.append(
+                "price does not resume where it stopped"
+                + (f" ({after} against {adjusted:.6g})" if adjusted and after else " (no price)")
+            )
+        a, b = issuers.get(sid), issuers.get(other)
+        if a and b and a != b:
+            reasons.append(f"different issuers (CIK {a} and {b})")
+        merged = not reasons
+        why = (
+            f"same security: {gap} sessions without a trade, no delisting notice or exit "
+            + (
+                "before trading resumed; SEC filings say the same shares resumed"
+                if same_by_filing and not price_ok
+                else f"before trading resumed, price {after} against {adjusted:.6g}"
+                + (f" after splits x{ratio:g}" if ratio != 1.0 else "")
+            )
+            if merged
+            else "; ".join(reasons)
+        )
+        row = SegmentLink(
+            link_id=f"gap:{symbol}:{last.isoformat()}:{start.isoformat()}",
+            symbol=symbol,
+            earlier_last=last,
+            later_first=start,
+            gap_sessions=gap,
+            close_before=before,
+            close_after=after,
+            split_ratio=ratio,
+            issuer_before=a,
+            issuer_after=b,
+            decision="merged" if merged else "kept_separate",
+            reason=why[:1000],
+        )
+        session.add(row)
+        rows.append(row)
+    session.flush()
+    return rows
