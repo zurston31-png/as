@@ -259,6 +259,27 @@ CURATED_FACTS: tuple[CuratedFact, ...] = (
         cash_per_share=25.0,
     ),
     CuratedFact(
+        "SCPX",
+        date(2024, 6, 14),
+        None,
+        "trading_gap",
+        date(2024, 8, 2),
+        (
+            SecQuote(
+                f"{SEC}/1476963/000107997324001071/ex99x1.htm",
+                "approved a 1-for-200 reverse stock split",
+            ),
+            SecQuote(
+                f"{SEC}/1476963/000107997324001121/ex99x1.htm",
+                "has withdrawn its delisting determination and will be lifting the trading suspension",
+            ),
+        ),
+        "Scorpius Holdings: NYSE American suspended trading in June 2024; after a 1-for-200 reverse "
+        "split the delisting determination was withdrawn and trading resumed on 2024-08-02. The same "
+        "shares continued (not an exit), but they resumed about 66% below the split-adjusted last "
+        "price, so a holder lost that across the gap.",
+    ),
+    CuratedFact(
         "FRC",
         date(2023, 4, 28),
         None,
