@@ -306,3 +306,18 @@ def test_a_confirmed_failure_keeps_the_zero_value_labelled_as_an_assumption():
     )
     assert terms.value_basis == "deal_terms"
     assert outcomes.resolve_outcome([]).value_basis == "none"
+
+
+def test_sic_history_tolerates_headers_without_a_sic_on_the_same_day():
+    filings = [(date(2020, 1, 2), "b0"), (date(2020, 1, 2), "b1"), (date(2020, 6, 1), "b2")]
+    client = FakeClient(filings, {"b0": "", "b1": "6770", "b2": "6770"})
+    client.get_orig = client.get
+
+    def get(url, params=None):
+        text = client.get_orig(url, params)
+        return "no sic here" if text == "<ASSIGNED-SIC>" else text
+
+    client.get = get
+    points = sh.sic_history(client, "33", date(2020, 1, 1), date(2020, 12, 31))
+    assert len({day for day, _ in points}) == len(points)
+    assert sh.sic_on(points, date(2020, 7, 1)) == "6770"

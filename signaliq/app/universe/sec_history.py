@@ -150,7 +150,7 @@ def header_sic(text: str) -> str | None:
 
 def sic_on(changes: Sequence[tuple[date, str | None]], day: date) -> str | None:
     """SIC in force on ``day`` from (filing date, SIC) points: the last filing on or before it."""
-    known = [sic for filed, sic in sorted(changes) if filed <= day and sic]
+    known = [sic for filed, sic in sorted(changes, key=lambda c: c[0]) if filed <= day and sic]
     return known[-1] if known else None
 
 
@@ -224,7 +224,11 @@ def sic_history(sec: CachedSec, cik: str, first: date, last: date) -> list[tuple
     points.append((inside[0][0], first_sic))
     if len(inside) > 1:
         search(0, len(inside) - 1, first_sic, read(len(inside) - 1))
-    return sorted(set(points))
+    # One point per filing date (a header without a SIC gives None; the first wins).
+    by_day: dict[date, str | None] = {}
+    for day, sic in sorted(points, key=lambda p: (p[0], p[1] or "")):
+        by_day.setdefault(day, sic)
+    return sorted(by_day.items())
 
 
 def ticker_candidates(

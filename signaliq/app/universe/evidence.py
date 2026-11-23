@@ -983,7 +983,11 @@ def _ticker_today(client: sec.CachedSec) -> dict[str, tuple[str, str]]:
 
 
 def issuer_records(
-    session: Session, client: sec.CachedSec, sec_found: dict[int, sec.SecFinding]
+    session: Session,
+    client: sec.CachedSec,
+    sec_found: dict[int, sec.SecFinding],
+    *,
+    commit_each: bool = False,
 ) -> list[tuple[int, str, str, str, list[tuple[date, str | None]]]]:
     """(security id, CIK, name, how, SIC points) for every security whose issuer is known.
 
@@ -1010,6 +1014,8 @@ def issuer_records(
             client, cik, security.first_session - timedelta(days=365), security.last_trade_session
         )
         out.append((security.security_id, cik, name, how, points))
+        if commit_each:
+            session.commit()  # keep fetched answers even if a later security fails
     return out
 
 
@@ -1018,7 +1024,9 @@ def fetch_issuers(
 ) -> tuple[int, list[str]]:
     client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
     try:
-        issuer_records(session, client, sec_findings(session, client))
+        found = sec_findings(session, client)
+        session.commit()
+        issuer_records(session, client, found, commit_each=True)
     finally:
         client.close()
     return client.requests, client.failures
