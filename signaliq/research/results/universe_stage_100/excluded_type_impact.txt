@@ -1,0 +1,129 @@
+Securities with a conflicting or unknown type: 103
+Of these, would have been a member if treated as common stock: 17
+  id 60 BABA (conflict, trading): 59 decisions 2020-01-31..2024-11-29; evidence: wikidata=common; openfigi=adr
+  id 553 TSM (conflict, trading): 54 decisions 2020-02-28..2024-11-29; evidence: wikidata=common; openfigi=adr
+  id 720 PDD (conflict, trading): 44 decisions 2020-07-31..2024-11-29; evidence: wikidata=common; openfigi=adr
+  id 52 ASML (conflict, trading): 33 decisions 2021-10-29..2024-11-29; evidence: wikidata=common; openfigi=adr
+  id 293 JD (conflict, trading): 29 decisions 2020-01-31..2022-07-29; evidence: wikidata=common; openfigi=adr
+  id 685 SE (conflict, trading): 21 decisions 2020-08-31..2022-05-31; evidence: wikidata=common; openfigi=adr
+  id 70 BIDU (conflict, trading): 15 decisions 2020-01-31..2023-03-31; evidence: wikidata=common; openfigi=adr
+  id 881 ARM (conflict, trading): 9 decisions 2024-03-28..2024-11-29; evidence: wikidata=common; openfigi=adr
+  id 875 NVDL (conflict, trading): 7 decisions 2024-05-31..2024-11-29; evidence: openfigi=common; openfigi=etf
+  id 786 BNTX (conflict, trading): 6 decisions 2021-08-31..2022-01-31; evidence: wikidata=common; openfigi=adr
+  id 577 VALE (conflict, trading): 5 decisions 2021-06-30..2022-12-30; evidence: wikidata=common; openfigi=adr
+  id 556 TVIX (unknown, ended): 4 decisions 2020-03-31..2020-06-30; evidence: none
+  id 787 FUTU (conflict, trading): 4 decisions 2021-03-31..2021-06-30; evidence: wikidata=common; openfigi=adr
+  id 704 BILI (conflict, trading): 3 decisions 2021-02-26..2021-04-30; evidence: wikidata=common; openfigi=adr
+  id 813 LI (conflict, trading): 2 decisions 2021-01-29..2021-02-26; evidence: wikidata=common; openfigi=adr
+  id 819 XPEV (conflict, trading): 2 decisions 2021-02-26..2021-03-31; evidence: wikidata=common; openfigi=adr
+  id 759 LK (conflict, ended): 1 decisions 2020-02-28..2020-02-28; evidence: wikidata=common; wikidata=common; sec_form25=adr
+Members that would have been displaced: 109
+  id 255 HON: 13 decisions
+  id 570 UPS: 11 decisions
+  id 9 ABT: 11 decisions
+  id 56 AXP: 8 decisions
+  id 568 UNP: 8 decisions
+  id 286 ISRG: 8 decisions
+  id 33 AMGN: 7 decisions
+  id 475 SCHW: 6 decisions
+  id 42 ELV: 6 decisions
+  id 537 TGT: 6 decisions
+  id 342 MELI: 6 decisions
+  id 235 GM: 6 decisions
+  id 374 NEE: 5 decisions
+  id 631 SPGI: 5 decisions
+  id 102 CHTR: 5 decisions
+  id 149 DE: 5 decisions
+  id 542 TMUS: 4 decisions
+  id 340 MDT: 4 decisions
+  id 471 SBUX: 4 decisions
+  id 140 CVS: 4 decisions
+  id 763 CRWD: 4 decisions
+  id 359 MRVL: 4 decisions
+  id 326 LULU: 4 decisions
+  id 539 TJX: 4 decisions
+  id 67 BDX: 3 decisions
+  id 36 AMT: 3 decisions
+  id 173 EBAY: 3 decisions
+  id 12 ACN: 3 decisions
+  id 430 PM: 3 decisions
+  id 360 MS: 3 decisions
+  id 373 NCLH: 3 decisions
+  id 30 AMAT: 3 decisions
+  id 574 RTX: 3 decisions
+  id 53 ATVI: 3 decisions
+  id 88 CAT: 3 decisions
+  id 231 GILD: 3 decisions
+  id 561 UAL: 3 decisions
+  id 269 IBM: 3 decisions
+  id 783 PTON: 3 decisions
+  id 14 ADI: 3 decisions
+  id 428 PLD: 3 decisions
+  id 265 HUM: 3 decisions
+  id 425 PGR: 3 decisions
+  id 103 CI: 2 decisions
+  id 488 SLB: 2 decisions
+  id 339 MDLZ: 2 decisions
+  id 217 FI: 2 decisions
+  id 347 MMM: 2 decisions
+  id 92 CCL: 2 decisions
+  id 320 LMT: 2 decisions
+  id 57 AZN: 2 decisions
+  id 209 FCX: 2 decisions
+  id 155 DHR: 2 decisions
+  id 709 DOCU: 2 decisions
+  id 146 DAL: 2 decisions
+  id 531 TDOC: 2 decisions
+  id 158 DISCA: 2 decisions
+  id 211 FDX: 2 decisions
+  id 3 AAL: 2 decisions
+  id 408 ORCL: 2 decisions
+  id 75 BLK: 2 decisions
+  id 735 LIN: 2 decisions
+  id 16 ADP: 2 decisions
+  id 113 CMG: 2 decisions
+  id 679 ROKU: 2 decisions
+  id 411 OXY: 2 decisions
+  id 799 CLSK: 2 decisions
+  id 485 SHOP: 2 decisions
+  id 834 ABNB: 2 decisions
+  id 707 SPOT: 2 decisions
+  id 462 RTN: 1 decisions
+  id 761 DD: 1 decisions
+  id 121 COP: 1 decisions
+  id 350 MO: 1 decisions
+  id 586 VRTX: 1 decisions
+  id 319 LLY: 1 decisions
+  id 642 TTD: 1 decisions
+  id 195 ETSY: 1 decisions
+  id 453 REGN: 1 decisions
+  id 204 F: 1 decisions
+  id 216 FIS: 1 decisions
+  id 208 FCEL: 1 decisions
+  id 817 QS: 1 decisions
+  id 31 AMC: 1 decisions
+  id 394 NVAX: 1 decisions
+  id 335 MCD: 1 decisions
+  id 283 INTU: 1 decisions
+  id 751 PINS: 1 decisions
+  id 806 DKNG: 1 decisions
+  id 634 TWLO: 1 decisions
+  id 701 ZS: 1 decisions
+  id 352 MOS: 1 decisions
+  id 835 UPST: 1 decisions
+  id 134 CSX: 1 decisions
+  id 81 BSX: 1 decisions
+  id 739 MRNA: 1 decisions
+  id 572 USB: 1 decisions
+  id 583 VLO: 1 decisions
+  id 683 MDB: 1 decisions
+  id 441 PXD: 1 decisions
+  id 407 ON: 1 decisions
+  id 306 KLAC: 1 decisions
+  id 624 ZTS: 1 decisions
+  id 527 T: 1 decisions
+  id 486 SHW: 1 decisions
+  id 867 CEG: 1 decisions
+  id 39 ANET: 1 decisions
+  id 493 SNPS: 1 decisions
+  id 322 LOW: 1 decisions

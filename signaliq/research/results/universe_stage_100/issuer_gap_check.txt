@@ -1,0 +1,38 @@
+Common stocks without an issuer and without a documented reason: 9
+
+id 90 CBS (ended, single_source); traded 2016-01-04..2019-12-04
+  CBS 2016-01-04..2019-12-04: not in SEC's ticker list today
+  membership: member at 0 of 59 decisions; eligible at 0; best rank None
+
+id 490 SMCI (ended, single_source); traded 2016-01-04..2018-08-22
+  SMCI 2016-01-04..2018-08-22: today held by CIK 0001375365 (Super Micro Computer, Inc.); not used, the security ended (step 2 is for securities still trading)
+  membership: member at 0 of 59 decisions; eligible at 0; best rank None
+
+id 506 SQ (trading, single_source); traded 2016-01-04..2024-12-31
+  SQ 2016-01-04..2024-12-31: not in SEC's ticker list today
+  membership: member at 52 of 59 decisions (2020-01-31..2024-04-30); eligible at 59; best rank 11
+
+id 612 XOM (trading, confirmed); traded 2016-01-04..2024-12-31
+  XOM 2016-01-04..2024-12-31: today held by CIK 0002115436 (ExxonMobil Holdings Corp); its cached submissions list 0 filings before 2025, 0 inside this ticker period
+  membership: member at 59 of 59 decisions (2020-01-31..2024-11-29); eligible at 59; best rank 10
+
+id 618 YY (trading, single_source); traded 2016-01-04..2024-12-31
+  YY 2016-01-04..2024-12-31: not in SEC's ticker list today
+  membership: member at 0 of 59 decisions; eligible at 59; best rank 463
+
+id 628 IAC (trading, single_source); traded 2016-01-21..2024-12-31
+  IAC 2016-01-21..2024-12-31: not in SEC's ticker list today
+  membership: member at 0 of 59 decisions; eligible at 59; best rank 192
+
+id 807 SKLZ (trading, single_source); traded 2020-04-27..2024-12-31
+  FEAC 2020-04-27..2020-12-16: not in SEC's ticker list today
+  SKLZ 2020-12-17..2024-12-31: not in SEC's ticker list today
+  membership: member at 0 of 59 decisions; eligible at 33; best rank 208
+
+id 923 COHR (ended, single_source); traded 2016-01-04..2022-06-30
+  COHR 2016-01-04..2022-06-30: today held by CIK 0000820318 (COHERENT CORP.); not used, the security ended (step 2 is for securities still trading)
+  membership: member at 0 of 59 decisions; eligible at 30; best rank 549
+
+id 991 TD (trading, confirmed); traded 2016-01-04..2024-12-31
+  TD 2016-01-04..2024-12-31: today held by CIK 0000947263 (TORONTO DOMINION BANK); its cached submissions list 0 filings before 2025, 0 inside this ticker period
+  membership: member at 0 of 59 decisions; eligible at 59; best rank 330

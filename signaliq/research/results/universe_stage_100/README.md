@@ -104,7 +104,7 @@ All of these pass, except the duplicate audit (1 case, finding 1 below):
 | SEC findings, browse-edgar vs JSON lists (`filing_source_impact.txt`) | 0 changed |
 | IEX database (`protected_data_check.txt`) | 15,861 bars, fingerprint `e66890e79788fc78`, unchanged |
 | Strategy A archive | 13 of 13 files match `SHA256SUMS` |
-| Reproducibility (`reproducibility.txt`) | REPRO_PLACEHOLDER |
+| Reproducibility (`reproducibility.txt`) | Two cache-only runs **byte-identical**, SHA-256 `f8aa470e…de4a10`; 0 requests to SEC, OpenFIGI and Wikidata |
 
 ## Open findings for review
 
@@ -128,7 +128,7 @@ None of these is resolved here, and nothing was changed to make the report pass.
    - Impact:
      - SQ (52 decisions) and XOM (59) are members. The cache holds their issuers' current records: Block, Inc. (formerly Square, Inc.), SIC 7372, and Exxon Mobil Corp, SIC 2911. Neither is a blank-check SIC, but these are current codes, not point-in-time.
      - **FEAC was a blank-check company** (Flying Eagle Acquisition, before its merger with Skillz on 2020-12-17). It was eligible at the 2020-10-30 and 2020-11-30 decisions because its SIC was unknown. It ranked 645 and 643, so it was not a member, and it would not be one at 250 or 500 either. A blank-check company ranked higher would not be caught.
-     - The other six were never members.
+     - The other six were never members. Several were eligible and could matter at a larger size: IAC (best rank 192) and SKLZ (208) at 250; YY (463), TD (330) and COHR (549) at 500. They are operating companies. The risk is only that a blank-check company among them would go unnoticed.
    - **Decision needed** before Stage 2: whether to resolve issuers by the CIK from the ticker's own period (browse-edgar ticker lookup or Wikidata) and read SEC's older submission pages. That would change issuer identification, so it is not done here.
 4. **Types in conflict (73) or unknown (30)** (`excluded_type_impact.txt`). Treated as common, 17 would have been members:
    - 15 ADRs (BABA, TSM, PDD, ASML, JD, SE, BIDU, ARM, BNTX, VALE, FUTU, BILI, LI, XPEV, LK). ADRs are outside the universe by design.
@@ -234,10 +234,13 @@ the cash terms.
 | | Ended securities | Comparable | Findings changed |
 | --- | --- | --- | --- |
 | v5 validation batch | 66 | 66 | **0** |
-| Stage 1, when switched | 163 | 126 | **0** |
+| Stage 1, when switched (mid-run) | 163 | 126 | **0** |
+| Stage 1, final | 158 | 110 | **0** |
 
-The other 37 Stage 1 securities did not yet have all their answers cached. They are
-reported as not comparable, not as unchanged.
+At the switch, the other 37 Stage 1 securities did not yet have all their answers cached.
+In the final state, 48 are not comparable. For all 48, every JSON answer is cached; what is
+missing is a browse-edgar list that was never requested, because those lists were asked after
+the switch. They are reported as not comparable, not as unchanged.
 
 **What is kept.**
 
