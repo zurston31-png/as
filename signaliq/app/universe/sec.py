@@ -56,9 +56,10 @@ PAUSE_SECONDS = 0.15  # about 6 requests per second; SEC allows at most 10
 # keeps what it has asked (a later run reads it from the cache instead of asking again).
 COMMIT_EVERY = 25
 # www.sec.gov answers some requests with a passing 503 ("File Unavailable"): a request is
-# tried up to MAX_ATTEMPTS times, waiting longer each time (about 7 minutes in all).
-MAX_ATTEMPTS = 8
-RETRY_WAITS = (10, 20, 40, 60, 90, 120, 120)
+# tried up to MAX_ATTEMPTS times: quickly at first (a retry a few seconds later usually
+# succeeds), then waiting longer (about 7 minutes in all).
+MAX_ATTEMPTS = 11
+RETRY_WAITS = (5, 5, 10, 10, 20, 30, 60, 60, 90, 120)
 
 
 class SecUnavailable(RuntimeError):
