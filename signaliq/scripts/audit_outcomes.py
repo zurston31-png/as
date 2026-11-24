@@ -3,6 +3,8 @@
 
     python scripts/audit_outcomes.py
 
+Reads the database named by SIGNALIQ_SIP_RESEARCH_DATABASE_URL, else data/sip_research.db.
+
 Checks, for each ended security in the research database:
 
 1. it has a confidence label (two independent sources, one source, unresolved, ...);
@@ -20,7 +22,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-DB = Path(__file__).resolve().parent.parent / "data" / "sip_research.db"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.universe.database import research_database_url
+
+# The research database the pipeline uses (the stage database when
+# SIGNALIQ_SIP_RESEARCH_DATABASE_URL points at it).
+DB = Path(research_database_url().removeprefix("sqlite:///"))
 LABELS = {
     "confirmed": "two independent sources",
     "single_source": "lower confidence (one source)",
