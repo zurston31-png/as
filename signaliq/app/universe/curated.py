@@ -120,6 +120,70 @@ CURATED_RENAMES: tuple[CuratedRename, ...] = (
 
 
 @dataclass(frozen=True)
+class CuratedIdentityLink:
+    """One security that stopped trading for longer than the trading-gap rule allows and
+    resumed under a new ticker: a documented exception, applied only when every passage is
+    found in its SEC document.
+
+    The two segments are named exactly (the old ticker's last trade, the new ticker's first),
+    and ``cik`` is the registrant on both sides. ``audit_merges.py`` checks independently
+    that both securities resolve to that issuer, that no delisting notice (Form 25) or
+    deregistration (Form 15) was filed in between, and where the price resumed.
+    """
+
+    old_symbol: str
+    old_last: date
+    new_symbol: str
+    new_first: date
+    cik: str
+    quotes: tuple[SecQuote, ...]
+    note: str
+
+
+_YNDX = f"{SEC}/1513845"
+
+CURATED_IDENTITY_LINKS: tuple[CuratedIdentityLink, ...] = (
+    CuratedIdentityLink(
+        "YNDX",
+        date(2022, 2, 25),
+        "NBIS",
+        date(2024, 10, 21),
+        "0001513845",
+        (
+            SecQuote(
+                f"{_YNDX}/000151384522000010/yndx-20220307ex9918dbc01.htm",
+                "On February 28, 2022, Nasdaq and the New York Stock Exchange suspended the "
+                "trading in securities of a number of companies with material operations in "
+                "Russia, including Yandex N.V.",
+            ),
+            SecQuote(
+                f"{_YNDX}/000110465924090313/tm2421897d1_ex99-1.htm",
+                "(formerly known as Yandex N.V.) (NASDAQ: YNDX, to be changed to NBIS)",
+            ),
+            SecQuote(
+                f"{_YNDX}/000110465924109545/tm2426436d2_ex99-1.htm",
+                "Following the successful divestment of our Russian assets, which completed the "
+                "separation from all ties with Russia, Nasdaq has determined that trading in our "
+                "shares will resume.",
+            ),
+            SecQuote(
+                f"{_YNDX}/000110465924110042/tm2426559d1_ex99-1.htm",
+                "confirms that the trading of the Company\u2019s Class A ordinary shares on the "
+                "Nasdaq Global Select Market is scheduled to resume",
+            ),
+        ),
+        "Yandex N.V. (CIK 1513845): Nasdaq suspended trading in its Class A shares on "
+        "2022-02-28; the company renamed itself Nebius Group N.V. and changed its ticker to "
+        "NBIS in August 2024; Nasdaq resumed trading in the same Class A ordinary shares on "
+        "2024-10-21. Same registrant, same shares, no delisting: one security, suspended for "
+        "665 sessions (beyond the 250-session trading-gap rule, hence the exception). During "
+        "the suspension the shares could not be traded on a US exchange; the security has no "
+        "bars then.",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class CuratedFact:
     """Type and/or exit evidence for the security that last traded as ``symbol`` on ``last_trade``."""
 

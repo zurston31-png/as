@@ -19,7 +19,9 @@ asks the sources again. Any evidence dated 2025 or later is ignored.
 
 import logging
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 import httpx
@@ -35,9 +37,11 @@ from app.universe.batch import PLAIN_TICKER
 from app.universe.curated import (
     CURATED_DEALS,
     CURATED_FACTS,
+    CURATED_IDENTITY_LINKS,
     CURATED_RENAMES,
     CURATED_SPIN_OFFS,
     CuratedFact,
+    CuratedIdentityLink,
     CuratedRename,
 )
 from app.universe.models import (
@@ -46,6 +50,7 @@ from app.universe.models import (
     DealValue,
     ExitEvidence,
     ExternalResponse,
+    IssuerEvidence,
     IssuerSic,
     Security,
     SecurityBar,
@@ -837,7 +842,7 @@ def fetch_curated_documents(
     """Fetch (or reuse from the cache) every SEC document a curated entry quotes."""
     client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
     try:
-        for entry in (*CURATED_RENAMES, *CURATED_FACTS, *CURATED_DEALS):
+        for entry in (*CURATED_RENAMES, *CURATED_IDENTITY_LINKS, *CURATED_FACTS, *CURATED_DEALS):
             for quote in entry.quotes:
                 client.get(quote.url)
     finally:
@@ -870,6 +875,16 @@ def apply_curated_renames(session: Session) -> list[tuple[CuratedRename, list]]:
         )
     session.flush()
     return results
+
+
+def curated_identity_links(session: Session) -> list[tuple[CuratedIdentityLink, list]]:
+    """Each documented identity exception with its missing quotes (cache only)."""
+    client = sec.CachedSec(session, network=False)
+    return [(link, missing_quotes(client, link.quotes)) for link in CURATED_IDENTITY_LINKS]
+
+
+def identity_link_id(link: CuratedIdentityLink) -> str:
+    return f"identity:{link.old_symbol}>{link.new_symbol}:{link.old_last}:{link.new_first}"
 
 
 def curated_facts(session: Session) -> dict[int, list[tuple[CuratedFact, list]]]:
@@ -1004,35 +1019,123 @@ def _ticker_today(client: sec.CachedSec) -> dict[str, tuple[str, str]]:
     return {r["ticker"]: (str(r["cik_str"]).zfill(10), r.get("title", "")) for r in rows}
 
 
-def issuer_records(
+@dataclass(frozen=True)
+class IssuerPoint:
+    """A dated fact that company ``cik`` held ``symbol`` (see ``models.IssuerEvidence``)."""
+
+    filed: date
+    cik: str
+    name: str
+    how: str
+    url: str
+    symbol: str
+
+
+#: Order of evidence kinds on the same day (the delisting notice at the last trade first).
+_HOW_ORDER = {"form25": 0, "cover_page": 1, "full_text": 2}
+
+
+def issuer_on(points: Sequence[IssuerPoint], day: date) -> tuple[IssuerPoint | None, bool]:
+    """The issuer on ``day``: the latest evidence on or before it, and False.
+
+    Before the first evidence, the earliest evidence and True (the identity then rests on
+    a document filed later; the SIC used is still only what was on file by ``day``).
+    """
+    if not points:
+        return None, False
+    ordered = sorted(points, key=lambda p: (p.filed, -_HOW_ORDER.get(p.how, 9)))
+    earlier = [p for p in ordered if p.filed <= day]
+    if earlier:
+        return earlier[-1], False
+    return ordered[0], True
+
+
+#: Candidates per ticker period proposed by a search that is not limited to one company.
+OPEN_CANDIDATES = 3
+#: Documents read (earliest first, then latest first) to confirm a company's cover pages.
+COVER_CONFIRM_TRIES = 3
+
+
+def _cover_confirmed(client: sec.CachedSec, hit, ticker: str) -> bool:
+    return bool(sh.cover_page_symbol(sh.plain_text(client.get(hit.url)), ticker))
+
+
+def cover_page_points(
+    client: sec.CachedSec, ticker: str, first: date, last: date, cik: str
+) -> list[IssuerPoint]:
+    """Company ``cik``'s cover-page evidence for ``ticker`` between ``first`` and ``last``.
+
+    Its filings found by the search, from the earliest whose document confirms the ticker
+    under "Trading Symbol(s)" (of the first few) to the latest that does, found by halving
+    (a company holds a ticker for one stretch of time: IAC/InterActiveCorp's filings list
+    IAC until mid-2020 and MTCH after). None if no document confirms it.
+    """
+    # The cover table is in a filing's main document, not in its exhibits.
+    mains = [
+        h
+        for h in sh.cover_page_hits(client, ticker, first, last, cik)
+        if not h.file_type or h.file_type.upper() == h.form.upper()
+    ]
+    hits = sorted({(h.filed, h.adsh): h for h in mains}.values(), key=lambda h: (h.filed, h.adsh))
+    head = next(
+        (
+            i
+            for i, h in enumerate(hits[:COVER_CONFIRM_TRIES])
+            if _cover_confirmed(client, h, ticker)
+        ),
+        None,
+    )
+    if head is None:
+        return []
+
+    def holds(i: int) -> bool:
+        # One document may lack the table (an exhibit); its neighbour decides with it.
+        return _cover_confirmed(client, hits[i], ticker) or (
+            i + 1 < len(hits) and _cover_confirmed(client, hits[i + 1], ticker)
+        )
+
+    lo, hi = head, len(hits) - 1
+    if _cover_confirmed(client, hits[hi], ticker):
+        lo = hi
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if holds(mid):
+            lo = mid
+        else:
+            hi = mid
+    return [
+        IssuerPoint(h.filed, h.cik, h.name, "cover_page", h.url, ticker)
+        for h in hits[head : lo + 1]
+    ]
+
+
+def _overlap(a: list[IssuerPoint], b: list[IssuerPoint]) -> bool:
+    return a[0].filed <= b[-1].filed and b[0].filed <= a[-1].filed
+
+
+def issuer_points(
     session: Session,
     client: sec.CachedSec,
     sec_found: dict[int, sec.SecFinding],
-    *,
-    commit_each: bool = False,
-) -> list[tuple[int, str, str, str, list[tuple[date, str | None]]]]:
-    """(security id, CIK, name, how, SIC points) for every security whose issuer is known.
+    only: set[int] | None = None,
+) -> tuple[dict[int, list[IssuerPoint]], dict[int, list[str]]]:
+    """Dated issuer evidence for every security, and the ticker periods where two companies
+    both claimed the ticker at the same time (resolved here, reported).
 
-    In order of preference:
-
-    1. ``form25``: the company that filed the delisting notice at the last trade.
-    2. ``ticker_today``: for a security still trading at the end of 2024, the holder in
-       SEC's ticker list of any of its tickers (newest first), only if that company filed
-       something while the security traded under that ticker.
-    3. ``full_text``: a company whose own filings name the ticker as its own ("Expro Group
-       (NYSE: XPRO)") while the security traded under it: its name within 60 characters
-       before the ticker, and, when Wikidata names the security's company for its period,
-       a current or former name that agrees with it (a mortgage trust listing First Republic as a
-       tenant, or Groupon citing Sears, is not the issuer).
-
-    Identity only: SIC is then read point in time from that company's filing headers.
+    Per ticker period, from 2019 on: each candidate company's own cover pages listing the
+    ticker. Candidates come from the delisting notice, SEC's ticker list as of today, a
+    cover-page search not limited to one company, and the companies found for the
+    security's other tickers; each is accepted only on its own cover pages, so today's
+    ticker list can propose a company but never decide. When two companies' cover pages
+    overlap in time (a parent and a subsidiary filing together), the one with more of
+    them is kept. A ticker period with no cover-page evidence (before 2019, or a filer
+    without the table) falls back to a filing in which the company names the ticker as its
+    own ("full_text"). The delisting notice at the last trade is evidence too ("form25").
     """
     today = _ticker_today(client)
     history = defaultdict(list)
     for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
         history[h.security_id].append(h)
-    # Company names Wikidata gives for the security during its own period. (OpenFIGI names
-    # today's holder of a ticker, which can be another company, so it is not used here.)
     shared = _shared_tickers(session)
     known_names = {
         sid: {
@@ -1040,55 +1143,148 @@ def issuer_records(
         }
         for sid, items in history.items()
     }
+    out: dict[int, list[IssuerPoint]] = {}
+    conflicts: dict[int, list[str]] = defaultdict(list)
+    for security in session.execute(select(Security).order_by(Security.security_id)).scalars():
+        sid = security.security_id
+        if only is not None and sid not in only:
+            continue
+        tickers = history[sid]
+        points: list[IssuerPoint] = []
+        finding = sec_found.get(sid)
+        candidates: list[str] = []
+        if finding is not None and finding.cik:
+            cik = str(int(finding.cik)).zfill(10)
+            candidates.append(cik)
+            notice = finding.notices[-1][0] if finding.notices else None
+            points.append(
+                IssuerPoint(
+                    security.last_trade_session,
+                    cik,
+                    finding.company or "",
+                    "form25",
+                    notice.href if notice is not None else "",
+                    tickers[-1].symbol if tickers else security.last_symbol,
+                )
+            )
+        for h in tickers:
+            if h.symbol in today:
+                candidates.append(today[h.symbol][0])
+        open_hits = {
+            h.symbol: sh.cover_page_hits(client, h.symbol, h.valid_from, h.valid_to)
+            for h in tickers
+        }
+        for h in tickers:
+            counts = Counter(hit.cik for hit in open_hits[h.symbol])
+            candidates += [cik for cik, _ in counts.most_common(OPEN_CANDIDATES)]
+        found_by_period: dict[int, list[list[IssuerPoint]]] = {}
+        # Two passes: a company confirmed for one ticker is a candidate for the others
+        # (a SPAC and the business it became file under one CIK).
+        for _pass in range(2):
+            ordered = list(dict.fromkeys(candidates))
+            for index, h in enumerate(tickers):
+                spans = [
+                    span
+                    for cik in ordered
+                    if (span := cover_page_points(client, h.symbol, h.valid_from, h.valid_to, cik))
+                ]
+                found_by_period[index] = spans
+            confirmed = {span[0].cik for spans in found_by_period.values() for span in spans}
+            if confirmed <= set(candidates):
+                break
+            candidates += sorted(confirmed)
+        for index, h in enumerate(tickers):
+            spans = sorted(found_by_period.get(index, []), key=lambda s: (-len(s), s[0].cik))
+            kept: list[list[IssuerPoint]] = []
+            for span in spans:
+                clash = next((k for k in kept if _overlap(k, span)), None)
+                if clash is None:
+                    kept.append(span)
+                else:
+                    conflicts[sid].append(
+                        f"{h.symbol}: CIK {span[0].cik} ({len(span)} cover pages "
+                        f"{span[0].filed}..{span[-1].filed}) overlaps CIK {clash[0].cik} "
+                        f"({len(clash)}); kept {clash[0].cik}"
+                    )
+            found_text = None
+            if not kept and h.valid_to >= sh.COVER_FIRST:
+                # No candidate had cover pages: the companies that wrote the ticker in an
+                # exchange context ("NASDAQ: YY") are tried too.
+                found_text = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
+                for cik in sh.ranked_candidates(found_text)[:OPEN_CANDIDATES]:
+                    if cik in ordered:
+                        continue
+                    span = cover_page_points(client, h.symbol, h.valid_from, h.valid_to, cik)
+                    if span:
+                        kept = [span]
+                        break
+            for span in kept:
+                points += span
+            if kept:
+                continue
+            # No cover-page evidence for this ticker period: a filing naming it as its own.
+            known = known_names.get(sid, set())
+            if found_text is None:
+                found_text = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
+            for cik in sh.ranked_candidates(found_text):
+                confirmed_hit = sh.confirm_writer(
+                    client, found_text[cik], h.symbol, window=sh.ISSUER_WINDOW
+                )
+                if not confirmed_hit:
+                    continue
+                hit = confirmed_hit[0]
+                if known:
+                    company = sh.submissions(client, cik)
+                    names = {hit.name} | {f.name for f in (company.former_names if company else ())}
+                    if not any(sectypes.names_agree(a, b) for a in names for b in known):
+                        continue
+                if (
+                    not h.valid_from - timedelta(days=30)
+                    <= hit.filed
+                    <= h.valid_to + timedelta(days=30)
+                ):
+                    continue
+                points.append(
+                    IssuerPoint(hit.filed, hit.cik, hit.name, "full_text", hit.url, h.symbol)
+                )
+                break
+        if points:
+            out[sid] = sorted(points, key=lambda p: (p.filed, _HOW_ORDER.get(p.how, 9), p.cik))
+    return out, dict(conflicts)
+
+
+def issuer_records(
+    session: Session,
+    client: sec.CachedSec,
+    sec_found: dict[int, sec.SecFinding],
+    *,
+    commit_each: bool = False,
+):
+    """Per security with evidence: (id, issuer at the last trade, its evidence kind, the
+    dated evidence, SIC points per company). SIC is read point in time from each company's
+    filing headers, from a year before the first trade to the last."""
+    points_by_sid, conflicts = issuer_points(session, client, sec_found)
+    if commit_each:
+        session.commit()
     out = []
     for security in session.execute(select(Security).order_by(Security.security_id)).scalars():
-        finding = sec_found.get(security.security_id)
-        tickers = list(reversed(history[security.security_id]))
-        found = None
-        if finding is not None and finding.cik:
-            found = (finding.cik, finding.company or "", "form25")
-        if found is None and security.status != "ended":
-            for h in tickers:
-                if h.symbol not in today:
-                    continue
-                cik, name = today[h.symbol]
-                company = sh.submissions(client, cik)
-                filed = [d for _, d, _ in (company.filings if company else ())]
-                if any(h.valid_from <= d <= h.valid_to for d in filed):
-                    found = (cik, name, "ticker_today")
-                    break
-        if found is None:
-            known = known_names.get(security.security_id, set())
-            for h in tickers:
-                candidates = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
-                for cik in sh.ranked_candidates(candidates):
-                    confirmed = sh.confirm_writer(
-                        client, candidates[cik], h.symbol, window=sh.ISSUER_WINDOW
-                    )
-                    if not confirmed:
-                        continue
-                    if known:
-                        # The company's current or any former name (Hywin -> Santech).
-                        company = sh.submissions(client, cik)
-                        names = {confirmed[0].name} | {
-                            f.name for f in (company.former_names if company else ())
-                        }
-                        if not any(sectypes.names_agree(a, b) for a in names for b in known):
-                            continue
-                    found = (cik, confirmed[0].name, "full_text")
-                    break
-                if found:
-                    break
-        if found is None:
+        points = points_by_sid.get(security.security_id)
+        if not points:
             continue
-        cik, name, how = found
-        points = sh.sic_history(
-            client, cik, security.first_session - timedelta(days=365), security.last_trade_session
-        )
-        out.append((security.security_id, cik, name, how, points))
+        last, _ = issuer_on(points, security.last_trade_session)
+        sics = {
+            cik: sh.sic_history(
+                client,
+                cik,
+                security.first_session - timedelta(days=365),
+                security.last_trade_session,
+            )
+            for cik in sorted({p.cik for p in points})
+        }
+        out.append((security.security_id, last, points, sics))
         if commit_each:
             session.commit()  # keep fetched answers even if a later security fails
-    return out
+    return out, conflicts
 
 
 def fetch_issuers(
@@ -1104,17 +1300,35 @@ def fetch_issuers(
     return client.requests, client.failures
 
 
-def store_issuers(session: Session) -> None:
+def store_issuers(session: Session) -> dict[int, list[str]]:
+    """Store the dated issuer evidence, the issuer at each last trade and the SIC points.
+    Returns the ticker periods where two companies' cover pages overlapped."""
     session.execute(delete(IssuerSic))
+    session.execute(delete(IssuerEvidence))
     session.execute(delete(SecurityIssuer))
     client = sec.CachedSec(session, network=False)
-    for sid, cik, name, how, points in issuer_records(
-        session, client, sec_findings(session, client)
-    ):
-        session.add(SecurityIssuer(security_id=sid, cik=cik, name=name[:160], how=how))
-        for as_of, sic in points:
-            session.add(IssuerSic(security_id=sid, cik=cik, as_of=as_of, sic=sic))
+    records, conflicts = issuer_records(session, client, sec_findings(session, client))
+    for sid, last, points, sics in records:
+        session.add(
+            SecurityIssuer(security_id=sid, cik=last.cik, name=last.name[:160], how=last.how)
+        )
+        for p in points:
+            session.add(
+                IssuerEvidence(
+                    security_id=sid,
+                    symbol=p.symbol,
+                    filed=p.filed,
+                    cik=p.cik,
+                    name=p.name[:160],
+                    how=p.how,
+                    url=p.url[:300],
+                )
+            )
+        for cik, changes in sics.items():
+            for as_of, sic in changes:
+                session.add(IssuerSic(security_id=sid, cik=cik, as_of=as_of, sic=sic))
     session.flush()
+    return conflicts
 
 
 def blank_check_on(changes: list[tuple[date, str | None]], renames: list[date], day: date) -> bool:
@@ -1138,21 +1352,40 @@ def blank_check_on(changes: list[tuple[date, str | None]], renames: list[date], 
     return sh.sic_on(changes, day) == sh.BLANK_CHECK_SIC
 
 
+def stored_issuer_points(session: Session) -> dict[int, list[IssuerPoint]]:
+    out: dict[int, list[IssuerPoint]] = defaultdict(list)
+    for e in session.execute(select(IssuerEvidence).order_by(IssuerEvidence.id)).scalars():
+        out[e.security_id].append(IssuerPoint(e.filed, e.cik, e.name, e.how, e.url, e.symbol))
+    return dict(out)
+
+
 def blank_check_exclusions(session: Session):
-    """Per security, a test of whether its issuer was a blank-check company on a day."""
-    points: dict[int, list[tuple[date, str | None]]] = defaultdict(list)
+    """Per security, a test of whether its issuer was a blank-check company on a day.
+
+    The issuer on the day is the company of the latest dated evidence by then
+    (``issuer_on``); its SIC is read only from filings made by then."""
+    sics: dict[tuple[int, str], list[tuple[date, str | None]]] = defaultdict(list)
     for row in session.execute(select(IssuerSic)).scalars():
-        points[row.security_id].append((row.as_of, row.sic))
+        sics[(row.security_id, row.cik)].append((row.as_of, row.sic))
     renames: dict[int, list[date]] = defaultdict(list)
     for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
         renames[h.security_id].append(h.valid_from)
     for sid in renames:
         renames[sid] = renames[sid][1:]  # the first segment's start is not a change
 
-    def test(changes, changed):
-        return lambda day: "blank_check_company" if blank_check_on(changes, changed, day) else None
+    def test(sid, points):
+        def on(day):
+            issuer, _ = issuer_on(points, day)
+            changes = sorted(sics.get((sid, issuer.cik), []))
+            return (
+                "blank_check_company"
+                if blank_check_on(changes, renames.get(sid, []), day)
+                else None
+            )
 
-    return {sid: test(sorted(c), renames.get(sid, [])) for sid, c in points.items()}
+        return on
+
+    return {sid: test(sid, points) for sid, points in stored_issuer_points(session).items()}
 
 
 # =============================================================================
@@ -1206,7 +1439,8 @@ def decide_gap_links(session: Session) -> list[SegmentLink]:
     4. the price resumes within ``TRADING_GAP_PRICE_RATIO`` of where it stopped, after
        any split recorded in the gap, or SEC filings quoted in a curated fact say the
        same shares resumed (Scorpius);
-    5. when both issuers are known, they are the same company.
+    5. when both issuers are known, they are the same company (each the issuer of the day:
+       the earlier security's at its last trade, the later one's at its first).
 
     Merges decided in an earlier pass are kept (their segments are now one security and
     are no longer candidates); rejected candidates are decided afresh. Returns the new
@@ -1220,7 +1454,12 @@ def decide_gap_links(session: Session) -> list[SegmentLink]:
     closes = {
         (b.security_id, b.session): b.close for b in session.execute(select(SecurityBar)).scalars()
     }
-    issuers = {i.security_id: i.cik for i in session.execute(select(SecurityIssuer)).scalars()}
+    held = stored_issuer_points(session)
+
+    def issuer_at(sid: int, day: date) -> str | None:
+        found, _ = issuer_on(held.get(sid, []), day)
+        return found.cik if found else None
+
     sec_found = cached_sec_findings(session)
     facts = curated_facts(session)
     by_symbol: dict[str, list[tuple[date, int, bool]]] = defaultdict(list)
@@ -1279,7 +1518,9 @@ def decide_gap_links(session: Session) -> list[SegmentLink]:
                 "price does not resume where it stopped"
                 + (f" ({after} against {adjusted:.6g})" if adjusted and after else " (no price)")
             )
-        a, b = issuers.get(sid), issuers.get(other)
+        # The issuers on either side of the gap: the earlier security's when it stopped,
+        # the later one's when it started (a ticker can pass between companies).
+        a, b = issuer_at(sid, last), issuer_at(other, start)
         if a and b and a != b:
             reasons.append(f"different issuers (CIK {a} and {b})")
         merged = not reasons

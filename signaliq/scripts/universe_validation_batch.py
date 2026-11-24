@@ -44,6 +44,7 @@ from app.universe.models import (
     DealValue,
     ExitEvidence,
     ExternalResponse,
+    IssuerEvidence,
     IssuerSic,
     Membership,
     Security,
@@ -202,7 +203,7 @@ def run(settings, refresh: bool, stage: int | None = None) -> dict:
                         facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
                             session, refresh=refresh
                         )
-                        evidence.store_issuers(session)
+                        facts["issuer_conflicts"] = evidence.store_issuers(session)
                     with session_scope(factory) as session:
                         evidence.value_deals(session, client, p.utc_window)
                     with session_scope(factory) as session:
@@ -571,10 +572,41 @@ def report(facts: dict) -> str:
             "\n4e. ISSUERS AND BLANK-CHECK COMPANIES (SIC 6770, point in time from filing headers)"
         )
         issuers = {i.security_id: i for i in s.execute(select(SecurityIssuer)).scalars()}
+        points = evidence.stored_issuer_points(s)
         print(
-            f"  Issuer known for {len(issuers)} of {len(securities)} securities: "
-            f"{dict(Counter(i.how for i in issuers.values()))}"
+            "  Issuer of a ticker on a day: the company of the latest dated evidence by then -\n"
+            "  its own cover page listing the ticker under 'Trading Symbol(s)' (cover_page, 2019 on),\n"
+            "  the delisting notice at the last trade (form25), or a filing naming the ticker as its\n"
+            "  own (full_text). SEC's ticker list as of today only proposes candidates."
         )
+        print(
+            f"  Issuer at the last trade known for {len(issuers)} of {len(securities)} securities, by evidence: "
+            f"{dict(sorted(Counter(i.how for i in issuers.values()).items()))}"
+        )
+        print(
+            f"  Dated evidence: {sum(len(v) for v in points.values())} points; by kind "
+            f"{dict(sorted(Counter(pt.how for v in points.values() for pt in v).items()))}"
+        )
+        multi = {sid: v for sid, v in points.items() if len({pt.cik for pt in v}) > 1}
+        print(
+            f"  Securities whose ticker was held by more than one company over time: {len(multi)}"
+        )
+        for sid, v in sorted(multi.items()):
+            spans = []
+            for cik in dict.fromkeys(pt.cik for pt in v):
+                mine = [pt for pt in v if pt.cik == cik]
+                spans.append(
+                    f"CIK {cik} {mine[0].name[:40]} {mine[0].filed}..{mine[-1].filed} ({len(mine)})"
+                )
+            print(f"    id {sid} {path(sid)}: " + "; ".join(spans))
+        conflicts = facts.get("issuer_conflicts") or {}
+        print(
+            f"  Ticker periods where two companies' cover pages overlapped (the one with more kept): "
+            f"{sum(len(v) for v in conflicts.values())}"
+        )
+        for sid, items in sorted(conflicts.items()):
+            for item in items:
+                print(f"    id {sid} {path(sid)}: {item}")
         common_ids = [sid for sid, x in securities.items() if x.security_type == "common"]
         print(
             f"  Common stocks with an issuer (so SIC can be tested): {sum(1 for sid in common_ids if sid in issuers)} of {len(common_ids)}"
@@ -588,6 +620,11 @@ def report(facts: dict) -> str:
                 reason = (
                     f"{x.security_type}, not common stock: outside the universe whatever its issuer"
                 )
+            if reason is None and x.last_trade_session < p.MEMBERSHIP_FIRST_DECISION:
+                reason = (
+                    f"traded only before the first membership decision ({p.MEMBERSHIP_FIRST_DECISION}): "
+                    "no membership decision reads its SIC"
+                )
             if reason is None:
                 unexplained_issuers += 1
                 reason = "UNEXPLAINED: a blank-check company here would not be caught"
@@ -595,14 +632,33 @@ def report(facts: dict) -> str:
         print(
             f"  Common stocks without an issuer and without a documented reason: {unexplained_issuers}"
         )
+        later_identity = []
+        for m in s.execute(
+            select(Membership).where(
+                (Membership.eligible == 1) | (Membership.reason == "blank_check_company")
+            )
+        ).scalars():
+            if m.security_id in points:
+                held, later = evidence.issuer_on(points[m.security_id], m.decision_session)
+                if later:
+                    later_identity.append((m.security_id, m.decision_session, held))
+        print(
+            "  Decisions (eligible or excluded as blank-check) whose issuer rests on a document filed\n"
+            f"  after the decision (no earlier evidence; the SIC used is still only what was on file): {len(later_identity)}"
+        )
+        for sid, day, held in later_identity:
+            print(
+                f"    id {sid} {path(sid)} on {day}: CIK {held.cik} from {held.how} filed {held.filed}"
+            )
         sics = defaultdict(list)
         for r in s.execute(select(IssuerSic).order_by(IssuerSic.as_of)).scalars():
-            sics[r.security_id].append((r.as_of, r.sic))
-        for sid in sorted(sics):
-            if any(sic == "6770" for _, sic in sics[sid]):
+            sics[(r.security_id, r.cik)].append((r.as_of, r.sic))
+        print("  Issuers with SIC 6770 (blank-check) at some point, SIC by filing date:")
+        for sid, cik in sorted(sics):
+            if any(sic == "6770" for _, sic in sics[(sid, cik)]):
                 print(
-                    f"    id {sid} {path(sid)} ({issuers[sid].name}): "
-                    + ", ".join(f"{sic} from {day}" for day, sic in sics[sid])
+                    f"    id {sid} {path(sid)} (CIK {cik}): "
+                    + ", ".join(f"{sic} from {day}" for day, sic in sics[(sid, cik)])
                 )
 
         print("\n4f. TRADING-GAP MERGES (same ticker after a pause: one security or two?)")
@@ -857,6 +913,7 @@ def report(facts: dict) -> str:
             "security bars": s.scalar(select(func.max(SecurityBar.session))),
             "exit evidence": s.scalar(select(func.max(ExitEvidence.event_date))),
             "SIC filings": s.scalar(select(func.max(IssuerSic.as_of))),
+            "issuer evidence": s.scalar(select(func.max(IssuerEvidence.filed))),
             "deal effective dates": s.scalar(select(func.max(DealValue.effective_date))),
             "acquirer price sessions": s.scalar(select(func.max(DealValue.acquirer_session))),
         }
@@ -869,14 +926,17 @@ def report(facts: dict) -> str:
         dated_ex = evidence.blank_check_exclusions(s)
         rows_sic = defaultdict(list)
         for r in s.execute(select(IssuerSic)).scalars():
-            rows_sic[r.security_id].append((r.as_of, r.sic))
+            rows_sic[(r.security_id, r.cik)].append((r.as_of, r.sic))
+        held_points = evidence.stored_issuer_points(s)
         for m in s.execute(
             select(Membership).where(Membership.reason == "blank_check_company")
         ).scalars():
-            # Re-derived from the rows on file and ticker changes seen by the decision date only.
+            # Re-derived from the issuer of the day and from the SIC rows and ticker changes
+            # seen by the decision date only.
+            held, _ = evidence.issuer_on(held_points.get(m.security_id, []), m.decision_session)
             known = [
                 (day, sic)
-                for day, sic in sorted(rows_sic[m.security_id])
+                for day, sic in sorted(rows_sic[(m.security_id, held.cik if held else "")])
                 if day <= m.decision_session
             ]
             seen = [
@@ -993,6 +1053,28 @@ def report(facts: dict) -> str:
                 + (f"kept separate because {link.reason[:150]}" if link else "UNEXPLAINED")
             )
         print(f"  Possible duplicates without a recorded reason: {unexplained_pairs}")
+        identity = evidence.curated_identity_links(s)
+        print(
+            f"  Documented identity exceptions (one security across a suspension longer than "
+            f"{evidence.TRADING_GAP_MAX_SESSIONS} sessions; checked by scripts/audit_merges.py): {len(identity)}"
+        )
+        for link, missing in identity:
+            link_id = evidence.identity_link_id(link)
+            joined = [
+                sid for sid, items in history.items() if any(h.linked_by == link_id for h in items)
+            ]
+            gap = len(trading_days(link.old_last, link.new_first)) - 2
+            print(
+                f"    {link.old_symbol} (last trade {link.old_last}) -> {link.new_symbol} (first trade "
+                f"{link.new_first}), CIK {link.cik}, {gap} sessions without a trade; quotes found "
+                f"{len(link.quotes) - len(missing)} of {len(link.quotes)}; "
+                + (
+                    f"applied: id {joined[0]} {path(joined[0])}"
+                    if joined
+                    else "NOT APPLIED (quotes missing or segments not found)"
+                )
+            )
+            print(f"      {link.note}")
 
         print("\n10. EXIT-VALUE AUDIT (no value without evidence)")
         deals = {d.security_id: d for d in s.execute(select(DealValue)).scalars()}

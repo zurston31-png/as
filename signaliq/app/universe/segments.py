@@ -98,6 +98,23 @@ class GapLink:
     later_first: date
 
 
+@dataclass(frozen=True)
+class IdentityLink:
+    """Two segments of different tickers that are one security across a long suspension.
+
+    A documented exception to the rule that a silence of more than ``MAX_GAP_SESSIONS``
+    ends a listing: used only for an entry in ``app.universe.curated`` whose SEC passages
+    were all found (``CURATED_IDENTITY_LINKS``). The exact segments are named by their last
+    and first sessions, so nothing else is joined.
+    """
+
+    link_id: str
+    old_symbol: str
+    old_last: date
+    new_symbol: str
+    new_first: date
+
+
 @dataclass
 class Chain:
     """One security: segments in time order, and the events that joined them."""
@@ -167,6 +184,7 @@ def build_chains(
     segments_by_symbol: Mapping[str, Sequence[Segment]],
     name_changes: Iterable[NameChange],
     gap_links: Iterable[GapLink] = (),
+    identity_links: Iterable[IdentityLink] = (),
 ) -> list[Chain]:
     """Link segments by rename events and return one chain per security.
 
@@ -179,6 +197,31 @@ def build_chains(
     """
     successor: dict[tuple[str, date], tuple[tuple[str, date], str]] = {}
     has_predecessor: set[tuple[str, date]] = set()
+    # Documented exceptions first: each names its two segments exactly. One whose segments
+    # are missing, overlap or are already linked is ignored.
+    for link in sorted(identity_links, key=lambda x: (x.old_last, x.link_id)):
+        old = next(
+            (
+                s
+                for s in segments_by_symbol.get(link.old_symbol, ())
+                if s.last_session == link.old_last
+            ),
+            None,
+        )
+        new = next(
+            (
+                s
+                for s in segments_by_symbol.get(link.new_symbol, ())
+                if s.first_session == link.new_first
+            ),
+            None,
+        )
+        if old is None or new is None or old.key in successor or new.key in has_predecessor:
+            continue
+        if new.first_session <= old.last_session:
+            continue
+        successor[old.key] = (new.key, link.link_id)
+        has_predecessor.add(new.key)
     # Trading gaps first: the same ticker resuming is the strongest kind of link, and
     # each was decided from evidence beforehand. A link whose segments are missing or
     # already linked is ignored.

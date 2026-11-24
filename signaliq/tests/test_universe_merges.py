@@ -17,9 +17,9 @@ from app.universe.curated import CuratedFact, SecQuote
 from app.universe.database import open_research_database
 from app.universe.models import (
     CorporateAction,
+    IssuerEvidence,
     Security,
     SecurityBar,
-    SecurityIssuer,
     SegmentLink,
     TickerBar,
     TickerHistory,
@@ -152,11 +152,47 @@ def test_different_issuers_keep_them_apart(research):
     with session_scope(research) as session:
         add(session, 1, "TESTA", DAYS[:50], 10.0)
         add(session, 2, "TESTA", DAYS[80:], 10.0, status="trading")
-        session.add(SecurityIssuer(security_id=1, cik="0000000001", name="A", how="form25"))
-        session.add(SecurityIssuer(security_id=2, cik="0000000002", name="B", how="ticker_today"))
+        for sid, cik, day in ((1, "0000000001", DAYS[30]), (2, "0000000002", DAYS[100])):
+            session.add(
+                IssuerEvidence(
+                    security_id=sid,
+                    symbol="TESTA",
+                    filed=day,
+                    cik=cik,
+                    name=cik,
+                    how="cover_page",
+                    url="u",
+                )
+            )
     [(decision, reason)] = decide(research)
     assert decision == "kept_separate"
     assert "different issuers" in reason
+
+
+def test_the_issuers_compared_across_a_gap_are_those_of_the_day(research):
+    # The later security's ticker passed to another company only after it resumed; at the
+    # gap both sides belong to one company, so the issuer test does not separate them.
+    with session_scope(research) as session:
+        add(session, 1, "TESTA", DAYS[:50], 10.0)
+        add(session, 2, "TESTA", DAYS[80:], 10.0, status="trading")
+        for sid, cik, day in (
+            (1, "0000000001", DAYS[30]),
+            (2, "0000000001", DAYS[85]),
+            (2, "0000000002", DAYS[200]),
+        ):
+            session.add(
+                IssuerEvidence(
+                    security_id=sid,
+                    symbol="TESTA",
+                    filed=day,
+                    cik=cik,
+                    name=cik,
+                    how="cover_page",
+                    url="u",
+                )
+            )
+    [(decision, reason)] = decide(research)
+    assert decision == "merged", reason
 
 
 def test_an_exit_during_the_gap_keeps_them_apart(research):
@@ -253,3 +289,87 @@ def test_merges_from_earlier_passes_are_kept_and_assembly_uses_them(research):
     with session_scope(research) as session:
         kept = session.query(SegmentLink).filter_by(decision="merged").count()
         assert kept == 1
+
+
+# =============================================================================
+# Documented identity exceptions (a long suspension under a new ticker)
+# =============================================================================
+
+LONG = trading_days(date(2021, 1, 4), date(2024, 12, 31))
+
+
+def test_an_identity_link_joins_two_tickers_across_a_long_suspension_and_nothing_else():
+    old, _ = seg.split_segments("TESTA", bars(LONG[:100], 18.9))
+    new, _ = seg.split_segments("TESTB", bars(LONG[800:], 20.0))
+    segments = {"TESTA": old, "TESTB": new}
+    rename = seg.NameChange("rn", "TESTA", "TESTB", LONG[790])
+    # A rename alone does not bridge 699 sessions without a trade.
+    assert len(seg.build_chains(segments, [rename])) == 2
+    link = seg.IdentityLink("identity:TESTA>TESTB", "TESTA", LONG[99], "TESTB", LONG[800])
+    chains = seg.build_chains(segments, [rename], [], [link])
+    assert len(chains) == 1
+    assert [s.symbol for s in chains[0].segments] == ["TESTA", "TESTB"]
+    assert chains[0].links == ["identity:TESTA>TESTB"]
+    # Off by one session on either side: the named segments do not exist, nothing is joined.
+    for wrong in (
+        seg.IdentityLink("x", "TESTA", LONG[98], "TESTB", LONG[800]),
+        seg.IdentityLink("x", "TESTA", LONG[99], "TESTB", LONG[801]),
+    ):
+        assert len(seg.build_chains(segments, [], [], [wrong])) == 2
+
+
+def test_an_identity_link_never_joins_overlapping_trading():
+    old, _ = seg.split_segments("TESTA", bars(LONG[:100], 10))
+    new, _ = seg.split_segments("TESTB", bars(LONG[50:200], 10))
+    link = seg.IdentityLink("x", "TESTA", LONG[99], "TESTB", LONG[50])
+    assert len(seg.build_chains({"TESTA": old, "TESTB": new}, [], [], [link])) == 2
+
+
+def _ticker_bars(session, symbol, days, price):
+    for d in days:
+        session.add(
+            TickerBar(
+                symbol=symbol,
+                session=d,
+                open=price,
+                high=price,
+                low=price,
+                close=price,
+                volume=1000,
+                vwap=price,
+                trade_count=10,
+                is_filler=False,
+            )
+        )
+
+
+@pytest.mark.parametrize(("missing", "expected"), [([], 1), (["a quote"], 2)])
+def test_assembly_applies_an_identity_exception_only_when_its_sec_quotes_are_found(
+    research, monkeypatch, missing, expected
+):
+    from app.universe.curated import CuratedIdentityLink
+
+    link = CuratedIdentityLink(
+        "TESTA", LONG[99], "TESTB", LONG[800], "0000000001", (SecQuote("u", "t"),), "test"
+    )
+    monkeypatch.setattr(evidence, "curated_identity_links", lambda s: [(link, missing)])
+    with session_scope(research) as session:
+        _ticker_bars(session, "TESTA", LONG[:100], 18.9)
+        _ticker_bars(session, "TESTB", LONG[800:], 20.0)
+    with session_scope(research) as session:
+        chains = p.assemble(session).chains
+    assert len(chains) == expected
+    if expected == 1:
+        assert chains[0].links == [evidence.identity_link_id(link)]
+
+
+def test_the_yandex_nebius_exception_names_one_registrant_and_its_exact_segments():
+    from app.universe.curated import CURATED_IDENTITY_LINKS
+
+    [link] = CURATED_IDENTITY_LINKS
+    assert (link.old_symbol, link.new_symbol, link.cik) == ("YNDX", "NBIS", "0001513845")
+    assert link.old_last == date(2022, 2, 25)
+    assert link.new_first == date(2024, 10, 21)
+    # Every quote is from the registrant's own filings, all dated before 2025.
+    assert all("/edgar/data/1513845/" in q.url for q in link.quotes)
+    assert all(q.url.split("/")[-2][10:12] in ("22", "24") for q in link.quotes)

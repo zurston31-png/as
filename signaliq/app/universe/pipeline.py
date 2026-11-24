@@ -381,7 +381,16 @@ def assemble(session: Session) -> Assembled:
             select(SegmentLink).where(SegmentLink.decision == "merged")
         ).scalars()
     ]
-    return Assembled(seg.build_chains(segments, renames, gaps), fillers, segments)
+    from app.universe.evidence import curated_identity_links, identity_link_id
+
+    identities = [
+        seg.IdentityLink(
+            identity_link_id(link), link.old_symbol, link.old_last, link.new_symbol, link.new_first
+        )
+        for link, missing in curated_identity_links(session)
+        if not missing
+    ]
+    return Assembled(seg.build_chains(segments, renames, gaps, identities), fillers, segments)
 
 
 def classify_exit(chain: seg.Chain, events: list[CorporateAction], data_end_sessions: list[date]):

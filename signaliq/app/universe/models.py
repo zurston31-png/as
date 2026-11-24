@@ -288,9 +288,33 @@ class SecurityIssuer(ResearchBase):
     security_id: Mapped[int] = mapped_column(ForeignKey("securities.security_id"), primary_key=True)
     cik: Mapped[str] = mapped_column(String(10), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
-    #: ``form25`` (delisting notice at the last trade) or ``ticker_today`` (the
-    #: ticker's holder today, accepted only if it filed while the security traded).
+    #: The issuer at the last trade, from the dated ``IssuerEvidence`` (``how`` is that
+    #: evidence's kind: ``cover_page``, ``form25`` or ``full_text``).
     how: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class IssuerEvidence(ResearchBase):
+    """A dated fact that ``cik`` held ``symbol`` (one of the security's tickers) on ``filed``.
+
+    ``how``: ``cover_page`` (the company's own 10-K, 10-Q, 8-K, 20-F or 40-F lists the
+    ticker under "Trading Symbol(s)"; SEC has required that cover table since 2019),
+    ``form25`` (the delisting notice at the last trade) or ``full_text`` (the company's own
+    filing names the ticker as its own, "Expro Group (NYSE: XPRO)"). The issuer on a day is
+    the company of the latest evidence on or before it (``issuer_on``).
+    """
+
+    __tablename__ = "issuer_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    security_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.security_id"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    filed: Mapped[date] = mapped_column(Date, nullable=False)
+    cik: Mapped[str] = mapped_column(String(10), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    how: Mapped[str] = mapped_column(String(32), nullable=False)
+    url: Mapped[str] = mapped_column(String(300), nullable=False)
 
 
 class IssuerSic(ResearchBase):

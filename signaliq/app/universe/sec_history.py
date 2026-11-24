@@ -20,7 +20,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app.universe.sec import ARCHIVES, SCOPE_END, CachedSec
+from app.universe.sec import ARCHIVES, SCOPE_END, SUBMISSIONS_PAGE_URL, CachedSec, SecUnavailable
 from app.universe.sectypes import _NAME_NOISE
 
 FTS_URL = "https://efts.sec.gov/LATEST/search-index"
@@ -109,23 +109,62 @@ def _day(text: str | None) -> date | None:
         return None
 
 
-def parse_submissions(text: str) -> Submissions | None:
+#: Older submission pages that end before this date are not read: nothing in scope
+#: (2016-2024, with a year of SIC history before a security's first trade) needs them.
+OLDEST_NEEDED = date(2014, 1, 1)
+
+
+def _block_filings(block: dict) -> list[tuple[str, date, str]]:
+    return [
+        (form, filed, accession)
+        for form, day, accession in zip(
+            block.get("form", []),
+            block.get("filingDate", []),
+            block.get("accessionNumber", []),
+            strict=False,
+        )
+        if (filed := _day(day)) is not None and filed < SCOPE_END
+    ]
+
+
+def older_pages(text: str) -> list[str]:
+    """Names of the company's older submission pages that can hold filings in scope."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    files = (data.get("filings") or {}).get("files") or [] if isinstance(data, dict) else []
+    return [
+        f["name"]
+        for f in files
+        if f.get("name") and not ((to := _day(f.get("filingTo"))) and to < OLDEST_NEEDED)
+    ]
+
+
+def parse_submissions(text: str, pages: Sequence[str] = ()) -> Submissions | None:
+    """A company's record from its submissions file and the texts of its older pages.
+
+    SEC's file lists only the most recent filings (about a thousand); a heavy filer's
+    2016-2024 filings are on the older pages, so without them the company looks as if it
+    had filed nothing then (Toronto-Dominion Bank).
+    """
     try:
         data = json.loads(text)
     except ValueError:
         return None
     if not isinstance(data, dict) or "cik" not in data:
         return None
-    recent = data.get("filings", {}).get("recent", {})
+    rows = _block_filings(data.get("filings", {}).get("recent", {}))
+    for page in pages:
+        try:
+            rows += _block_filings(json.loads(page))
+        except (ValueError, AttributeError):
+            return None
+    seen: set[str] = set()
     filings = tuple(
-        (form, filed, accession)
-        for form, day, accession in zip(
-            recent.get("form", []),
-            recent.get("filingDate", []),
-            recent.get("accessionNumber", []),
-            strict=False,
-        )
-        if (filed := _day(day)) is not None and filed < SCOPE_END
+        row
+        for row in sorted(rows, key=lambda r: (r[1], r[2]), reverse=True)
+        if not (row[2] in seen or seen.add(row[2]))
     )
     return Submissions(
         str(data["cik"]).zfill(10),
@@ -186,9 +225,100 @@ def full_text(
     return parse_full_text(text) if text else []
 
 
+#: SEC's cover-page table ("Title of each class / Trading Symbol(s) / Name of each
+#: exchange") is on 10-K, 10-Q, 8-K, 20-F and 40-F filings made since mid-2019.
+COVER_FORMS = "10-K,10-Q,8-K,20-F,40-F"
+COVER_FIRST = date(2019, 1, 1)
+#: How far after "Trading Symbol" a ticker may stand to be read as listed in that table.
+COVER_WINDOW = 600
+
+
+#: An exchange named right after a ticker in the cover table.
+_EXCHANGE_AFTER = re.compile(
+    r"^[\s\u200b\u00a0,;:|()\-]{0,12}(?:the\s+)?(?:nasdaq|new\s+york\s+stock\s+exchange|nyse|cboe|bats"
+    r"|chicago\s+stock\s+exchange|nyse\s+american|american\s+stock\s+exchange)",
+    re.I,
+)
+
+
+def cover_page_symbol(text: str, ticker: str, window: int = COVER_WINDOW) -> str | None:
+    """The cover-page fragment where a filing lists ``ticker`` under "Trading Symbol(s)".
+
+    Within ``window`` characters after the column heading, the ticker must stand alone, in
+    capitals, and be followed by the exchange it is registered on, as in the table's rows
+    ("Common Stock XOM New York Stock Exchange"). A ticker merely written near the table
+    ("AT&T", "NYSE", a parent company named in the next paragraph) does not count.
+    """
+    pattern = re.compile(rf"(?<![A-Za-z0-9.&'\-]){re.escape(ticker)}(?![A-Za-z0-9&'\-])")
+    for heading in re.finditer(r"Trading\s+Symbol", text, re.I):
+        after = text[heading.end() : heading.end() + window]
+        for found in pattern.finditer(after):
+            if _EXCHANGE_AFTER.match(after[found.end() : found.end() + 60]):
+                return text[heading.start() : heading.end() + found.end() + 30].strip()
+    return None
+
+
+def cover_page_hits(
+    sec: CachedSec, ticker: str, first: date, last: date, cik: str | None = None
+) -> list[TextHit]:
+    """Filings (cover-page forms) dated ``first``..``last`` holding the ticker and the
+    "Trading Symbol" heading, optionally only those of company ``cik``. From 2019 on.
+
+    A hit only proposes a company: ``cover_page_symbol`` on the document confirms it.
+    """
+    first = max(first, COVER_FIRST)
+    last = min(last, SCOPE_END - timedelta(days=1))
+    if first > last:
+        return []
+    params = {
+        "q": f'"{ticker}" "Trading Symbol"',
+        "dateRange": "custom",
+        "startdt": first.isoformat(),
+        "enddt": last.isoformat(),
+        "forms": COVER_FORMS,
+    }
+    if cik:
+        params["ciks"] = str(int(cik)).zfill(10)
+    text = sec.get(FTS_URL, params)
+    if cik and text and (last - first).days > 31 and _truncated(text):
+        # One company with more filings than a page of results: split the period, so none
+        # is missed. (Without a company the answer only proposes candidates; one page will do.)
+        middle = first + (last - first) / 2
+        return cover_page_hits(sec, ticker, first, middle, cik) + cover_page_hits(
+            sec, ticker, middle + timedelta(days=1), last, cik
+        )
+    hits = parse_full_text(text) if text else []
+    return [h for h in hits if cik is None or h.cik == str(int(cik)).zfill(10)]
+
+
+def _truncated(text: str) -> bool:
+    """Whether a full-text answer holds fewer documents than it matched."""
+    try:
+        body = json.loads(text)["hits"]
+        return int(body["total"]["value"]) > len(body["hits"])
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
 def submissions(sec: CachedSec, cik: str) -> Submissions | None:
+    """The company's record with every filing in scope, older pages included.
+
+    None when the record (or, cache only, one of its pages) is not available: a partial
+    filing list is never returned. A listed page SEC does not serve stops the run
+    (``SecUnavailable``) rather than being read as "no filings".
+    """
     text = sec.get(SUBMISSIONS_URL.format(cik=str(int(cik)).zfill(10)))
-    return parse_submissions(text) if text else None
+    if not text:
+        return None
+    pages = []
+    for name in older_pages(text):
+        page = sec.get(SUBMISSIONS_PAGE_URL.format(name=name))
+        if page is None:
+            return None
+        if not page:
+            raise SecUnavailable(f"SEC listed but did not serve {name}")
+        pages.append(page)
+    return parse_submissions(text, pages)
 
 
 def filing_sic(sec: CachedSec, cik: str, accession: str) -> str | None:

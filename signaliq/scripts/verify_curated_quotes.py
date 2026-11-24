@@ -17,7 +17,12 @@ import httpx
 
 from app.universe import sec
 from app.universe import sec_history as sh
-from app.universe.curated import CURATED_DEALS, CURATED_FACTS, CURATED_RENAMES
+from app.universe.curated import (
+    CURATED_DEALS,
+    CURATED_FACTS,
+    CURATED_IDENTITY_LINKS,
+    CURATED_RENAMES,
+)
 
 
 def main() -> int:
@@ -26,11 +31,12 @@ def main() -> int:
     with httpx.Client(headers={"User-Agent": sec.USER_AGENT}, timeout=60) as client:
         for kind, entries in (
             ("rename", CURATED_RENAMES),
+            ("same", CURATED_IDENTITY_LINKS),
             ("fact", CURATED_FACTS),
             ("deal", CURATED_DEALS),
         ):
             for e in entries:
-                if kind == "rename":
+                if kind in ("rename", "same"):
                     label = f"{e.old_symbol} -> {e.new_symbol}"
                 else:
                     symbol = getattr(e, "symbol", getattr(e, "target_symbol", ""))
