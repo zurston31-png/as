@@ -1020,7 +1020,10 @@ def issuer_records(
        SEC's ticker list of any of its tickers (newest first), only if that company filed
        something while the security traded under that ticker.
     3. ``full_text``: a company whose own filings name the ticker as its own ("Expro Group
-       (NYSE: XPRO)") while the security traded under it.
+       (NYSE: XPRO)") while the security traded under it: its name within 60 characters
+       before the ticker, and, when Wikidata names the security's company for its period,
+       a current or former name that agrees with it (a mortgage trust listing First Republic as a
+       tenant, or Groupon citing Sears, is not the issuer).
 
     Identity only: SIC is then read point in time from that company's filing headers.
     """
@@ -1028,6 +1031,15 @@ def issuer_records(
     history = defaultdict(list)
     for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
         history[h.security_id].append(h)
+    # Company names Wikidata gives for the security during its own period. (OpenFIGI names
+    # today's holder of a ticker, which can be another company, so it is not used here.)
+    shared = _shared_tickers(session)
+    known_names = {
+        sid: {
+            row["itemLabel"]["value"] for h in items for row in _wikidata_rows(session, h, shared)
+        }
+        for sid, items in history.items()
+    }
     out = []
     for security in session.execute(select(Security).order_by(Security.security_id)).scalars():
         finding = sec_found.get(security.security_id)
@@ -1046,13 +1058,25 @@ def issuer_records(
                     found = (cik, name, "ticker_today")
                     break
         if found is None:
+            known = known_names.get(security.security_id, set())
             for h in tickers:
                 candidates = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
                 for cik in sh.ranked_candidates(candidates):
-                    confirmed = sh.confirm_writer(client, candidates[cik], h.symbol)
-                    if confirmed:
-                        found = (cik, confirmed[0].name, "full_text")
-                        break
+                    confirmed = sh.confirm_writer(
+                        client, candidates[cik], h.symbol, window=sh.ISSUER_WINDOW
+                    )
+                    if not confirmed:
+                        continue
+                    if known:
+                        # The company's current or any former name (Hywin -> Santech).
+                        company = sh.submissions(client, cik)
+                        names = {confirmed[0].name} | {
+                            f.name for f in (company.former_names if company else ())
+                        }
+                        if not any(sectypes.names_agree(a, b) for a in names for b in known):
+                            continue
+                    found = (cik, confirmed[0].name, "full_text")
+                    break
                 if found:
                     break
         if found is None:

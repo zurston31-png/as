@@ -368,3 +368,14 @@ def test_blank_check_answers_do_not_depend_on_later_renames():
     future = [date(2022, 3, 1)]
     for day in (date(2020, 7, 1), date(2021, 2, 1), date(2021, 6, 1), date(2022, 2, 1)):
         assert blank_check_on(changes, future, day) == blank_check_on(changes, [], day)
+
+
+def test_issuer_identification_needs_the_name_right_before_the_ticker():
+    far = (
+        "Benchmark Mortgage Trust annual report. Among the largest tenants of the mortgaged "
+        "properties at the end of the year was the bank First Republic Bank (NYSE: FRC)."
+    )
+    assert sh.own_ticker_mention(far, "FRC", "Benchmark 2021-B24 Mortgage Trust", window=200)
+    assert sh.own_ticker_mention(far, "FRC", "Benchmark 2021-B24 Mortgage Trust", window=60) is None
+    near = "Santech Holdings Limited (the Company) (NASDAQ: STEC) today announced"
+    assert sh.own_ticker_mention(near, "STEC", "Santech Holdings Ltd", window=sh.ISSUER_WINDOW)

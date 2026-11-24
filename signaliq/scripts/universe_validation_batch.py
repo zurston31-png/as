@@ -444,13 +444,21 @@ def report(facts: dict) -> str:
         print(
             f"  Common stocks with an issuer (so SIC can be tested): {sum(1 for sid in common_ids if sid in issuers)} of {len(common_ids)}"
         )
-        without = [sid for sid in sorted(common_ids) if sid not in issuers]
+        print("  Securities with no identified SEC issuer, and why:")
+        unexplained_issuers = 0
+        for sid in sorted(set(securities) - set(issuers)):
+            x = securities[sid]
+            reason = curated.CURATED_NO_SEC_ISSUER.get((x.last_symbol, x.last_trade_session))
+            if reason is None and x.security_type != "common":
+                reason = (
+                    f"{x.security_type}, not common stock: outside the universe whatever its issuer"
+                )
+            if reason is None:
+                unexplained_issuers += 1
+                reason = "UNEXPLAINED: a blank-check company here would not be caught"
+            print(f"    id {sid} {path(sid)} ({x.status}): {reason}")
         print(
-            "  Common stocks with no identified issuer (a blank-check company among them would not be caught): "
-            + (
-                ", ".join(f"id {sid} {path(sid)} ({securities[sid].status})" for sid in without)
-                or "none"
-            )
+            f"  Common stocks without an issuer and without a documented reason: {unexplained_issuers}"
         )
         sics = defaultdict(list)
         for r in s.execute(select(IssuerSic).order_by(IssuerSic.as_of)).scalars():
@@ -803,14 +811,26 @@ def report(facts: dict) -> str:
                 ):
                     gap = len(trading_days(xa.last_trade_session, xb.first_session)) - 2
                     suspects.append((cik, a, b, gap))
+        kept_by_pair = {
+            (r.symbol, r.earlier_last, r.later_first): r
+            for r in links
+            if r.decision == "kept_separate"
+        }
+        unexplained_pairs = 0
         print(
             f"  Same issuer and same type, one after the other (could be one security): {len(suspects)}"
-            + "".join(
-                f"\n    CIK {c}: id {a} {path(a)} (to {securities[a].last_trade_session}) and id {b} {path(b)} "
-                f"(from {securities[b].first_session}), {g} sessions apart"
-                for c, a, b, g in suspects
-            )
         )
+        for c, a, b, g in suspects:
+            link = kept_by_pair.get(
+                (history[a][-1].symbol, history[a][-1].valid_to, history[b][0].valid_from)
+            )
+            unexplained_pairs += link is None
+            print(
+                f"    CIK {c}: id {a} {path(a)} (to {securities[a].last_trade_session}) and id {b} {path(b)} "
+                f"(from {securities[b].first_session}), {g} sessions apart: "
+                + (f"kept separate because {link.reason[:150]}" if link else "UNEXPLAINED")
+            )
+        print(f"  Possible duplicates without a recorded reason: {unexplained_pairs}")
 
         print("\n10. EXIT-VALUE AUDIT (no value without evidence)")
         deals = {d.security_id: d for d in s.execute(select(DealValue)).scalars()}

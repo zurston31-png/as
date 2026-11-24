@@ -570,3 +570,18 @@ CURATED_DEALS: tuple[CuratedDeal, ...] = (
         "share per FLAC share. NAMS first traded on 2022-11-23.",
     ),
 )
+
+
+#: Common stocks with no SEC registrant, and why (so no SIC can be read for them).
+CURATED_NO_SEC_ISSUER: dict[tuple[str, date], str] = {
+    ("FRC", date(2023, 4, 28)): (
+        "First Republic Bank was a bank without a holding company; its shares were registered "
+        "with the FDIC, not the SEC (it filed its reports with the FDIC). A bank is not a "
+        "blank-check company, so the SIC test does not apply."
+    ),
+    ("SBNY", date(2023, 3, 10)): (
+        "Signature Bank was a New York state-chartered bank without a holding company; its "
+        "shares were registered with the FDIC, not the SEC. A bank is not a blank-check "
+        "company, so the SIC test does not apply."
+    ),
+}

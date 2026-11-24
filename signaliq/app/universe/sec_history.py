@@ -271,7 +271,7 @@ def plain_text(raw: str | None) -> str:
     return " ".join(re.sub(r"<[^>]+>", " ", html.unescape(raw or "")).split())
 
 
-def own_ticker_mention(text: str, ticker: str, company: str) -> str | None:
+def own_ticker_mention(text: str, ticker: str, company: str, window: int = 200) -> str | None:
     """The sentence fragment where ``company`` names ``ticker`` as its own, or None.
 
     "FSB Bancorp, Inc. (NASDAQ: FSBC)" counts for FSB Bancorp. "Sears Holdings Corp.
@@ -284,12 +284,12 @@ def own_ticker_mention(text: str, ticker: str, company: str) -> str | None:
         return None
     pattern = rf"\b(?:NASDAQ|NYSE(?:\s+(?:American|Arca|MKT))?)\s*:\s*{re.escape(ticker)}\b"
     for match in re.finditer(pattern, text, re.I):
-        before = text[max(0, match.start() - 200) : match.start()]
+        before = text[max(0, match.start() - window) : match.start()]
         if "formerly" in before[-30:].lower():
             continue
         words = "".join(ch if ch.isalnum() else " " for ch in before.upper()).split()
         if lead in words:
-            return text[max(0, match.start() - 200) : match.end() + 1].strip()
+            return text[max(0, match.start() - window) : match.end() + 1].strip()
     return None
 
 
@@ -301,13 +301,25 @@ def _preference(hit: TextHit) -> tuple[int, date]:
     return (2, hit.filed)
 
 
-def confirm_writer(sec: CachedSec, hits: Sequence[TextHit], ticker: str, docs: int = 2):
+#: Name-to-ticker distance for proposing a delisting candidate (a Form 25 must still
+#: match) and the stricter one for naming a security's issuer, which has no second gate.
+CANDIDATE_WINDOW = 200
+ISSUER_WINDOW = 60
+
+
+def confirm_writer(
+    sec: CachedSec,
+    hits: Sequence[TextHit],
+    ticker: str,
+    docs: int = 2,
+    window: int = CANDIDATE_WINDOW,
+):
     """(hit, fragment) where the candidate names the ticker as its own, from its own filing.
 
     Reads at most ``docs`` documents, press releases first.
     """
     for hit in sorted(hits, key=_preference)[:docs]:
-        fragment = own_ticker_mention(plain_text(sec.get(hit.url)), ticker, hit.name)
+        fragment = own_ticker_mention(plain_text(sec.get(hit.url)), ticker, hit.name, window)
         if fragment:
             return hit, fragment
     return None
