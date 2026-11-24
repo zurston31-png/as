@@ -176,19 +176,21 @@ def accession_of(href: str) -> str:
     return found.group(1) if found else ""
 
 
-def submission_rows(block: dict) -> list[tuple[str, date, str, str]]:
-    """(form, filing date, accession, items) from one block of a submissions file."""
+def submission_rows(block: dict) -> list[tuple[str, date, str, str, str]]:
+    """(form, filing date, accession, items, acceptance time) from one submissions block."""
+    forms = block.get("form", [])
     rows = []
-    for form, day, accession, items in zip(
-        block.get("form", []),
+    for form, day, accession, items, accepted in zip(
+        forms,
         block.get("filingDate", []),
         block.get("accessionNumber", []),
-        block.get("items", []) or [""] * len(block.get("form", [])),
+        block.get("items") or [""] * len(forms),
+        block.get("acceptanceDateTime") or [""] * len(forms),
         strict=False,
     ):
         filed = _date(day or "")
         if filed is not None:
-            rows.append((form, filed, accession, items or ""))
+            rows.append((form, filed, accession, items or "", accepted or ""))
     return rows
 
 
@@ -206,7 +208,9 @@ def company_from_submissions(
     for page in pages:
         rows += submission_rows(page)
     seen, filings = set(), []
-    for row_form, filed, accession, items in sorted(rows, key=lambda r: (r[1], r[2]), reverse=True):
+    # Newest first; filings of one day in the order SEC accepted them (as browse-edgar lists them).
+    ordered = sorted(rows, key=lambda r: (r[1], r[4], r[2]), reverse=True)
+    for row_form, filed, accession, items, _accepted in ordered:
         if accession in seen or filed > before or not row_form.startswith(form):
             continue
         seen.add(accession)
@@ -214,7 +218,8 @@ def company_from_submissions(
     return Company(
         cik,
         data.get("name", ""),
-        data.get("sic") or None,
+        # "0000" is SEC's "no SIC assigned", which browse-edgar shows by leaving it out.
+        data.get("sic") if data.get("sic") not in (None, "", "0000") else None,
         data.get("sicDescription") or None,
         tuple(filings[:count]),
     )
@@ -528,7 +533,19 @@ class CachedSec:
         EDGAR matches ``form`` as a prefix ("25" also returns 25-NSE and 25/A). Asking
         per form type matters for busy filers, whose newest 100 filings of all types
         may not reach back to the dates that matter (Monsanto, Time Warner).
+
+        Asked by CIK, the list is built from SEC's JSON service (company_json): it equals
+        browse-edgar's list for all 925 lists compared (5 of them only once browse-edgar
+        was asked again: its cached answers were wrong; see
+        research/results/universe_stage_100/filing_source_check.txt). browse-edgar answers
+        already cached stay in the cache but are no longer read for these lists.
+
+        Asked by ticker, browse-edgar is still used: SEC's JSON ticker list knows only
+        today's tickers, while browse-edgar also resolves retired ones. sec.find uses only
+        the CIK of such a list.
         """
+        if cik_or_ticker.isdigit():
+            return self.company_json(cik_or_ticker, before, form)
         text = self.get(
             BROWSE_URL,
             {

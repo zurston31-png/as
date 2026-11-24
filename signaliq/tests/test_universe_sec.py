@@ -671,3 +671,40 @@ def test_json_list_never_reads_a_missing_page_as_no_filings(tmp_path):
             client.company_json("0000000123", date(2022, 1, 1), "25")
         assert client.company_json("0000000999", date(2022, 1, 1)) is None  # SEC: no such company
     engine.dispose()
+
+
+def test_lists_asked_by_cik_come_from_json_and_ticker_lookups_from_browse_edgar(tmp_path):
+    import json as json_module
+
+    import httpx
+
+    engine = open_research_database(f"sqlite:///{(tmp_path / 'r.db').as_posix()}")
+    factory = create_session_factory(engine)
+    asked = []
+    main = {
+        "cik": "123",
+        "name": "TESTCO INC",
+        "filings": {
+            "recent": submissions_block([("25-NSE", "2022-05-02", "0000000123-22-000002", "")])
+        },
+    }
+    feed = (
+        "<feed><company-info><cik>0000000456</cik><conformed-name>OTHERCO</conformed-name>"
+        "</company-info></feed>"
+    )
+
+    def answer(request):
+        asked.append(request.url.host)
+        if request.url.host == "data.sec.gov":
+            return httpx.Response(200, text=json_module.dumps(main))
+        return httpx.Response(200, text=feed)
+
+    with session_scope(factory) as session:
+        client = sec.CachedSec(session, network=True, sleep=lambda _s: None)
+        client._http = httpx.Client(transport=httpx.MockTransport(answer))
+        by_cik = client.company("0000000123", date(2022, 6, 1), "25")
+        assert [f.form for f in by_cik.filings] == ["25-NSE"]
+        assert asked == ["data.sec.gov"]
+        assert client.company("TSTX", date(2022, 6, 1)).cik == "0000000456"
+        assert asked[-1] == "www.sec.gov"
+    engine.dispose()
