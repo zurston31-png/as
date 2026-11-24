@@ -586,3 +586,88 @@ def test_search_variants_match_edgar_conformed_names():
     assert sec.search_variants("LinkedIn Corporation") == ["LinkedIn Corporation", "linkedin corp"]
     assert sec.search_variants("Express, Inc.") == ["Express, Inc.", "express inc"]
     assert sec.search_variants("monsanto co /new/") == ["monsanto co /new/"]
+
+
+# =============================================================================
+# Filing lists from SEC's JSON service (company_from_submissions)
+# =============================================================================
+
+
+def submissions_block(rows):
+    """A submissions block from (form, date, accession, items) rows. Synthetic only."""
+    return {
+        "form": [r[0] for r in rows],
+        "filingDate": [r[1] for r in rows],
+        "accessionNumber": [r[2] for r in rows],
+        "items": [r[3] for r in rows],
+    }
+
+
+def test_json_list_matches_browse_edgar_rules_prefix_cutoff_order_and_links():
+    data = {
+        "cik": "123",
+        "name": "TESTCO INC",
+        "sic": "7372",
+        "sicDescription": "Services-Prepackaged Software",
+        "filings": {
+            "recent": submissions_block(
+                [
+                    ("8-K", "2022-06-01", "0000000123-22-000003", "1.01,9.01"),  # after the cut-off
+                    ("25-NSE", "2022-05-02", "0000000123-22-000002", ""),
+                    ("8-K", "2022-05-02", "0000000123-22-000001", "2.01,3.03"),
+                    ("25", "2022-04-01", "0000000123-22-000000", ""),
+                ]
+            )
+        },
+    }
+    company = sec.company_from_submissions(data, (), date(2022, 5, 2), "25")
+    assert company.cik == "0000000123"
+    assert [(f.form, f.filed) for f in company.filings] == [
+        ("25-NSE", date(2022, 5, 2)),  # the cut-off day is included
+        ("25", date(2022, 4, 1)),
+    ]
+    assert company.filings[0].href == (
+        "https://www.sec.gov/Archives/edgar/data/123/000000012322000002/0000000123-22-000002-index.htm"
+    )
+    every = sec.company_from_submissions(data, (), date(2022, 5, 2))
+    assert [f.form for f in every.filings] == ["25-NSE", "8-K", "25"]  # newest first
+    assert sec.eight_k_category(every.filings[1].items) == "acquired"
+
+
+def test_json_list_reads_older_pages_and_keeps_only_the_newest_hundred():
+    recent = [("4", "2023-01-02", f"0000000123-23-{i:06d}", "") for i in range(60)]
+    older = [("4", "2015-03-02", f"0000000123-15-{i:06d}", "") for i in range(60)]
+    data = {"cik": "123", "filings": {"recent": submissions_block(recent)}}
+    company = sec.company_from_submissions(data, [submissions_block(older)], date(2024, 1, 1))
+    assert len(company.filings) == 100
+    assert sum(f.filed.year == 2015 for f in company.filings) == 40
+
+
+def test_json_list_never_reads_a_missing_page_as_no_filings(tmp_path):
+    import json as json_module
+
+    import httpx
+
+    engine = open_research_database(f"sqlite:///{(tmp_path / 'r.db').as_posix()}")
+    factory = create_session_factory(engine)
+    main = {
+        "cik": "123",
+        "name": "TESTCO INC",
+        "filings": {
+            "recent": submissions_block([("8-K", "2023-01-02", "0000000123-23-000001", "")]),
+            "files": [{"name": "CIK0000000123-submissions-001.json", "filingFrom": "2001-01-01"}],
+        },
+    }
+
+    def answer(request):
+        if request.url.path.endswith("CIK0000000123.json"):
+            return httpx.Response(200, text=json_module.dumps(main))
+        return httpx.Response(404, text="")
+
+    with session_scope(factory) as session:
+        client = sec.CachedSec(session, network=True, sleep=lambda _s: None)
+        client._http = httpx.Client(transport=httpx.MockTransport(answer))
+        with pytest.raises(sec.SecUnavailable):
+            client.company_json("0000000123", date(2022, 1, 1), "25")
+        assert client.company_json("0000000999", date(2022, 1, 1)) is None  # SEC: no such company
+    engine.dispose()

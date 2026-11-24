@@ -37,6 +37,7 @@ can be reproduced without asking SEC again.
 
 import hashlib
 import html
+import json
 import re
 import time
 from collections.abc import Iterable, Sequence
@@ -153,6 +154,69 @@ def parse_company_feed(text: str) -> Company | None:
         pick("assigned-sic"),
         html.unescape(pick("assigned-sic-desc") or "") or None,
         tuple(filings),
+    )
+
+
+# The same filing list from SEC's JSON service (data.sec.gov/submissions), which answers
+# reliably where browse-edgar often returns a passing 503. See scripts/compare_filing_sources.py
+# for the equivalence check against every browse-edgar list in the cache.
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+SUBMISSIONS_PAGE_URL = "https://data.sec.gov/submissions/{name}"
+TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data"
+
+
+def filing_index_href(cik: str, accession: str) -> str:
+    """The filing index page, as browse-edgar's <filing-href> gives it."""
+    return f"{ARCHIVES_URL}/{int(cik)}/{accession.replace('-', '')}/{accession}-index.htm"
+
+
+def accession_of(href: str) -> str:
+    found = re.search(r"(\d{10}-\d{2}-\d{6})", href)
+    return found.group(1) if found else ""
+
+
+def submission_rows(block: dict) -> list[tuple[str, date, str, str]]:
+    """(form, filing date, accession, items) from one block of a submissions file."""
+    rows = []
+    for form, day, accession, items in zip(
+        block.get("form", []),
+        block.get("filingDate", []),
+        block.get("accessionNumber", []),
+        block.get("items", []) or [""] * len(block.get("form", [])),
+        strict=False,
+    ):
+        filed = _date(day or "")
+        if filed is not None:
+            rows.append((form, filed, accession, items or ""))
+    return rows
+
+
+def company_from_submissions(
+    data: dict, pages: Sequence[dict], before: date, form: str = "", count: int = 100
+) -> Company:
+    """browse-edgar's list for one company: the newest ``count`` filings dated on or before
+    ``before`` whose form starts with ``form`` (EDGAR's prefix match), newest first.
+
+    ``pages`` are the company's older submissions files, needed when the recent block
+    does not reach back far enough.
+    """
+    cik = str(data["cik"]).zfill(10)
+    rows = submission_rows(data.get("filings", {}).get("recent", {}))
+    for page in pages:
+        rows += submission_rows(page)
+    seen, filings = set(), []
+    for row_form, filed, accession, items in sorted(rows, key=lambda r: (r[1], r[2]), reverse=True):
+        if accession in seen or filed > before or not row_form.startswith(form):
+            continue
+        seen.add(accession)
+        filings.append(Filing(row_form, filed, items, filing_index_href(cik, accession)))
+    return Company(
+        cik,
+        data.get("name", ""),
+        data.get("sic") or None,
+        data.get("sicDescription") or None,
+        tuple(filings[:count]),
     )
 
 
@@ -355,6 +419,16 @@ def cash_terms(text: str) -> tuple[float | None, str]:
 # =============================================================================
 
 
+def cache_key(url: str, params: dict | None = None) -> str:
+    """The cache key of an SEC request (stable between runs)."""
+    key = url + (
+        "?" + "&".join(f"{k}={v}" for k, v in sorted((params or {}).items())) if params else ""
+    )
+    if len(key) > 128:  # a stable digest: the cache must answer the same key in every run
+        key = key[:96] + "#" + hashlib.sha256(key.encode()).hexdigest()[:24]
+    return key
+
+
 class CachedSec:
     """SEC requests through the research database cache. ``network=False`` reads the cache only."""
 
@@ -374,11 +448,7 @@ class CachedSec:
             self._http.close()
 
     def get(self, url: str, params: dict | None = None) -> str | None:
-        key = url + (
-            "?" + "&".join(f"{k}={v}" for k, v in sorted((params or {}).items())) if params else ""
-        )
-        if len(key) > 128:  # a stable digest: the cache must answer the same key in every run
-            key = key[:96] + "#" + hashlib.sha256(key.encode()).hexdigest()[:24]
+        key = cache_key(url, params)
         row = self.session.get(ExternalResponse, ("sec", key))
         if row is not None and not self.refresh:
             return row.response
@@ -411,6 +481,46 @@ class CachedSec:
         if self.stored % COMMIT_EVERY == 0:
             self.session.commit()
         return text
+
+    def ticker_cik(self, ticker: str) -> str | None:
+        """Today's holder of a ticker in SEC's ticker list (as browse-edgar resolves CIK=TICKER)."""
+        text = self.get(TICKERS_URL)
+        if not text:
+            return None
+        for row in json.loads(text).values():
+            if str(row.get("ticker", "")).upper() == ticker.upper():
+                return str(row["cik_str"]).zfill(10)
+        return None
+
+    def company_json(self, cik_or_ticker: str, before: date, form: str = "") -> Company | None:
+        """The browse-edgar filing list built from SEC's JSON service (company_from_submissions).
+
+        None only when SEC answers that there is no such company or ticker (or, cache-only,
+        when the answer is not cached). An unanswered request raises SecUnavailable.
+        """
+        cik = cik_or_ticker.zfill(10) if cik_or_ticker.isdigit() else self.ticker_cik(cik_or_ticker)
+        if cik is None:
+            return None
+        text = self.get(SUBMISSIONS_URL.format(cik=cik))
+        if not text:
+            return None
+        data = json.loads(text)
+        if not isinstance(data, dict) or "cik" not in data:
+            return None
+        recent = company_from_submissions(data, (), before, form)
+        pages = []
+        if len(recent.filings) < 100:
+            for file in data.get("filings", {}).get("files", []):
+                start = _date(file.get("filingFrom", "") or "")
+                if start is not None and start > before:
+                    continue  # the whole page is after the cut-off
+                page = self.get(SUBMISSIONS_PAGE_URL.format(name=file["name"]))
+                if page is None:
+                    return None  # cache-only and not cached: no partial list
+                if not page:  # a listed page SEC does not serve: never read as "no filings"
+                    raise SecUnavailable(f"submissions page {file['name']} not served for {cik}")
+                pages.append(json.loads(page))
+        return company_from_submissions(data, pages, before, form)
 
     def company(self, cik_or_ticker: str, before: date, form: str = "") -> Company | None:
         """A company's newest 100 filings before ``before``, optionally of one form type.
