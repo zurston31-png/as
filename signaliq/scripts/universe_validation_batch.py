@@ -669,7 +669,8 @@ def report(facts: dict) -> str:
                 )
 
         print(
-            "\n6. POINT-IN-TIME MEMBERSHIP (validation rule: top 25 eligible common stocks of the batch)"
+            f"\n6. POINT-IN-TIME MEMBERSHIP (rule: top {RULE.size} eligible common stocks "
+            "of the batch)"
         )
         print(f"  Rule: {RULE.to_dict()}  fingerprint {RULE.fingerprint()[:16]}")
         decisions = facts["decisions"]
@@ -770,7 +771,15 @@ def report(facts: dict) -> str:
                 )
             ]
             if not ids:
-                print(f"  Curated rename {r.old_symbol} -> {r.new_symbol}: NOT linked")
+                present = any(
+                    h.symbol in (r.old_symbol, r.new_symbol) for hs in history.values() for h in hs
+                )
+                print(
+                    f"  Curated rename {r.old_symbol} -> {r.new_symbol}: NOT linked"
+                    if present
+                    else f"  Curated rename {r.old_symbol} -> {r.new_symbol}: neither ticker is "
+                    "in this batch (nothing to link)"
+                )
                 continue
             sid = ids[0]
             hs = history[sid]

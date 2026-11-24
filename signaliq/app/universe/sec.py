@@ -546,6 +546,10 @@ class CachedSec:
         """
         if cik_or_ticker.isdigit():
             return self.company_json(cik_or_ticker, before, form)
+        return self.company_browse(cik_or_ticker, before, form)
+
+    def company_browse(self, cik_or_ticker: str, before: date, form: str = "") -> Company | None:
+        """The list as browse-edgar gives it (cached answer, or a request)."""
         text = self.get(
             BROWSE_URL,
             {

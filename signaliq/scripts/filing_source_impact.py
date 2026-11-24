@@ -37,6 +37,9 @@ class Incomplete(Exception):
 class BrowseClient(sec.CachedSec):
     """Cache only; every list from the cached browse-edgar answers. A missing answer raises."""
 
+    def company(self, cik_or_ticker, before, form=""):
+        return self.company_browse(cik_or_ticker, before, form)
+
     def get(self, url, params=None):
         text = super().get(url, params)
         if text is None:
@@ -50,7 +53,7 @@ class JsonClient(BrowseClient):
     def company(self, cik_or_ticker, before, form=""):
         if cik_or_ticker.isdigit():
             return self.company_json(cik_or_ticker, before, form)
-        return super().company(cik_or_ticker, before, form)
+        return self.company_browse(cik_or_ticker, before, form)
 
 
 def summary(f: sec.SecFinding | None):
