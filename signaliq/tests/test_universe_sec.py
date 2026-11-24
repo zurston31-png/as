@@ -245,6 +245,28 @@ def test_the_cache_key_of_a_long_request_is_stable_between_runs(tmp_path):
     engine.dispose()
 
 
+def test_fetched_answers_survive_a_run_that_is_stopped(tmp_path):
+    """Answers are committed every COMMIT_EVERY requests, so a stopped run keeps them."""
+    import httpx
+
+    engine = open_research_database(f"sqlite:///{(tmp_path / 'r.db').as_posix()}")
+    factory = create_session_factory(engine)
+    session = factory()
+    client = sec.CachedSec(session, network=True, sleep=lambda _s: None)
+    client._http = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text=str(request.url)))
+    )
+    urls = [f"https://www.sec.gov/test/{i}" for i in range(sec.COMMIT_EVERY + 3)]
+    for url in urls:
+        assert client.get(url) == url
+    session.rollback()  # the run is stopped before its session commits
+    session.close()
+    with session_scope(factory) as session:
+        kept = {r.request_key for r in session.query(ExternalResponse)}
+    assert kept == set(urls[: sec.COMMIT_EVERY])  # the last few, not yet committed, are lost
+    engine.dispose()
+
+
 # =============================================================================
 # Matching a security to an SEC company
 # =============================================================================

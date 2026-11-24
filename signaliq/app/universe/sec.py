@@ -52,6 +52,9 @@ USER_AGENT = "SignalIQ-Research universe-validation/0.3 signaliq.research@gmail.
 BROWSE_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
 ARCHIVES = "https://www.sec.gov"
 PAUSE_SECONDS = 0.15  # about 6 requests per second; SEC allows at most 10
+# Fetched answers are committed every this many network requests, so a run that is stopped
+# keeps what it has asked (a later run reads it from the cache instead of asking again).
+COMMIT_EVERY = 25
 WINDOW_BEFORE = 45
 WINDOW_AFTER = 90
 SCOPE_END = date(2025, 1, 1)
@@ -380,6 +383,8 @@ class CachedSec:
             self.failures.append(key)
             return None
         self.session.merge(ExternalResponse(source="sec", request_key=key, response=text))
+        if self.requests % COMMIT_EVERY == 0:
+            self.session.commit()
         return text
 
     def company(self, cik_or_ticker: str, before: date, form: str = "") -> Company | None:
