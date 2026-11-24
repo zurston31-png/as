@@ -276,20 +276,27 @@ def test_a_dropped_connection_is_retried_and_never_read_as_an_empty_answer(tmp_p
 
     def flaky(request):
         calls.append(request.url)
-        if len(calls) < 3:
+        if len(calls) == 1:
             raise httpx.ConnectError("Connection reset by peer")
+        if len(calls) == 2:
+            return httpx.Response(503, text="File Unavailable")  # SEC's passing 503
         return httpx.Response(200, text="answer")
+
+    def down(request):
+        return httpx.Response(503, text="File Unavailable")
 
     with session_scope(factory) as session:
         client = sec.CachedSec(session, network=True, sleep=lambda _s: None)
         client._http = httpx.Client(transport=httpx.MockTransport(flaky))
         assert client.get("https://www.sec.gov/test/a") == "answer"
         assert len(calls) == 3
-        client._http = httpx.Client(
-            transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(httpx.ConnectError("x")))
-        )
-        with pytest.raises(httpx.ConnectError):
+        client._http = httpx.Client(transport=httpx.MockTransport(down))
+        with pytest.raises(sec.SecUnavailable):
             client.get("https://www.sec.gov/test/b")
+        assert client.failures == ["https://www.sec.gov/test/b"]
+    with session_scope(factory) as session:
+        keys = {r.request_key for r in session.query(ExternalResponse)}
+    assert keys == {"https://www.sec.gov/test/a"}  # nothing stored for the unanswered request
     engine.dispose()
 
 

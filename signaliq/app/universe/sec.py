@@ -55,6 +55,16 @@ PAUSE_SECONDS = 0.15  # about 6 requests per second; SEC allows at most 10
 # Fetched answers are committed every this many network requests, so a run that is stopped
 # keeps what it has asked (a later run reads it from the cache instead of asking again).
 COMMIT_EVERY = 25
+# www.sec.gov answers some requests with a passing 503 ("File Unavailable"): a request is
+# tried up to MAX_ATTEMPTS times, waiting longer each time (about 7 minutes in all).
+MAX_ATTEMPTS = 8
+RETRY_WAITS = (10, 20, 40, 60, 90, 120, 120)
+
+
+class SecUnavailable(RuntimeError):
+    """SEC gave no answer to a request after every retry."""
+
+
 WINDOW_BEFORE = 45
 WINDOW_AFTER = 90
 SCOPE_END = date(2025, 1, 1)
@@ -351,6 +361,7 @@ class CachedSec:
     ) -> None:
         self.session, self.network, self.refresh, self.sleep = session, network, refresh, sleep
         self.requests = 0
+        self.stored = 0  # answers fetched in this run, committed every COMMIT_EVERY
         self.failures: list[str] = []
         self._http = (
             httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=60) if network else None
@@ -371,27 +382,31 @@ class CachedSec:
             return row.response
         if not self.network:
             return None
-        for attempt in range(4):
+        for attempt in range(MAX_ATTEMPTS):
             self.sleep(PAUSE_SECONDS)
             try:
                 response = self._http.get(url, params=params)
             except httpx.TransportError:
-                # A dropped connection is retried; after the last try it is raised, never
-                # treated as an empty answer (the answers fetched so far are committed).
-                if attempt == 3:
-                    raise
-                self.sleep(10 * (attempt + 1))
-                continue
-            self.requests += 1
-            if response.status_code in (200, 404):
-                break
-            self.sleep(10)
-        text = response.text if response.status_code == 200 else ""
-        if response.status_code not in (200, 404):
+                # A dropped connection is retried like an error answer.
+                response = None
+            else:
+                self.requests += 1
+                if response.status_code in (200, 404):
+                    break
+            if attempt < MAX_ATTEMPTS - 1:
+                self.sleep(RETRY_WAITS[min(attempt, len(RETRY_WAITS) - 1)])
+        else:
+            # Never read an unanswered request as "nothing there": that would silently drop
+            # evidence. The run stops; the answers fetched so far are committed, and the next
+            # run continues from them.
             self.failures.append(key)
-            return None
+            self.session.commit()
+            status = "connection failed" if response is None else f"HTTP {response.status_code}"
+            raise SecUnavailable(f"SEC did not answer after {MAX_ATTEMPTS} tries ({status}): {key}")
+        text = response.text if response.status_code == 200 else ""
         self.session.merge(ExternalResponse(source="sec", request_key=key, response=text))
-        if self.requests % COMMIT_EVERY == 0:
+        self.stored += 1
+        if self.stored % COMMIT_EVERY == 0:
             self.session.commit()
         return text
 
