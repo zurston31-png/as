@@ -292,6 +292,58 @@ class Assembled:
     chains: list[seg.Chain]
     fillers_by_symbol: dict[str, int]
     segments_by_symbol: dict[str, list[seg.Segment]]
+    #: Permanent security ids, one per chain (set by ``store_securities``).
+    ids: list[int] | None = None
+
+
+def security_key(chain: seg.Chain) -> str:
+    """A security's permanent key: the ticker and first session of its first segment."""
+    first = chain.segments[0]
+    return f"{first.symbol}|{first.first_session.isoformat()}"
+
+
+def assign_security_ids(session: Session, chains: Sequence[seg.Chain]) -> list[int]:
+    """Permanent ids for the chains, from the registry; new securities get new ids.
+
+    An id is never reused. A registered security whose first segment is now inside
+    another chain (joined by a trading-gap merge or a rename) is marked ``merged`` with
+    the id it became part of; one whose ticker is not in this batch is ``absent``.
+    """
+    from app.universe.models import SecurityRegistry
+
+    registry = {r.security_key: r for r in session.execute(select(SecurityRegistry)).scalars()}
+    next_id = max((r.security_id for r in registry.values()), default=0) + 1
+    ids = []
+    in_chain: dict[str, int] = {}
+    for chain in chains:
+        key = security_key(chain)
+        row = registry.get(key)
+        if row is None:
+            first = chain.segments[0]
+            row = SecurityRegistry(
+                security_key=key,
+                security_id=next_id,
+                first_symbol=first.symbol,
+                first_session=first.first_session,
+                status="active",
+            )
+            session.add(row)
+            registry[key] = row
+            next_id += 1
+        row.status, row.merged_into = "active", None
+        ids.append(row.security_id)
+        for segment in chain.segments[1:]:
+            in_chain[f"{segment.symbol}|{segment.first_session.isoformat()}"] = row.security_id
+    active = {security_key(chain) for chain in chains}
+    for key, row in registry.items():
+        if key in active:
+            continue
+        if key in in_chain:
+            row.status, row.merged_into = "merged", in_chain[key]
+        else:
+            row.status, row.merged_into = "absent", None
+    session.flush()
+    return ids
 
 
 def assemble(session: Session) -> Assembled:
@@ -417,7 +469,8 @@ def store_securities(session: Session, assembled: Assembled) -> list[Security]:
     batch = {row.symbol: row for row in session.execute(select(BatchSymbol)).scalars()}
     events = list(session.execute(select(CorporateAction)).scalars())
     securities = []
-    for security_id, chain in enumerate(assembled.chains, start=1):
+    assembled.ids = assign_security_ids(session, assembled.chains)
+    for security_id, chain in zip(assembled.ids, assembled.chains, strict=True):
         status, exit_type, event_id, cash, acquirer, value, why = classify_exit(
             chain, events, calendar
         )
@@ -470,7 +523,8 @@ def store_security_bars(session: Session, assembled: Assembled) -> None:
         ).scalars()
         if e.symbol and e.new_rate and e.old_rate and (e.ex_date or e.process_date)
     ]
-    for security_id, chain in enumerate(assembled.chains, start=1):
+    ids = assembled.ids or assign_security_ids(session, assembled.chains)
+    for security_id, chain in zip(ids, assembled.chains, strict=True):
         factors = seg.split_factors(chain, splits)
         session.add_all(
             SecurityBar(

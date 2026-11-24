@@ -327,3 +327,56 @@ class DealValue(ResearchBase):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class SecurityRegistry(ResearchBase):
+    """Permanent security identities, kept across runs and stages.
+
+    A security is known by the first segment of its ticker history (ticker and first
+    trading session). Its id is assigned once and never reused. When a later run joins
+    this segment onto another security (a trading-gap merge or a newly found rename), the
+    entry records which security it became part of.
+    """
+
+    __tablename__ = "security_registry"
+
+    security_key: Mapped[str] = mapped_column(String(48), primary_key=True)
+    security_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    first_symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    first_session: Mapped[date] = mapped_column(Date, nullable=False)
+    #: ``active`` (a security in the current run), ``merged`` (now part of another
+    #: security) or ``absent`` (its ticker is not in the current batch).
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    merged_into: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class MonthlyBar(ResearchBase):
+    """A monthly SIP bar of a literal ticker, used only to screen candidates."""
+
+    __tablename__ = "monthly_bars"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    month: Mapped[date] = mapped_column(Date, primary_key=True)
+    high: Mapped[float] = mapped_column(Float, nullable=False)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    vwap: Mapped[float] = mapped_column(Float, nullable=False)
+    trade_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class Candidate(ResearchBase):
+    """A ticker in the candidate pool: where it came from and whether daily data was fetched."""
+
+    __tablename__ = "candidates"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    #: Comma-separated sources: sec_ticker_list, alpaca_corporate_actions,
+    #: wikidata_listing, validation_batch.
+    sources: Mapped[str] = mapped_column(String(160), nullable=False)
+    months_with_trades: Mapped[int] = mapped_column(Integer, nullable=False)
+    best_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    best_month: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: ``screen`` (ranked within the margin in some month), ``completeness`` (added because
+    #: it could have reached the universe at some decision), or ``not_selected``.
+    selection: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)

@@ -33,11 +33,13 @@ from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
 from app.universe import checks, curated, evidence
 from app.universe import pipeline as p
+from app.universe import stage as universe_stage
 from app.universe.batch import KNOWN_CASES
 from app.universe.database import open_research_database, research_database_url
 from app.universe.membership import MembershipRule
 from app.universe.models import (
     BatchSymbol,
+    Candidate,
     CorporateAction,
     DealValue,
     ExitEvidence,
@@ -47,6 +49,7 @@ from app.universe.models import (
     Security,
     SecurityBar,
     SecurityIssuer,
+    SecurityRegistry,
     SegmentLink,
     SpinOff,
     SplitCheck,
@@ -57,105 +60,178 @@ from app.universe.models import (
 
 RULE = MembershipRule()
 MAX_MERGE_PASSES = 4
+MAX_COMPLETENESS_ROUNDS = 4
+
+
+STAGE_DATABASE = Path(__file__).resolve().parent.parent / "data" / "universe_stage.db"
+
+
+def use_stage_database() -> None:
+    """Point the run at the stage database (a copy of the research database at first use).
+
+    The copy keeps the cached source answers, so they are not asked again; the validation
+    batch's own database is never written by a stage.
+    """
+    import os
+    import shutil
+
+    from app.universe.database import DEFAULT_URL, URL_VARIABLE
+
+    if os.environ.get(URL_VARIABLE):
+        return
+    if not STAGE_DATABASE.exists():
+        shutil.copyfile(DEFAULT_URL.removeprefix("sqlite:///"), STAGE_DATABASE)
+    os.environ[URL_VARIABLE] = f"sqlite:///{STAGE_DATABASE.as_posix()}"
+
+
+def stage_pool(session, client, settings):
+    """Candidate pool and monthly bars for a stage (see app.universe.stage)."""
+    sec_client = evidence.sec.CachedSec(session, network=True)
+    try:
+        return universe_stage.collect_pool(
+            session,
+            client,
+            fetch_actions=p.fetch_corporate_actions,
+            utc_window=p.utc_window,
+            sec_get=sec_client.get,
+            user_agent=evidence.USER_AGENT,
+        )
+    finally:
+        sec_client.close()
+
+
 MAX_DISCOVERY_ROUNDS = 6
 
 
-def run(settings, refresh: bool) -> dict:
+def run(settings, refresh: bool, stage: int | None = None) -> dict:
     engine = open_research_database()
     factory = create_session_factory(engine)
     facts: dict = {"database": Path(research_database_url().removeprefix("sqlite:///")).name}
     try:
         with p.sip_client(settings) as client:
-            with session_scope(factory) as session:
-                facts["batch_size_initial"] = len(p.build_batch(session, client))
-            with session_scope(factory) as session:
-                # Every run starts from no stored corporate actions, so its result never
-                # depends on an earlier run. Renames are followed until no new ticker appears.
-                session.execute(delete(CorporateAction))
-                # Renames that Alpaca lacks, read from SEC filings and re-verified each run.
-                facts["curated_requests"], facts["curated_failures"] = (
-                    evidence.fetch_curated_documents(session, refresh=refresh)
-                )
-                facts["renames"] = [
-                    (r.old_symbol, r.new_symbol, r.date, len(r.quotes), len(missing))
-                    for r, missing in evidence.apply_curated_renames(session)
-                ]
-                to_fetch = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
-                facts["discovered"] = []
-                for _round in range(MAX_DISCOVERY_ROUNDS):
-                    for i in range(0, len(to_fetch), 20):
-                        p.store_corporate_actions(
-                            session,
-                            p.fetch_corporate_actions(
-                                client,
-                                symbols=to_fetch[i : i + 20],
-                                types=p.CA_TYPES,
-                                first=p.DATA_START,
-                                last=p.DATA_END,
-                            ),
-                        )
-                    discovered = p.discover_linked_symbols(session, rounds=1)
-                    facts["discovered"] += [(r.symbol, r.discovered_from) for r in discovered]
-                    to_fetch = [r.symbol for r in discovered]
-                    if not to_fetch:
-                        break
-                facts["discovery_complete"] = not to_fetch
-                # Spin-off records name the parent "source_symbol", which a symbol filter misses.
-                facts["spin_off_records"] = p.store_corporate_actions(
-                    session,
-                    p.fetch_corporate_actions(
-                        client, symbols=None, types="spin_off", first=p.DATA_START, last=p.DATA_END
-                    ),
-                )
-            with session_scope(factory) as session:
-                symbols = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
-                p.store_ticker_bars(session, p.fetch_literal_bars(client, symbols))
-                # Trading-gap merges are derived on every run, from no stored links.
-                session.execute(delete(SegmentLink))
-            # Identity and evidence are built, then trading gaps decided from that evidence;
-            # securities are rebuilt with the merges until no new merge appears.
-            facts["merge_passes"] = 0
-            for _pass in range(MAX_MERGE_PASSES):
-                facts["merge_passes"] += 1
+            if stage:
                 with session_scope(factory) as session:
-                    assembled = p.assemble(session)
-                    p.store_securities(session, assembled)
-                    p.store_security_bars(session, assembled)
-                    facts["fillers"] = assembled.fillers_by_symbol
-                    facts["entity_check"] = p.attach_alpaca_adjusted(session, client, settings)
+                    pool, facts["pool"] = stage_pool(session, client, settings)
+            forced: dict[str, str] = {}
+            facts["completeness_rounds"] = []
+            for _round in range(MAX_COMPLETENESS_ROUNDS if stage else 1):
                 with session_scope(factory) as session:
-                    evidence.apply_price_adjustments(session, client, p.utc_window)
-                if _pass == 0:
-                    with session_scope(factory) as session:
-                        tickers = evidence.plain_tickers(session)
-                        facts["openfigi_requests"] = evidence.fetch_openfigi(
-                            session, tickers, refresh=refresh
+                    if stage:
+                        selected = universe_stage.screen_candidates(session, pool, stage, forced)
+                        facts["batch_size_initial"] = universe_stage.build_stage_batch(
+                            session, selected
                         )
-                    with session_scope(factory) as session:
-                        facts["wikidata_requests"], facts["wikidata_missing"] = (
-                            evidence.fetch_wikidata(session, tickers, refresh=refresh)
-                        )
+                    else:
+                        facts["batch_size_initial"] = len(p.build_batch(session, client))
                 with session_scope(factory) as session:
-                    facts["sec_requests"], facts["sec_failures"] = evidence.fetch_sec(
-                        session, refresh=refresh
+                    # Every run starts from no stored corporate actions, so its result never
+                    # depends on an earlier run. Renames are followed until no new ticker appears.
+                    session.execute(delete(CorporateAction))
+                    # Renames that Alpaca lacks, read from SEC filings and re-verified each run.
+                    facts["curated_requests"], facts["curated_failures"] = (
+                        evidence.fetch_curated_documents(session, refresh=refresh)
+                    )
+                    facts["renames"] = [
+                        (r.old_symbol, r.new_symbol, r.date, len(r.quotes), len(missing))
+                        for r, missing in evidence.apply_curated_renames(session)
+                    ]
+                    to_fetch = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
+                    facts["discovered"] = []
+                    for _round in range(MAX_DISCOVERY_ROUNDS):
+                        for i in range(0, len(to_fetch), 20):
+                            p.store_corporate_actions(
+                                session,
+                                p.fetch_corporate_actions(
+                                    client,
+                                    symbols=to_fetch[i : i + 20],
+                                    types=p.CA_TYPES,
+                                    first=p.DATA_START,
+                                    last=p.DATA_END,
+                                ),
+                            )
+                        discovered = p.discover_linked_symbols(session, rounds=1)
+                        facts["discovered"] += [(r.symbol, r.discovered_from) for r in discovered]
+                        to_fetch = [r.symbol for r in discovered]
+                        if not to_fetch:
+                            break
+                    facts["discovery_complete"] = not to_fetch
+                    # Spin-off records name the parent "source_symbol", which a symbol filter misses.
+                    facts["spin_off_records"] = p.store_corporate_actions(
+                        session,
+                        p.fetch_corporate_actions(
+                            client,
+                            symbols=None,
+                            types="spin_off",
+                            first=p.DATA_START,
+                            last=p.DATA_END,
+                        ),
                     )
                 with session_scope(factory) as session:
-                    facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
-                        session, refresh=refresh
+                    symbols = [r.symbol for r in session.execute(select(BatchSymbol)).scalars()]
+                    p.store_ticker_bars(session, p.fetch_literal_bars(client, symbols))
+                    # Trading-gap merges are derived on every run, from no stored links.
+                    session.execute(delete(SegmentLink))
+                # Identity and evidence are built, then trading gaps decided from that evidence;
+                # securities are rebuilt with the merges until no new merge appears.
+                facts["merge_passes"] = 0
+                for _pass in range(MAX_MERGE_PASSES):
+                    facts["merge_passes"] += 1
+                    with session_scope(factory) as session:
+                        assembled = p.assemble(session)
+                        p.store_securities(session, assembled)
+                        p.store_security_bars(session, assembled)
+                        facts["fillers"] = assembled.fillers_by_symbol
+                        facts["entity_check"] = p.attach_alpaca_adjusted(session, client, settings)
+                    with session_scope(factory) as session:
+                        evidence.apply_price_adjustments(session, client, p.utc_window)
+                    if _pass == 0:
+                        with session_scope(factory) as session:
+                            tickers = evidence.plain_tickers(session)
+                            facts["openfigi_requests"] = evidence.fetch_openfigi(
+                                session, tickers, refresh=refresh
+                            )
+                        with session_scope(factory) as session:
+                            facts["wikidata_requests"], facts["wikidata_missing"] = (
+                                evidence.fetch_wikidata(session, tickers, refresh=refresh)
+                            )
+                    with session_scope(factory) as session:
+                        facts["sec_requests"], facts["sec_failures"] = evidence.fetch_sec(
+                            session, refresh=refresh
+                        )
+                    with session_scope(factory) as session:
+                        facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
+                            session, refresh=refresh
+                        )
+                        evidence.store_issuers(session)
+                    with session_scope(factory) as session:
+                        evidence.value_deals(session, client, p.utc_window)
+                    with session_scope(factory) as session:
+                        evidence.resolve_types(session)
+                        evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
+                    with session_scope(factory) as session:
+                        new = evidence.decide_gap_links(session)
+                        if not any(row.decision == "merged" for row in new):
+                            break
+                facts["merges_stable"] = not any(row.decision == "merged" for row in new)
+                with session_scope(factory) as session:
+                    facts["decisions"] = p.decide_membership(session, RULE)
+                if not stage:
+                    break
+                with session_scope(factory) as session:
+                    gaps = universe_stage.completeness_gaps(
+                        session,
+                        universe_stage.nth_member_volume(session, RULE.size),
+                        RULE.min_price,
                     )
-                    evidence.store_issuers(session)
-                with session_scope(factory) as session:
-                    evidence.value_deals(session, client, p.utc_window)
-                with session_scope(factory) as session:
-                    evidence.resolve_types(session)
-                    evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
-                with session_scope(factory) as session:
-                    new = evidence.decide_gap_links(session)
-                    if not any(row.decision == "merged" for row in new):
-                        break
-            facts["merges_stable"] = not any(row.decision == "merged" for row in new)
-            with session_scope(factory) as session:
-                facts["decisions"] = p.decide_membership(session, RULE)
+                facts["completeness_rounds"].append(len(gaps))
+                if not gaps:
+                    break
+                for symbol, (decision, bound, threshold) in gaps.items():
+                    forced[symbol] = (
+                        f"could have been a member on {decision}: dollar-volume bound "
+                        f"{bound:,.0f} >= N-th member {threshold:,.0f}"
+                    )
+            facts["completeness_gaps_final"] = len(gaps) if stage else None
     finally:
         engine.dispose()
     return facts
@@ -186,7 +262,14 @@ def report(facts: dict) -> str:
         for e in s.execute(select(TypeEvidence).order_by(TypeEvidence.id)).scalars():
             type_ev[e.security_id].append(e)
 
-        print("SIP UNIVERSE VALIDATION BATCH (v5) - research data only, no strategy, no backtest")
+        if facts.get("pool"):
+            print(
+                f"SIP UNIVERSE STAGE {RULE.size} (top {RULE.size} eligible common stocks per month) - research data only, no strategy, no backtest"
+            )
+        else:
+            print(
+                "SIP UNIVERSE VALIDATION BATCH (v5) - research data only, no strategy, no backtest"
+            )
         print(f"Research database: {facts['database']}")
         print(
             "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
@@ -198,6 +281,58 @@ def report(facts: dict) -> str:
             "SEC EDGAR (delisting notices, 8-Ks, full-text search, filing headers; read-only), facts read from SEC\n"
             "filings by hand (each re-verified against the cached document every run), corrections checked against prices.\n"
         )
+
+        if facts.get("pool"):
+            pool_facts = facts["pool"]
+            cands = list(s.execute(select(Candidate).order_by(Candidate.symbol)).scalars())
+            print("0. CANDIDATE POOL, SCREEN AND COMPLETENESS")
+            print(
+                f"  Sources (tickers named, plain tickers only after filtering): {pool_facts['source_sizes']}"
+            )
+            print(
+                f"  Alpaca corporate actions read: {pool_facts['alpaca_events']}; Wikidata listing rows: {pool_facts['wikidata_rows']}"
+            )
+            print(f"  Candidate pool: {len(cands)} tickers")
+            only = Counter()
+            for c in cands:
+                srcs = c.sources.split(",")
+                if len(srcs) == 1:
+                    only[srcs[0]] += 1
+            print(f"  Tickers named by one source only: {dict(only)}")
+            print(
+                f"  With at least one month of trades 2016-2024: {sum(1 for c in cands if c.months_with_trades)}"
+            )
+            sel = Counter(c.selection for c in cands)
+            print(
+                f"  Daily data fetched for: {sel.get('screen', 0) + sel.get('completeness', 0)} "
+                f"(screen, rank <= {universe_stage.MARGIN * RULE.size} in a month 2019-09..2024-11: {sel.get('screen', 0)}; "
+                f"added by the completeness proof: {sel.get('completeness', 0)}); not selected: {sel.get('not_selected', 0)}"
+            )
+            print(
+                f"  Completeness rounds (tickers that could have been members, per round): {facts.get('completeness_rounds')}; "
+                f"left at the end: {facts.get('completeness_gaps_final')}"
+            )
+            for c in cands:
+                if c.selection == "completeness":
+                    print(f"    added {c.symbol}: {c.reason}")
+            known = universe_stage.validation_tickers()
+            for source in ("sec_ticker_list", "alpaca_corporate_actions", "wikidata_listing"):
+                found = sorted(
+                    k for k in known if any(c.symbol == k and source in c.sources for c in cands)
+                )
+                print(f"  Named validation cases found by {source}: {len(found)} of {len(known)}")
+            automated = {
+                c.symbol for c in cands if set(c.sources.split(",")) - {"validation_batch"}
+            }
+            missed = sorted(known - automated)
+            print(
+                f"  Named validation cases found by no automated source: {len(missed)}"
+                + (f" ({', '.join(missed)})" if missed else "")
+            )
+            print(
+                "  Each candidate's selection and reason is stored in table candidates (every inclusion and exclusion)."
+            )
+            print()
 
         print("1. BATCH")
         print(
@@ -764,6 +899,24 @@ def report(facts: dict) -> str:
             "    security's bars up to any date are the same as before the merge, and the recompute tests above hold."
         )
 
+        print("\n8b. PERMANENT SECURITY IDS")
+        reg = list(
+            s.execute(select(SecurityRegistry).order_by(SecurityRegistry.security_id)).scalars()
+        )
+        print(
+            f"  Registered identities: {len(reg)}; by status: {dict(Counter(r.status for r in reg))}"
+        )
+        active_ids = {r.security_id for r in reg if r.status == "active"}
+        print(
+            f"  Every security in this run has a registered id: {set(securities) <= active_ids}; "
+            f"registered active ids not in this run: {len(active_ids - set(securities))}"
+        )
+        for r in reg:
+            if r.status == "merged":
+                print(
+                    f"    id {r.security_id} ({r.first_symbol} from {r.first_session}) is now part of id {r.merged_into}"
+                )
+
         print("\n9. DUPLICATE-SECURITY AUDIT")
         owners = defaultdict(set)
         for bar in s.execute(
@@ -907,9 +1060,18 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--refresh", action="store_true", help="ask OpenFIGI, Wikidata and SEC again"
     )
+    parser.add_argument(
+        "--stage",
+        type=int,
+        help="build the staged universe of this size (top N per month) in its own database",
+    )
     args = parser.parse_args(argv)
     configure_logging("WARNING")
-    text = report(run(get_settings(), args.refresh))
+    global RULE
+    if args.stage:
+        RULE = MembershipRule(size=args.stage)
+        use_stage_database()
+    text = report(run(get_settings(), args.refresh, args.stage))
     print(text)
     if args.report:
         args.report.write_text(text)
