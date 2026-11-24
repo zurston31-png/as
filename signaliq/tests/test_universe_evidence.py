@@ -138,8 +138,12 @@ def test_symbol_suffix_convention_only_for_five_letter_tickers(symbol, expected)
 
 
 def test_wikidata_types():
-    assert sectypes.wikidata_type(["public company", "multinational corporation"]) == "common"
-    assert sectypes.wikidata_type(["bank holding company"]) == "common"
+    # Wikidata describes the company: an operating company, whatever it listed.
+    assert sectypes.wikidata_type(["public company", "multinational corporation"]) == "company"
+    assert sectypes.wikidata_type(["bank holding company"]) == "company"
+    # A REIT is a company, not an "investment trust" fund (Crown Castle, Simon Property).
+    assert sectypes.wikidata_type(["company", "real estate investment trust"]) == "company"
+    assert sectypes.wikidata_type(["closed-end fund"]) == "fund"
     assert sectypes.wikidata_type(["exchange-traded fund"]) == "etf"
     assert sectypes.wikidata_type(["human"]) is None
     assert sectypes.wikidata_type([""]) is None
@@ -147,7 +151,7 @@ def test_wikidata_types():
 
 def test_type_resolution_needs_independent_sources():
     vote = sectypes.TypeVote
-    assert sectypes.resolve_type([vote("openfigi", "common"), vote("wikidata", "common")]) == (
+    assert sectypes.resolve_type([vote("openfigi", "common"), vote("wikidata", "company")]) == (
         "common",
         "confirmed",
     )
@@ -369,3 +373,80 @@ def test_a_cash_record_next_to_a_stock_record_of_the_same_deal_is_not_a_cash_val
         "confirmed",
         None,
     )
+
+
+def test_cover_page_class_titles_give_the_listed_security_type():
+    t = sectypes.cover_class_type
+    assert t("Common Stock, without par value") == "common"
+    assert t("Class A common stock, par value $0.0001 per share") == "common"
+    assert t("Common Shares of Beneficial Interest") == "common"  # a REIT trust
+    assert t("Class A ordinary shares") == "common"
+    assert t("American depositary shares (each representing 20 Class A common shares") == "adr"
+    assert t("Depositary Shares, each representing 1/1,000th of a share of Series A Preferred") == (
+        "preferred"
+    )
+    assert t("Common Units Representing Limited Partner Interests") == "partnership"
+    assert (
+        t("Units, each consisting of one share of Class A common stock and one-half of one warrant")
+        == "unit"
+    )
+    assert t("Redeemable warrants, each exercisable for one share of Class A common stock") == (
+        "warrant"
+    )
+    assert t("1.431% Notes due 2024") == "debt"
+    assert t("iPath S&P 500 VIX Short-Term Futures ETN") == "etn"
+    assert t("SPDR Gold Shares") is None  # unclear: no vote
+    assert t("") is None
+
+
+def test_a_company_vote_fits_any_type_a_company_issues_but_not_a_fund():
+    vote = sectypes.TypeVote
+    # An ADR: Wikidata's "public company" is no contradiction (BABA, TSM, ASML).
+    assert sectypes.resolve_type([vote("openfigi", "adr"), vote("wikidata", "company")]) == (
+        "adr",
+        "single_source",
+    )
+    # A REIT: OpenFIGI's REIT is common stock, Wikidata's REIT is a company (CCI, SPG).
+    assert sectypes.resolve_type([vote("openfigi", "common"), vote("wikidata", "company")]) == (
+        "common",
+        "confirmed",
+    )
+    assert sectypes.resolve_type([vote("wikidata", "company")]) == ("common", "single_source")
+    # A company is not a fund: that disagreement stays a conflict.
+    assert sectypes.resolve_type([vote("openfigi", "etf"), vote("wikidata", "company")]) == (
+        "unknown",
+        "conflict",
+    )
+
+
+def test_only_the_issuers_own_sec_description_settles_a_disagreement():
+    vote = sectypes.TypeVote
+    # Today's OpenFIGI holder is an ETF, the issuer's cover pages then said common stock.
+    assert sectypes.resolve_type(
+        [vote("openfigi", "etf"), vote("sec_cover", "common"), vote("wikidata", "company")]
+    ) == ("common", "resolved")
+    # A Form 25 for another class (a preferred series) does not outvote the cover page.
+    assert sectypes.resolve_type(
+        [vote("sec_cover", "common"), vote("sec_form25", "preferred")]
+    ) == (
+        "common",
+        "resolved",
+    )
+    # A hand-read SEC passage outranks the cover page.
+    assert sectypes.resolve_type([vote("sec_cover", "common"), vote("sec_text", "fund")]) == (
+        "fund",
+        "resolved",
+    )
+    # The issuer's own descriptions disagree (an ADR that became an ordinary listing): conflict.
+    assert sectypes.resolve_type([vote("sec_cover", "adr"), vote("sec_cover", "common")]) == (
+        "unknown",
+        "conflict",
+    )
+    # Without SEC text, OpenFIGI against the fifth letter is not settled by rank.
+    assert sectypes.resolve_type(
+        [vote("openfigi", "common"), vote("symbol_suffix", "warrant")]
+    ) == (
+        "unknown",
+        "conflict",
+    )
+    assert "resolved" in sectypes.USABLE_STATUSES

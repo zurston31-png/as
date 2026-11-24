@@ -2,21 +2,50 @@
 
 Sources, each recorded as evidence with its own detail:
 
+* ``sec_cover`` - the class title the issuer itself gives the ticker on the cover page of
+  its 10-K, 10-Q, 8-K, 20-F or 40-F ("Class A common stock", "American depositary shares
+  ...", "Common units representing limited partner interests"), from filings made while
+  the security traded under that ticker (2019 on). The issuer's own, dated description.
+* ``sec_text`` - a hand-read SEC passage (``app.universe.curated``), re-verified each run.
 * ``openfigi`` - Bloomberg's OpenFIGI mapping of the ticker (securityType and
-  securityType2). OpenFIGI describes the most recent holder of a ticker, so its
-  answer is only attached to the security that used the ticker last.
-* ``wikidata`` - "instance of" classes of the company item that listed under the
-  ticker during the security's trading period (public company, bank,
-  exchange-traded fund, ...).
+  securityType2). OpenFIGI describes the ticker's holder *today*, so its answer is used
+  only for the security that used the ticker last, and only when its company name agrees
+  with a name known for the security's own period (Wikidata, SEC cover pages).
+* ``sec_form25`` - the class of security named in the SEC delisting notice
+  (Form 25 / 25-NSE) filed when the security stopped trading (``app.universe.sec``).
 * ``symbol_suffix`` - Nasdaq's fifth-letter convention for five-letter tickers:
   W warrant, R right, U unit, X mutual fund.
-* ``sec_form25`` - the class of security named in the SEC delisting notice
-  (Form 25 / 25-NSE) filed when the security stopped trading
-  (``app.universe.sec``).
+* ``wikidata`` - "instance of" classes of the company item listed under the ticker during
+  the security's period. Wikidata describes the *company*, not the listed security: a
+  public company, a bank, a real estate investment trust are all ``company``, which is
+  consistent with common stock, ADRs, partnership units, preferred shares, units,
+  warrants and notes alike; an exchange-traded fund, an exchange-traded note or a
+  closed-end fund is a security type of its own.
 
-A type is ``confirmed`` when two independent sources agree, ``single_source``
-with one, ``conflict`` when sources disagree, and ``unknown`` with none. Only
-confirmed or single-source ``common`` securities may join the universe.
+Explicit rules (``CLASSIFICATION_RULES``, printed in every report):
+
+1. **Common stock**: common or ordinary shares, including REITs (a REIT is a tax status;
+   its listed shares are common shares or shares of beneficial interest), tracking stock,
+   and blank-check companies (SPACs). Only common stock can join the universe.
+2. **ADR**: American depositary shares or receipts, New York registry shares. Excluded by
+   design (the universe is US common stock), however the company is described.
+3. **ETF / fund / ETN**: exchange-traded funds, closed-end and mutual funds, exchange-traded
+   notes (debt of the issuing bank). Never common, whatever the issuer's name.
+4. **Warrant, right, unit, preferred, partnership, debt**: from the class title, OpenFIGI
+   or the fifth letter. A SPAC's units and warrants are not its common shares.
+5. **SPACs** are common stock by type; they are kept out of the universe by a separate,
+   point-in-time rule (SIC 6770 on file by the decision date, ``evidence.blank_check_on``),
+   because the same shares become an operating company's at the merger.
+6. **Disagreement**: when sources name different types, only the issuer's own SEC
+   description settles it: a hand-read SEC passage (``sec_text``) first, then the
+   cover-page class title (``sec_cover``). The type is then ``resolved`` and the outvoted
+   evidence is kept. Without either, or when the issuer's own descriptions disagree (an
+   ADR that became an ordinary listing), the type stays in ``conflict``: never a guess.
+
+Status: ``confirmed`` when two independent sources agree (the SEC sources count once; a
+Wikidata ``company`` confirms only common stock), ``single_source`` with one,
+``resolved`` as above, ``conflict``, or ``unknown`` with none. Confirmed, single-source and
+resolved common stocks may join the universe.
 """
 
 from collections.abc import Iterable
@@ -33,7 +62,28 @@ TYPES = (
     "adr",
     "partnership",
     "debt",
+    "etn",
     "unknown",
+)
+#: Wikidata's vote for an operating company (any kind of listed security but a fund).
+COMPANY = "company"
+#: Types a company (``COMPANY``) can have issued; funds and notes it cannot.
+COMPANY_TYPES = frozenset(
+    {"common", "adr", "partnership", "preferred", "unit", "warrant", "right", "debt"}
+)
+#: Statuses whose type is backed by evidence and may be used for membership.
+USABLE_STATUSES = frozenset({"confirmed", "single_source", "resolved"})
+#: The issuer's own SEC descriptions, which alone may settle a disagreement (lower first).
+DECIDING_SOURCES = {"sec_text": 0, "sec_cover": 1}
+CLASSIFICATION_RULES = (
+    "common stock (incl. REITs, tracking stock, SPAC shares): the only type the universe takes",
+    "ADR (depositary shares/receipts, NY registry shares): excluded by design",
+    "ETF, closed-end/mutual fund, ETN: never common, whatever the issuer's name",
+    "warrant, right, unit, preferred, partnership, debt: class title, OpenFIGI or fifth letter",
+    "SPACs: common by type, excluded by the point-in-time SIC 6770 rule, not by type",
+    "Wikidata describes the company: 'company' (incl. REIT, bank) fits any non-fund type",
+    "OpenFIGI describes today's holder: used only if its name matches the security's period",
+    "disagreement: settled only by the issuer's SEC text (sec_text, then sec_cover); else conflict",
 )
 #: Types the common-stock universe accepts.
 UNIVERSE_TYPES = frozenset({"common"})
@@ -91,7 +141,7 @@ def suffix_type(symbol: str) -> str | None:
     return {"W": "warrant", "R": "right", "U": "unit", "X": "fund"}.get(symbol[-1])
 
 
-_WIKIDATA_COMMON = (
+_WIKIDATA_COMPANY = (
     "public company",
     "business",
     "enterprise",
@@ -105,19 +155,66 @@ _WIKIDATA_COMMON = (
 )
 _WIKIDATA_OTHER = {
     "exchange-traded fund": "etf",
+    "exchange-traded note": "etn",
+    "exchange traded note": "etn",
     "closed-end fund": "fund",
     "mutual fund": "fund",
     "investment trust": "fund",
 }
 
 
+def _is_reit(label: str) -> bool:
+    return "real estate investment trust" in label or label == "reit"
+
+
 def wikidata_type(instance_labels: Iterable[str]) -> str | None:
+    """``company`` for an operating company (a REIT included), a fund type for a fund."""
     labels = [label.strip().lower() for label in instance_labels if label.strip()]
     for label in labels:
+        if _is_reit(label):
+            continue  # "real estate investment trust" is not an "investment trust" fund
         for key, value in _WIKIDATA_OTHER.items():
             if key in label:
                 return value
-    if any(label in _WIKIDATA_COMMON or label.endswith(" company") for label in labels):
+    if any(
+        _is_reit(label) or label in _WIKIDATA_COMPANY or label.endswith(" company")
+        for label in labels
+    ):
+        return COMPANY
+    return None
+
+
+def cover_class_type(title: str | None) -> str | None:
+    """Our type for the class title an issuer gives on its cover page; None if unclear."""
+    text = " ".join((title or "").lower().split())
+    if not text:
+        return None
+    if "exchange traded note" in text or "exchange-traded note" in text or " etn" in f" {text}":
+        return "etn"
+    if "partner" in text:
+        return "partnership"
+    if text.startswith("unit") or (" units" in f" {text}" and "warrant" in text):
+        return "unit"
+    if "warrant" in text:
+        return "warrant"
+    if text.startswith("right"):
+        return "right"
+    if "preferred" in text or "preference" in text:
+        return "preferred"
+    if "depositary" in text or "depository" in text or "registry share" in text:
+        return "adr"
+    if any(w in text for w in ("% notes", "notes due", "debentures", "% senior")):
+        return "debt"
+    if any(
+        w in text
+        for w in (
+            "common stock",
+            "common share",
+            "ordinary share",
+            "beneficial interest",
+            "capital stock",
+        )
+    ):
         return "common"
     return None
 
@@ -134,16 +231,34 @@ def source_family(source: str) -> str:
 
 
 def resolve_type(votes: Iterable[TypeVote]) -> tuple[str, str]:
-    """(type, status) from independent votes. ``declared`` votes do not count."""
+    """(type, status) from independent votes under the rules above. ``declared`` votes
+    do not count."""
     counted = [v for v in votes if v.source != "declared" and v.security_type != "unknown"]
-    kinds = {v.security_type for v in counted}
-    if not kinds:
+    if not counted:
         return "unknown", "unknown"
-    if len(kinds) > 1:
-        return "unknown", "conflict"
-    kind = kinds.pop()
-    sources = {source_family(v.source) for v in counted}
-    return kind, "confirmed" if len(sources) >= 2 else "single_source"
+    company = [v for v in counted if v.security_type == COMPANY]
+    specific = [v for v in counted if v.security_type != COMPANY]
+    if not specific:
+        return "common", "single_source"  # an operating company, nothing else known
+    kinds = {v.security_type for v in specific}
+    if company and not kinds <= COMPANY_TYPES:
+        # A company is not a fund: its vote disagrees, as a vote for common stock.
+        specific += [TypeVote(v.source, "common") for v in company]
+        company = []
+        kinds = {v.security_type for v in specific}
+    if len(kinds) == 1:
+        kind = kinds.pop()
+        families = {source_family(v.source) for v in specific}
+        if company and kind == "common":
+            families.add("wikidata")
+        return kind, "confirmed" if len(families) >= 2 else "single_source"
+    deciding = [v for v in specific if v.source in DECIDING_SOURCES]
+    if deciding:
+        best = min(DECIDING_SOURCES[v.source] for v in deciding)
+        top = {v.security_type for v in deciding if DECIDING_SOURCES[v.source] == best}
+        if len(top) == 1:
+            return top.pop(), "resolved"
+    return "unknown", "conflict"
 
 
 _NAME_NOISE = frozenset(

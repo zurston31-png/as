@@ -633,6 +633,81 @@ CURATED_DEALS: tuple[CuratedDeal, ...] = (
         "Frazier Lifesciences Acquisition (SPAC) combined with NewAmsterdam Pharma: one NewAmsterdam "
         "share per FLAC share. NAMS first traded on 2022-11-23.",
     ),
+    # Stage 1.1: members that ended with no exit value in Stage 1. Terms from the target's
+    # own 8-K on completion of the acquisition.
+    CuratedDeal(
+        "AGN",
+        date(2020, 5, 8),
+        "ABBV",
+        date(2020, 5, 8),
+        120.30,
+        0.8660,
+        (
+            SecQuote(
+                f"{SEC}/1578845/000119312520137717/d927229d8k.htm",
+                "was cancelled and automatically converted into the right to receive (i) $120.30 in "
+                "cash (and any cash in lieu of fractions of AbbVie Shares) and (ii) 0.8660 of a share "
+                "of AbbVie common stock",
+            ),
+            SecQuote(
+                f"{SEC}/1578845/000119312520137717/d927229d8k.htm",
+                "On May 8, 2020, the Court Order was registered by the Registrar of Companies, at "
+                "which time the Scheme became effective.",
+            ),
+        ),
+        "AbbVie acquired Allergan plc by scheme of arrangement, effective 2020-05-08: $120.30 "
+        "cash plus 0.8660 AbbVie share (NYSE: ABBV) per Allergan share. AGN traded on 2020-05-08; "
+        "trading was suspended before the open on 2020-05-11.",
+    ),
+    CuratedDeal(
+        "WORK",
+        date(2021, 7, 20),
+        "CRM",
+        date(2021, 7, 21),
+        26.79,
+        0.0776,
+        (
+            SecQuote(
+                f"{SEC}/1764925/000119312521220229/d205267d8k.htm",
+                "was converted into the right to receive 0.0776 shares of Salesforce common stock "
+                "and $26.79 in cash, without interest",
+            ),
+            SecQuote(
+                f"{SEC}/1764925/000119312521220229/d205267d8k.htm",
+                "on July 21, 2021 (the \u201cClosing Date\u201d)",
+            ),
+        ),
+        "Salesforce acquired Slack Technologies on 2021-07-21: $26.79 cash plus 0.0776 "
+        "Salesforce share (NYSE: CRM) per Slack share.",
+    ),
+    CuratedDeal(
+        "RTN",
+        date(2020, 4, 2),
+        "RTX",
+        date(2020, 4, 3),
+        0.0,
+        2.3348,
+        (
+            SecQuote(
+                f"{SEC}/1047122/000119312520097237/d827106d8k.htm",
+                "was converted into the right to receive 2.3348 (the \u201c Exchange Ratio \u201d) "
+                "fully paid and nonassessable shares of UTC common stock",
+            ),
+            SecQuote(
+                f"{SEC}/1047122/000119312520097237/d827106d8k.htm",
+                "UTC changed its name to Raytheon Technologies Corporation",
+            ),
+            SecQuote(
+                f"{SEC}/1047122/000119312520097237/d827106d8k.htm",
+                "requested that trading in Raytheon Common Stock be suspended prior to the opening "
+                "of trading on April 3, 2020",
+            ),
+        ),
+        "Raytheon Company merged with United Technologies on 2020-04-03 (all stock): 2.3348 "
+        "UTC shares per Raytheon share. UTC renamed itself Raytheon Technologies and traded as "
+        "RTX from that day, after spinning off Carrier and Otis to its own holders of record "
+        "(Raytheon holders did not receive them), so RTX's close that day is the value.",
+    ),
 )
 
 

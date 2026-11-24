@@ -33,6 +33,7 @@ from app.universe.pipeline import (
     MEMBERSHIP_FIRST_DECISION,
     MEMBERSHIP_LAST_DECISION,
 )
+from app.universe.sectypes import USABLE_STATUSES
 
 
 def main() -> int:
@@ -56,7 +57,7 @@ def main() -> int:
             history[bar.security_id].append(DailyRow(bar.session, bar.close, bar.volume))
         securities = {x.security_id: x for x in s.execute(select(Security)).scalars()}
         stored = {
-            sid: x.security_type if x.type_status in ("confirmed", "single_source") else "unknown"
+            sid: x.security_type if x.type_status in USABLE_STATUSES else "unknown"
             for sid, x in securities.items()
         }
         open_types = {

@@ -258,6 +258,39 @@ def cover_page_symbol(text: str, ticker: str, window: int = COVER_WINDOW) -> str
     return None
 
 
+_HEADINGS = re.compile(
+    r"(?:Title\s+of\s+each\s+class|Trading\s+Symbol\s*\(?s?\)?|Name\s+of\s+each\s+exchange"
+    r"\s+on\s+which\s+registered|Name\s+of\s+exchange\s+on\s+which\s+registered)",
+    re.I,
+)
+_EXCHANGE_NAME = re.compile(
+    r"(?:the\s+)?(?:nasdaq[\w\s]{0,40}?(?:market|llc)|new\s+york\s+stock\s+exchange(?:\s+llc)?"
+    r"|nyse(?:\s+(?:american|arca|mkt))?(?:\s+llc)?|cboe[\w\s]{0,20}?(?:exchange|llc))",
+    re.I,
+)
+
+
+def cover_page_class(text: str, ticker: str, window: int = COVER_WINDOW) -> str | None:
+    """The title of the class a filing's cover page lists under ``ticker`` ("Class A
+    common stock, par value $0.0001 per share", "American depositary shares, each
+    representing 20 Class A common shares"): the row's text before the ticker."""
+    pattern = re.compile(rf"(?<![A-Za-z0-9.&'\-]){re.escape(ticker)}(?![A-Za-z0-9&'\-])")
+    for heading in re.finditer(r"Trading\s+Symbol", text, re.I):
+        start = max(0, heading.start() - 200)
+        after = text[heading.end() : heading.end() + window]
+        for found in pattern.finditer(after):
+            if not _EXCHANGE_AFTER.match(after[found.end() : found.end() + 60]):
+                continue
+            row = text[start : heading.end() + found.start()]
+            # The row starts after the headings and after the previous row's exchange.
+            cut = 0
+            for m in (*_HEADINGS.finditer(row), *_EXCHANGE_NAME.finditer(row)):
+                cut = max(cut, m.end())
+            title = " ".join(row[cut:].replace("\u200b", " ").split()).strip(" :;,()*")
+            return title[-200:] or None
+    return None
+
+
 def cover_page_hits(
     sec: CachedSec, ticker: str, first: date, last: date, cik: str | None = None
 ) -> list[TextHit]:

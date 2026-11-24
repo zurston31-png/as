@@ -435,6 +435,13 @@ def _sec_relevant(finding: sec.SecFinding, symbol: str, last: date | None = None
     return kind, relevant
 
 
+def _runs(points: "list[IssuerPoint]") -> "dict[tuple[str, str], list[IssuerPoint]]":
+    runs: dict[tuple[str, str], list[IssuerPoint]] = defaultdict(list)
+    for p in sorted(points, key=lambda p: p.filed):
+        runs[(p.symbol, p.cik)].append(p)
+    return dict(runs)
+
+
 def resolve_types(session: Session) -> None:
     session.execute(delete(TypeEvidence))
     history = defaultdict(list)
@@ -449,6 +456,8 @@ def resolve_types(session: Session) -> None:
     shared = _shared_tickers(session)
     sec_found = cached_sec_findings(session)
     facts = curated_facts(session)
+    held = stored_issuer_points(session)
+    client = sec.CachedSec(session, network=False)
 
     def note(security, source, symbol, kind, detail):
         session.add(
@@ -466,6 +475,33 @@ def resolve_types(session: Session) -> None:
         tickers = history[security.security_id]
         wiki_rows = [(h, row) for h in tickers for row in _wikidata_rows(session, h, shared)]
         wiki_names = sorted({row["itemLabel"]["value"] for _, row in wiki_rows})
+        cover = [p for p in held.get(security.security_id, []) if p.how == "cover_page"]
+        # Names known for the security's own period: Wikidata's, and its issuers' on the
+        # cover pages it was listed on.
+        period_names = sorted(set(wiki_names) | {p.name for p in cover})
+        # The issuer's own class title, read from the first and the last cover page of each
+        # ticker and company (documents the issuer step confirmed).
+        for (symbol, cik), run in _runs(cover).items():
+            seen_titles = set()
+            for p in (run[0], run[-1]):
+                text = sh.plain_text(client.get(p.url))
+                if not sh.cover_page_symbol(text, symbol):
+                    continue
+                title = sh.cover_page_class(text, symbol)
+                kind = sectypes.cover_class_type(title)
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                if kind:
+                    votes.append(sectypes.TypeVote("sec_cover", kind))
+                note(
+                    security,
+                    "sec_cover" if kind else "sec_cover_unclear",
+                    symbol,
+                    kind or "unknown",
+                    f"{p.filed} cover page of CIK {cik} ({p.name}): class '{title}' [{p.url}]"
+                    + ("" if kind else "; not a recognised class title, not counted"),
+                )
         for h, row in wiki_rows:
             labels = row.get("types", {}).get("value", "").split("|")
             kind = sectypes.wikidata_type(labels)
@@ -492,13 +528,12 @@ def resolve_types(session: Session) -> None:
                     # new ticker like FB -> META) may have passed to another company since,
                     # so the answer is used only if its name agrees with the company
                     # Wikidata places under the ticker at the time.
-                    no_longer_used = (
-                        security.status == "ended" or h.valid_to < security.last_trade_session
-                    )
-                    if (
-                        no_longer_used
-                        and wiki_names
-                        and not any(sectypes.names_agree(name, other) for other in wiki_names)
+                    # OpenFIGI answered after the data ends (the ticker may have passed to
+                    # another company or fund since, LAZR to an ETF), so the answer is used
+                    # only if its name agrees with a company known for the security's own
+                    # period (Wikidata, its issuers' cover pages), when any is known.
+                    if period_names and not any(
+                        sectypes.names_agree(name, other) for other in period_names
                     ):
                         note(
                             security,
@@ -506,7 +541,7 @@ def resolve_types(session: Session) -> None:
                             h.symbol,
                             kind,
                             f"{detail}: names a different company than "
-                            f"{'/'.join(wiki_names)}; not used",
+                            f"{'/'.join(period_names)[:200]}; not used",
                         )
                         continue
                     votes.append(sectypes.TypeVote("openfigi", kind))

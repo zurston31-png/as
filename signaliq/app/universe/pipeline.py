@@ -37,6 +37,7 @@ from app.universe.models import (
     TickerHistory,
     TypeEvidence,
 )
+from app.universe.sectypes import USABLE_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -618,9 +619,7 @@ def decide_membership(session: Session, rule: MembershipRule) -> list[date]:
         history[bar.security_id].append(DailyRow(bar.session, bar.close, bar.volume))
     # Only a type backed by independent evidence counts; anything else is not eligible.
     types = {
-        s.security_id: s.security_type
-        if s.type_status in ("confirmed", "single_source")
-        else "unknown"
+        s.security_id: s.security_type if s.type_status in USABLE_STATUSES else "unknown"
         for s in session.execute(select(Security)).scalars()
     }
     calendar = trading_days(DATA_START, DATA_END)

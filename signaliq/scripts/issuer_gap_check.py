@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Why does a common stock have no identified SEC issuer, and could it matter for membership?
+"""Which common stocks have no identified SEC issuer, and could it matter for membership?
 Cache only (no network), read-only.
 
     python scripts/issuer_gap_check.py [--report PATH]
 
-For each common stock the validation report lists as "UNEXPLAINED" in 4e (no issuer, no
-documented reason), shows what the issuer step saw: each ticker period, today's holder of
-the ticker in SEC's ticker list, and how many filings that company's cached submissions
-list during the period. Also shows the security's membership (decisions as a member, best
-rank, and the decisions where it was eligible), because without an issuer there is no SIC,
-so a blank-check company would not be excluded. Changes nothing.
+Applies the report's rules (4e): a common stock without dated issuer evidence and without
+a documented reason (a curated one, or trading only before the first membership decision).
+For each, shows each ticker period, today's holder of the ticker in SEC's ticker list (a
+candidate only, never evidence) and how many filings that company's cached submissions
+list during the period, and the security's membership (decisions as a member, best rank,
+decisions where it was eligible): without an issuer there is no SIC, so a blank-check
+company would not be excluded. Also lists, for every member, the issuer evidence behind
+each membership decision. Changes nothing.
 """
 
 import argparse
@@ -23,6 +25,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.universe import curated, evidence, sec
+from app.universe import pipeline as p
 from app.universe import sec_history as sh
 from app.universe.database import research_database_url
 from app.universe.models import Membership, Security, SecurityIssuer, TickerHistory
@@ -53,6 +56,7 @@ def main() -> int:
             if x.security_id not in issuers
             and x.security_type == "common"
             and (x.last_symbol, x.last_trade_session) not in curated.CURATED_NO_SEC_ISSUER
+            and x.last_trade_session >= p.MEMBERSHIP_FIRST_DECISION
         ]
         say(f"Common stocks without an issuer and without a documented reason: {len(gaps)}")
         for x in gaps:
@@ -100,6 +104,32 @@ def main() -> int:
                 + (f" ({members[0]}..{members[-1]})" if members else "")
                 + f"; eligible at {len(eligible)}; best rank {min(ranks) if ranks else None}"
             )
+        points = evidence.stored_issuer_points(s)
+        members = sorted(
+            {
+                m.security_id
+                for m in s.execute(select(Membership).where(Membership.member == 1)).scalars()
+            }
+        )
+        say(f"\nMembers: {len(members)}; issuer behind each membership decision:")
+        missing = later = 0
+        for sid in members:
+            days = [
+                m.decision_session
+                for m in s.execute(
+                    select(Membership).where(Membership.security_id == sid, Membership.member == 1)
+                ).scalars()
+            ]
+            held = [evidence.issuer_on(points.get(sid, []), d) for d in days]
+            missing += sum(1 for h, _ in held if h is None)
+            later += sum(1 for h, flag in held if h is not None and flag)
+            ciks = sorted({h.cik for h, _ in held if h is not None})
+            kinds = sorted({h.how for h, _ in held if h is not None})
+            say(
+                f"  id {sid} {s.get(Security, sid).last_symbol}: {len(days)} decisions; "
+                f"CIK {', '.join(ciks) or 'NONE'}; evidence {', '.join(kinds) or 'none'}"
+            )
+        say(f"Member decisions without an issuer: {missing}; resting on a later document: {later}")
     engine.dispose()
     if args.report:
         args.report.write_text("\n".join(lines) + "\n")

@@ -31,7 +31,7 @@ from sqlalchemy import delete, func, select
 from app.config import configure_logging, get_settings
 from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
-from app.universe import checks, curated, evidence
+from app.universe import checks, curated, evidence, sectypes
 from app.universe import pipeline as p
 from app.universe import stage as universe_stage
 from app.universe.batch import KNOWN_CASES
@@ -271,6 +271,12 @@ def report(facts: dict) -> str:
             print(
                 "SIP UNIVERSE VALIDATION BATCH (v5) - research data only, no strategy, no backtest"
             )
+        if facts.get("pool"):
+            print(
+                "Version 1.1 (Stage 1 cleanup): point-in-time issuers from dated SEC evidence, explicit\n"
+                "security-type rules, the documented YNDX/NBIS identity exception, deal terms for AGN,\n"
+                "WORK and RTN. Selection rule, membership logic and exit-value treatment unchanged."
+            )
         print(f"Research database: {facts['database']}")
         print(
             "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
@@ -388,10 +394,28 @@ def report(facts: dict) -> str:
         )
 
         print("\n3. SECURITY TYPES")
+        print("  Classification rules (app.universe.sectypes):")
+        for rule_text in sectypes.CLASSIFICATION_RULES:
+            print(f"    - {rule_text}")
+        print(f"  Statuses usable for membership: {', '.join(sorted(sectypes.USABLE_STATUSES))}")
         grid = Counter((x.security_type, x.type_status) for x in securities.values())
         for (kind, status), n in sorted(grid.items()):
             print(f"  {kind:12} {status:14} {n:4}")
-        print("  Conflicts (sources disagree):")
+        print(
+            "  Resolved (sources disagreed; settled by the issuer's own SEC description, outvoted"
+            " evidence shown):"
+        )
+        for sid, x in sorted(securities.items()):
+            if x.type_status == "resolved":
+                print(
+                    f"    id {sid} {path(sid)} -> {x.security_type}: "
+                    + "; ".join(
+                        f"{e.source}={e.security_type} ({e.detail[:70]})"
+                        for e in type_ev[sid]
+                        if e.source != "declared"
+                    )
+                )
+        print("  Conflicts (sources disagree, not settled):")
         for sid, x in sorted(securities.items()):
             if x.type_status == "conflict":
                 print(

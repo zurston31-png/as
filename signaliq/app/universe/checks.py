@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.data.validation import trading_days
 from app.universe.membership import DailyRow, MembershipRule, decide
 from app.universe.models import Membership, Security, SecurityBar
+from app.universe.sectypes import USABLE_STATUSES
 
 #: Day-to-day raw close changes beyond these limits need an explanation.
 JUMP_UP, JUMP_DOWN = 1.8, 0.55
@@ -101,9 +102,7 @@ def load_history(session: Session) -> tuple[dict[int, list[DailyRow]], dict[int,
     ).scalars():
         history[bar.security_id].append(DailyRow(bar.session, bar.close, bar.volume))
     types = {
-        s.security_id: s.security_type
-        if s.type_status in ("confirmed", "single_source")
-        else "unknown"
+        s.security_id: s.security_type if s.type_status in USABLE_STATUSES else "unknown"
         for s in session.execute(select(Security)).scalars()
     }
     return dict(history), types
