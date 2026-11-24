@@ -55,11 +55,12 @@ PAUSE_SECONDS = 0.15  # about 6 requests per second; SEC allows at most 10
 # Fetched answers are committed every this many network requests, so a run that is stopped
 # keeps what it has asked (a later run reads it from the cache instead of asking again).
 COMMIT_EVERY = 25
-# www.sec.gov answers some requests with a passing 503 ("File Unavailable"): a request is
-# tried up to MAX_ATTEMPTS times: quickly at first (a retry a few seconds later usually
-# succeeds), then waiting longer (about 7 minutes in all).
-MAX_ATTEMPTS = 11
-RETRY_WAITS = (5, 5, 10, 10, 20, 30, 60, 60, 90, 120)
+# www.sec.gov's browse-edgar answers many requests with a passing 503 ("File Unavailable";
+# at times three requests in four) while the same request succeeds seconds later. A request
+# is tried up to MAX_ATTEMPTS times: quickly at first, then once a minute (about 25 minutes
+# in all). Never faster than PAUSE_SECONDS, far below SEC's limit of 10 requests a second.
+MAX_ATTEMPTS = 30
+RETRY_WAITS = (5, 5, 10, 10, 20, 30, 60)
 
 
 class SecUnavailable(RuntimeError):
