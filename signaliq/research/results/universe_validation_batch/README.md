@@ -1,238 +1,240 @@
-# SIP universe validation batch, report v4 (research data only)
+# SIP universe validation batch, report v5 (research data only)
 
 **No strategy was run, nothing was backtested, no parameter was frozen, and no market
 data or evidence dated 2025 or later was used.** The 500-stock universe has not been
-started and waits for review.
+started; it waits for explicit approval.
 
 | File | What it is |
 | --- | --- |
-| [`validation_report.txt`](validation_report.txt) | v4, the current report (918 lines) |
+| [`validation_report.txt`](validation_report.txt) | v5, the current report (876 lines) |
+| [`reproducibility.txt`](reproducibility.txt) | SHA-256 of three runs and their logs; byte comparison |
+| [`merge_audit.txt`](merge_audit.txt) | Independent audit of the 21 merges and 11 rejected candidates ([`scripts/audit_merges.py`](../../../scripts/audit_merges.py)) |
+| [`outcome_audit.txt`](outcome_audit.txt) | Confidence label, evidence and value basis of every ended security ([`scripts/audit_outcomes.py`](../../../scripts/audit_outcomes.py)) |
 | [`curated_quotes_live_check.txt`](curated_quotes_live_check.txt) | Every curated SEC quote checked against the live SEC document |
-| [`deal_values_recheck.txt`](deal_values_recheck.txt) | Every deal value recomputed outside the pipeline from freshly fetched acquirer prices |
-| `validation_report_v3.txt`, `_v2`, `_v1` | Earlier reports, kept for comparison |
+| [`deal_values_recheck.txt`](deal_values_recheck.txt) | Every deal value recomputed from freshly fetched acquirer prices |
+| `validation_report_v4.txt` ... `_v1` | Earlier reports |
 
-## The six checks
+## What v5 changes
 
-| # | Check | Result |
-| --- | --- | --- |
-| 1 | Classified securities | Types: 121 of 122 classified (67 by two sources, 54 by one), 1 unknown. Ended securities: 85 of 87 explained (37 by two sources, 29 by one, 19 "not an exit"), 2 unresolved, 0 conflicts. The 40 named companies with a documented outcome all match it |
-| 2 | Unresolved | 2 ended securities (YGF, WDRW 2020); 1 unknown type (MDGS); 1 acquisition value held out (FSBC). Details below |
-| 3 | Acquisition payouts against deal terms | 12 deals with quoted terms: all 12 recompute exactly; 11 within 10% of the target's last close and used, 1 held out (FSBC, +10.3%). 8 cash deals stated by both Alpaca and the SEC 8-K: 8 of 8 agree |
-| 4 | Survivorship audit | Passes; limitations below |
-| 5 | Look-ahead audit | Passes after one fix found by the audit itself (below) |
-| 6 | Reproducibility | Two cache-only runs: byte-identical (SHA-256 `8126a83c4496da25…`), 0 new SEC requests |
+### Trading-gap segments merged
 
-Also verified:
+A pause in trading no longer turns one security into several. Two segments of the same
+ticker are one security only if all of these hold:
 
-- **IEX market data:** unchanged (15,861 bars, fingerprint `e66890e79788fc78`; file last modified 2026-11-17).
-- **Strategy A archive:** every checksum OK.
-- **Tests:** 843 passed.
+- the gap is at most 250 sessions;
+- no delisting notice or exit (merger, bankruptcy 8-K, quoted fund liquidation) came
+  before trading resumed;
+- the price resumes within 0.5x-2x of where it stopped, after splits recorded in the gap,
+  or SEC filings quoted in a curated fact say the same shares resumed;
+- the issuers do not conflict when both are known.
 
-## What changed since v3
+Every candidate is recorded with its decision and reason (table `segment_links`). Ticker
+bars and segments are not changed. The run repeats until no new merge appears (2 passes).
 
-### SEC sources
+| | Count |
+| --- | --- |
+| Securities before / after | 122 / 101 |
+| Merge candidates | 32 |
+| Merged | 21 |
+| Kept separate | 11 |
 
-Three SEC sources were added, all read-only, under the same research contact address:
+### Issuers
 
-- **Full-text search** (efts.sec.gov) finds which company wrote a ticker as its own, for
-  example "FSB Bancorp, Inc. (NASDAQ: FSBC)".
-  - The company's own name must come right before the ticker, and "formerly" disqualifies
-    the mention.
-  - A delisting notice at the right time is still what confirms a match.
-  - Effect: 59 of 90 ended securities matched in the first pass (54 in v3), including Red
-    Hat, Bankrate, Mellanox, FSB Bancorp and JMP Group's notes.
-- **Filing history** (data.sec.gov).
-- **Filing headers.**
+- **The SEC ticker list is checked for every ticker** a security used, newest first.
+- **Full-text search is a fallback.** It needs the company's name within 60 characters
+  before the ticker and, where Wikidata names the company for the period, a current or
+  former name that agrees.
+  - That rule removed two false identifications made during this work: a mortgage trust
+    for First Republic, and Groupon for the 2021 SHLD ETF.
 
-### Facts read from SEC filings
+## Results
 
-28 entries hold 40 exact quotes from 27 SEC documents (3 renames, 11 facts, 12 deals, plus
-2 more facts added during review). Code: [`app/universe/curated.py`](../../../app/universe/curated.py).
-
-- **Re-verified on every run:** each quote must appear word for word in its document.
-  - All 40 are found in the cached copies.
-  - All 40 were found again in the live SEC documents
-    ([`scripts/verify_curated_quotes.py`](../../../scripts/verify_curated_quotes.py)).
-- **Renames Alpaca lacks** (these now link instead of ending):
-  - EnerJex → AgEagle (ENRJ → UAVS), with Alpaca's 1-for-25 reverse split; +23.5% across
-    the change, split-adjusted.
-  - HSAC → Immunovant warrants (HSACW → IMVTW).
-  - ITHAX → Mondee warrants (ITHXW → MONDW).
-- **Exits:**
-  - Two commodity ETFs liquidated (OILD 2016, OILD 2020).
-  - The 2021 SHLD ticker was the VictoryShares Protect America ETF, liquidated, not Sears.
-  - Immunovant warrants called at $0.01.
-  - JMP notes redeemed at $25.
-  - Scorpius: trading suspended, 1-for-200 reverse split, then resumed (not an exit).
-  - First Republic.
-
-### First Republic
-
-- **The bank failure is confirmed by two unrelated SEC filers:**
-  - JPMorgan's 8-K: it bought the assets and deposits "from the Federal Deposit Insurance
-    Corporation (FDIC)".
-  - Paramount Group's 8-K: the "Federal Deposit Insurance Corporation being appointed as
-    receiver".
-- **The shareholder recovery is not confirmed.** Zero is kept as a conservative modelling
-  assumption, labelled `assumed_zero`.
-
-### Value basis
-
-Every exit value now states its basis, kept apart from how well the event itself is confirmed:
-
-| Basis | Ended securities | Meaning |
-| --- | --- | --- |
-| `stated_cash` | 23 | A cash amount stated in a merger record, 8-K or redemption notice |
-| `deal_terms` | 11 | Terms quoted from the filing × the acquirer's raw close on the effective date |
-| `assumed_zero` | 21 | Bankruptcy or failure confirmed; the zero recovery is an assumption |
-| `none` | 32 | No value: 19 are not exits (trading gaps); the 13 others are listed below |
-
-### Stock and cash-and-stock deals
-
-| Deal | Value | Target last close |
-| --- | --- | --- |
-| ALXN | $60 + 2.1243 AZN = 182.72 | 182.50 |
-| CELG | $50 + 1 BMY = 106.41, excluding the CVR (lower bound) | 108.24 |
-| DISCA | 1 WBD = 24.78 | 24.43 |
-| MXIM | 0.63 ADI = 105.44 | 103.14 |
-| PXD | 2.3234 XOM = 269.51 | 269.62 |
-| TWX | $53.75 + 1.437 T = 100.48 | 98.77 |
-| VMW | $142.50 cash for a market holder (see below) | 142.48 |
-| WLL | $6.25 + 0.5774 OAS = 69.36 | 68.03 |
-| XLNX | 1.7234 AMD = 196.93 | 194.92 |
-| DO 2024 | $5.65 + 0.2316 NE = 13.80 | 13.99 |
-| FLAC | 1 NAMS = 10.35 | 9.87 |
-| **FSBC** | **held out**: $8.90 + 0.2197 EVBN = 14.74, +10.3% from 13.36 | 13.36 |
-
-- **VMware** was an election deal: holders chose $142.50 cash or 0.252 AVGO share.
-  - The first value used the average across all holders, $193.72. The 10% check rejected it.
-  - Broadcom's election-results 8-K settles it: holders who elected cash or did not elect
-    "will be entitled to receive $142.50 in cash per share".
-  - A holder who bought in the market after the election deadline is in that group, which
-    the last close of $142.48 confirms.
-- **FSB Bancorp** was also an election deal, and its election results were not found, so
-  its value is not used.
-
-### Blank-check companies (SPACs) are excluded point in time
-
-- **SIC 6770 is read from filing headers.** For a filing that names several companies,
-  only the block of the issuer in question is read.
-- **The period ends at the de-SPAC ticker change.** SEC's code can lag a merger by months:
-  WeWork kept 6770 until August 2022.
-- **Only filings and ticker changes on or before each decision date are used.**
-- **Result:** 275 decisions excluded. 82 securities have an SIC history, and 73 of the 81
-  common stocks have an identified issuer.
-
-### Trading gaps
-
-The same instrument sometimes trades again after a pause. Three conditions identify this:
-
-- no delisting notice in between;
-- a similar price, after any split recorded during the gap;
-- the pause is under 250 sessions.
-
-Such a case is labelled "not an exit". 19 cases, mostly thinly traded SPAC warrants and
-rights.
-
-## Survivorship audit
+### Duplicate-security audit: passes
 
 | Check | Result |
 | --- | --- |
-| Batch source | Historical corporate-action events (46 random), named cases (54), renames discovered (37): not today's ticker list |
-| Ended securities in the batch | 87 of 122 (57 common stocks) |
-| Members that later ended | 24 of 44 distinct members |
-| ... with an exit value | 24 of 24: 7 deal terms, 10 stated cash, 7 assumed zero |
-| ... how confirmed | 19 by two sources, 5 by one |
-| Ended securities kept out only for unknown type | 1 (MDGS, a one-session fragment), down from 11 in v3 |
-| Failed companies represented | 21 bankruptcies or failures, all common stocks, all valued at assumed zero |
+| Ticker-days held by more than one security | 0 |
+| Same-ticker successions between two securities | 11, each with a recorded decision |
+| Same issuer and same type, one after the other | 4 (CHK, CRC, DO, HTZ); each is explained (below) |
+| Possible duplicates without a recorded reason | 0 |
 
-Limitations:
+**The 4 same-issuer pairs** are post-bankruptcy re-listings under the same SEC
+registrant. The old shares were cancelled and new shares issued, so they are different
+securities. Each has a delisting notice and a bankruptcy 8-K or price break before the new
+listing.
 
-- **Recoveries:** zero recovery is an assumption, and old Hertz shareholders were in fact
-  paid out. The planned sensitivity test must cover this.
-- **No OTC prices:** prices after an exchange delisting (BBBY, EXPR on OTC) are not in the data.
-- **Dividends** are not included.
+### Merge-by-merge evidence: 21 of 21 pass, 11 of 11 rejections supported
 
-## Look-ahead audit
+The independent audit does not use the pipeline's decision code. For each merge it
+rebuilds from the raw ticker bars, raw corporate actions and the issuer's SEC delisting
+list:
+
+- every bar inside the gap is a filler bar (no volume, no trades);
+- the gap recounts exactly;
+- the split-adjusted price ratio;
+- no delisting notice from the issuer in the gap;
+- one security spans both segments.
+
+| Merged | Gaps | Price ratios | Delisting list read |
+| --- | --- | --- | --- |
+| NOVVW (Nova Vision warrants) ×10 | 11-31 sessions | 0.70-1.92 | yes, 0 notices |
+| CETUR (Cetus rights) ×4 | 11-32 | 0.87-1.05 | yes, 0 |
+| BACA (Berenson SPAC) | 11 | 1.00 | yes, 0 |
+| MDGS (Medigus, later Xylo) | 11 | 0.80 | yes, 0 |
+| SMMC (South Mountain, later BTRS) | 14 | 1.00 | yes, 0 |
+| SCPX (Scorpius) | 32 | 0.34 after the 1-for-200 split | yes, 0 |
+| HSACW (HSAC warrants, later IMVTW) | 34 | 0.89 | no SEC issuer known |
+| SHLD (VictoryShares ETF) | 11 | 1.01 | no SEC issuer known |
+| WDRW (Direxion ETF) | 17 | 1.17 | no SEC issuer known |
+
+- **SCPX** is outside the price range and was merged on SEC evidence. The audit checked
+  that evidence separately: both SEC passages (1-for-200 reverse split; NYSE "has
+  withdrawn its delisting determination and will be lifting the trading suspension") are
+  in the documents, and Alpaca records the SCPX → SCPXD rename and the split on 2024-07-18.
+- **For the 3 merges without an identified SEC issuer,** the delisting-notice check could
+  not be made; the other checks pass.
+
+**Rejections:** at least one disqualifying fact was re-established from raw data for each.
+Genuine ticker reuse stays separate.
+
+| Ticker | What is kept apart | Independent facts |
+| --- | --- | --- |
+| CHK | Old Chesapeake vs post-bankruptcy | Notice 2020-07-20; price ratio 3.80 |
+| CRC | Old California Resources vs post-bankruptcy | Notice 2020-07-31; ratio 12.7 |
+| DO | Old Diamond Offshore vs post-bankruptcy | Notice 2020-05-12; 486 sessions; ratio 8.0 |
+| HTZ | Old Hertz vs post-bankruptcy | Notice 2020-10-30; 258 sessions; ratio 14.7 |
+| FSBC | FSB Bancorp vs Five Star Bancorp | Notice; merger records; different issuers; 254 sessions |
+| MON | Monsanto vs Monument Circle | Notice; different issuers; 697 sessions |
+| RATE | Bankrate vs Global X ETF | Notice; different issuers; 1,261 sessions |
+| SHLD | Sears vs VictoryShares ETF | Notice 2018-11-15; 513 sessions; ratio 70 |
+| SHLD | VictoryShares ETF vs Global X ETF | Quoted liquidation; 484 sessions |
+| OILD | AccuShares fund vs ProShares fund | Quoted liquidation before restart |
+| OILD | ProShares fund vs a later OILD | Quoted liquidation; 408 sessions |
+
+### Look-ahead audit: passes
 
 | Check | Result |
 | --- | --- |
-| Recompute each decision with data cut at that date | 59 of 59 identical |
+| Recompute every decision with data cut at that date | 59 of 59 identical |
 | Multiply all prices after mid-2022 by 10 | No earlier decision changes |
 | Members chosen after their last trade | 0 |
 | Latest date in bars, exit evidence, SIC filings, deal dates, acquirer prices | All 2024-12-31 or earlier |
-| Blank-check exclusions re-derived from facts on file by the decision date | 0 of 275 differ |
-| What membership reads | Raw bars up to the decision, the security type, split checks, and the SIC filed by then. Never exit outcomes, values or later prices |
+| Blank-check exclusions re-derived from facts on file by the decision date | 0 of 245 differ |
 
-**The audit found a leak, which was fixed.** The first version of the blank-check rule
-kept a SPAC excluded after its SIC changed if the security would later change ticker,
-which uses knowledge of a future rename. The audit flagged 4 of 279 exclusions. Only
-renames on or before the decision date count now, and a test asserts that answers do not
-depend on later renames.
+- **What membership reads:** raw bars up to the decision, the security type, split
+  checks, and the SIC filed by then.
+- **What it never reads:** exit outcomes, exit values, or later prices.
+- **Merges** use the fact that trading resumed only to decide identity. A merged
+  security's bars up to any date are unchanged, and the recompute tests hold.
 
-**Remaining limitation:** security types come from present-day sources and apply to the
-whole history. A type is not a price or an outcome, but a later reclassification would be
-applied retroactively.
+### Exit-value integrity: passes
 
-## Errors found and fixed during this review
+| Check | Result |
+| --- | --- |
+| Ended securities with a value | 55, each traced to its evidence (report section 10) |
+| Stated cash (merger record, 8-K, redemption notice) | 23 |
+| Verified deal terms | 11; all 12 deals recompute exactly from fresh acquirer prices |
+| Assumed zero | 21: event confirmed, recovery **not** confirmed, labelled as an assumption |
+| Problems found by `audit_outcomes.py` | 0 |
+| Alpaca and SEC 8-K cash amounts that agree | 8 of 8 |
 
-1. **Full-text search false match:** "Sears Holdings Corp. (formerly NASDAQ: SHLD)" in a
-   SPAC director's biography. Fixed with the own-name and "formerly" rule.
-2. **JMP notes typed as common stock** from a later notice for the common shares. Fixed:
-   the notice nearest the last trade is used, and events after a class's redemption no
-   longer apply to it.
-3. **Election deals valued at the all-holder average.** The 10% check caught it; VMware
-   was fixed from the election results, and FSB Bancorp is held out.
-4. **SIC read for the wrong company** in filings that name several companies. Fixed.
-5. **Blank-check period:** the SIC lag kept WeWork out for 10 months. Fixed with the
-   ticker-change rule, then its look-ahead removed (above).
-6. **Scorpius counted as unresolved.** It was a suspension followed by a 1-for-200 reverse
-   split. Fixed from SEC filings; the trading-gap check now applies splits made during the gap.
-7. **Alpaca-versus-SEC cash cross-check** read the par value instead of the price. Fixed
-   (8 of 8 agree).
-8. **SIC history crashed on headers without a SIC** and lost fetched data. Fixed, and
-   fetches are now committed per security.
+Of the 12 deals, 11 are used. **FSBC is held out**: +10.3% from the last close, and its
+election results were not found.
 
-## Remaining unresolved items and gaps
+The 34 values presented as payouts are stated cash or verified deal terms. Two of them
+carry caveats:
 
-**Ended securities without an outcome (2):**
+- **CELG** is a lower bound: its contingent value right is not valued.
+- **VMW** is the cash a holder received who did not elect.
 
-- **YGF** (YanGuFang, ordinary shares): removed by Nasdaq in April 2024; no reason or later
-  outcome found.
-- **WDRW** (Direxion leveraged ETF), March 2020: why it stopped trading was not found.
-
-**No value, besides the 19 trading gaps (13):**
+**No value is assumed for 11:**
 
 | Security | Status |
 | --- | --- |
 | FSBC | Election results not found |
-| YGF, WDRW | Unresolved (above) |
-| OILD 2016, OILD 2020, SHLD 2021 (ETFs) | Liquidated at net asset value; amount not stated |
-| MON 2022, BACA (SPACs) | Trust redemptions; amount not stated (excluded from the universe anyway) |
+| YGF, WDRW 2020 | Unresolved |
+| OILD ×2, SHLD 2021 (ETFs) | Liquidated at net asset value; amount not stated |
+| MON 2022 (SPAC) | Trust redemption; amount not stated |
 | MONDW | Warrants redeemed; price not stated |
-| CETUR, NOVVW (rights or warrants of SPACs) | Acquisitions without terms |
-| GMZ (closed-end fund) | Merged into another fund |
+| NOVVW, CETUR (SPAC warrants, rights) | No terms |
+| GMZ (fund) | Merged into another fund |
 
-**Unknown type (1):** MDGS, one session of Medigus (an Israeli issuer) in 2016; whether
-these were ordinary shares or ADSs was not established.
+### Confidence of every outcome
 
-**Other limitations:**
+Every one of the 66 ended securities carries a confidence label and its evidence.
 
-- **29 outcomes rest on one source,** mostly SEC alone. SEC is a primary source, but its
-  categories come from parsing 8-K item numbers and delisting rules.
-- **The trading-gap rule is a heuristic.** A new fund launching under a reused ticker at
-  the standard $25 price fooled it once (OILD 2016); the confirmed liquidation took
-  precedence.
-  - **Recommended before backtests:** merge trading-gap segments into one security instead
-    of labelling them.
-- **8 common stocks have no identified issuer,** so their blank-check status is untested:
-  FI→XPRO, FISV→FI, FRC, SCPX ×2, SBNY, SMMC, HYW→STEC. SMMC is a known SPAC fragment; its
-  continuation (BTRS) is tested.
-- **The universe scale is 122 securities.** The 500-stock universe will bring new case
-  types, and curated entries take manual research that grows with it.
-- **Research database size:** 1.35 GB, mostly cached SEC documents. It is git-ignored.
-- **Disclosure:** the IEX database holds bars up to November 2026 from Milestone 1
-  ingestion (unchanged; never read by this research).
+| Label | Count |
+| --- | --- |
+| Two independent sources | 37 |
+| **Lower confidence: one source** | 27 |
+| Unresolved | 2 |
+
+- **The 27 one-source outcomes stay labelled as lower-confidence evidence:** BBBY, BSJN,
+  CELG, CRC, DISCA, DO 2020, ENDP, EXPR, FRC, FTR, MON 2018, PRTY, RATE, REV, SBNY, SHLD
+  2018, TWX, OILD ×2, JMPNL, IMVTW, SHLD 2021, MON 2022, MONDW, NOVVW, BMAC and PYPT.
+- **Passing the audits does not make them as certain as two-source outcomes.**
+- **Members that later ended:** 24 of the 44 distinct members. All 24 have a value, 19 by
+  two sources and 5 by one.
+
+### Issuer identification: all eight resolved or explained
+
+| v4 case | v5 result |
+| --- | --- |
+| FI → XPRO | Expro Group (CIK 1575828), full-text search |
+| FISV → FI | Fiserv (CIK 798354), SEC ticker list |
+| HTBX → NHWK → SCPX, and the second SCPX | Now one security; Scorpius Holdings (CIK 1476963), full-text search |
+| SMMC | Merged into SMMC → BTRS; BTRS Holdings (CIK 1774155), delisting notice |
+| HYW → STEC | Santech Holdings, formerly Hywin (CIK 1785680), full-text search |
+| FRC | No SEC issuer: a bank registered with the FDIC, not the SEC; not a blank check |
+| SBNY | No SEC issuer: a bank registered with the FDIC, not the SEC; not a blank check |
+
+- **Overall:** 87 of 101 securities have an SEC issuer, and 76 of the 78 common stocks.
+- **Securities without one:** First Republic and Signature (documented above), plus ETFs
+  and one warrant chain. Those are outside the common-stock universe whatever their issuer.
+- **Common stocks without an issuer or a documented reason:** 0.
+- **The FRC and SBNY reasons rest on reasoning,** not on a quoted SEC passage.
+
+### Reproducibility: passes
+
+| Check | Result |
+| --- | --- |
+| Rebuild run and two cache-only runs | Byte-identical reports, SHA-256 `f7904745513b89fd9057f1416c5036f07a1158ae9e4aed4dc11b25381953e27e` |
+| Run logs | Byte-identical, `59df47796eea970bc3905142394164993e356521ad2287015400227ebd522dea` |
+| Network requests in the cache-only runs | 0 (SEC, OpenFIGI, Wikidata) |
+| Curated SEC quotes | 42 of 42 found in 28 live SEC documents |
+| IEX market data | Unchanged: 15,861 bars, fingerprint `e66890e79788fc78`, file last modified 2026-11-17 |
+| Strategy A archive | All 13 checksums OK; no change since its archive commit |
+| Tests | 853 passed |
+
+## Remaining unresolved cases and limitations
+
+1. **Unresolved outcomes (2):**
+   - **YGF:** delisted by Nasdaq under rules 5250(a)(1) and 5250(c)(1) (reports not
+     filed; quoted). What shareholders got is unknown, and no failure is assumed.
+   - **WDRW 2020** (a Direxion ETF): why it stopped trading was not found.
+2. **FSB Bancorp's payout is not used.** The election average is 10.3% from the last
+   close, and the election results were not found.
+3. **27 outcomes rest on one source,** mostly SEC alone.
+4. **21 zero values are assumptions.** The bankruptcy or failure is confirmed, but the
+   recovery is not, and old Hertz holders were in fact paid out. A sensitivity test is
+   still needed.
+5. **The trading-gap rule is a heuristic** (gap length, price continuity, notices).
+   - Three merges had no SEC issuer to check for notices.
+   - The rule cannot tell apart two different instruments that trade at the same price
+     after a pause, unless a delisting notice or exit record separates them. A fund
+     launching at $25 under a reused ticker (OILD 2016) was caught only by its quoted
+     liquidation.
+6. **Merging uses later data for identity.** It does not change any bar up to any date,
+   and the recompute tests hold.
+7. **Security types come from present-day sources** and apply to the whole history.
+8. **SIC codes** from SEC filing headers can lag or lead a SPAC merger. The ticker-change
+   rule handles the lag, but an early SIC change is followed as filed.
+9. **The FRC and SBNY issuer reasons** are documented by reasoning, not quoted SEC text.
+10. **Scale:** 101 securities. The 500-stock universe will bring new case types, and
+    curated entries need manual research.
+11. **Not modelled:** no OTC prices after an exchange delisting; dividends are excluded.
+12. **Disclosure:** the IEX database holds bars to November 2026 from Milestone 1. It is
+    unchanged and never read by this research.
 
 ## Reproduce
 
@@ -249,8 +251,13 @@ cmp validation_report.txt check.txt
 ```
 
 ```bash
-python scripts/verify_curated_quotes.py
+python scripts/audit_merges.py
 ```
 
-The first run asks SEC and Alpaca for whatever is not yet cached; later runs read the
-cache and must give byte-identical reports.
+```bash
+python scripts/audit_outcomes.py
+```
+
+```bash
+python scripts/verify_curated_quotes.py
+```
