@@ -267,6 +267,32 @@ def test_fetched_answers_survive_a_run_that_is_stopped(tmp_path):
     engine.dispose()
 
 
+def test_a_dropped_connection_is_retried_and_never_read_as_an_empty_answer(tmp_path):
+    import httpx
+
+    engine = open_research_database(f"sqlite:///{(tmp_path / 'r.db').as_posix()}")
+    factory = create_session_factory(engine)
+    calls = []
+
+    def flaky(request):
+        calls.append(request.url)
+        if len(calls) < 3:
+            raise httpx.ConnectError("Connection reset by peer")
+        return httpx.Response(200, text="answer")
+
+    with session_scope(factory) as session:
+        client = sec.CachedSec(session, network=True, sleep=lambda _s: None)
+        client._http = httpx.Client(transport=httpx.MockTransport(flaky))
+        assert client.get("https://www.sec.gov/test/a") == "answer"
+        assert len(calls) == 3
+        client._http = httpx.Client(
+            transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(httpx.ConnectError("x")))
+        )
+        with pytest.raises(httpx.ConnectError):
+            client.get("https://www.sec.gov/test/b")
+    engine.dispose()
+
+
 # =============================================================================
 # Matching a security to an SEC company
 # =============================================================================

@@ -371,9 +371,17 @@ class CachedSec:
             return row.response
         if not self.network:
             return None
-        for _attempt in range(4):
+        for attempt in range(4):
             self.sleep(PAUSE_SECONDS)
-            response = self._http.get(url, params=params)
+            try:
+                response = self._http.get(url, params=params)
+            except httpx.TransportError:
+                # A dropped connection is retried; after the last try it is raised, never
+                # treated as an empty answer (the answers fetched so far are committed).
+                if attempt == 3:
+                    raise
+                self.sleep(10 * (attempt + 1))
+                continue
             self.requests += 1
             if response.status_code in (200, 404):
                 break
