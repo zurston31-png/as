@@ -23,9 +23,11 @@ Then every documented identity exception (``CURATED_IDENTITY_LINKS``: one securi
 a suspension longer than the trading-gap rule, under a new ticker) is checked the same way,
 from raw data and not from the pipeline: each quoted passage is in its cached SEC document;
 both segment ends are real trades and neither ticker traded in between; both segments
-belong to one security, whose issuer is the link's CIK; and the issuer's own filing list
+belong to one security, whose issuer is the link's CIK; the issuer's own filing list
 (cached SEC submissions) shows no delisting notice (Form 25) and no deregistration
-(Form 15) between the last and the first trade. The price on each side is reported.
+(Form 15) between the last and the first trade; and Alpaca, independently of SEC, records
+the ticker change of the same security in between (one security, not only one company).
+The price on each side is reported.
 
 Exits with status 1 if any merge or exception fails a check.
 """
@@ -252,6 +254,21 @@ def audit_identity_links(s, client) -> int:
             )
             if notices:
                 problems.append(f"filed in between: {notices}")
+        # Same shares, not only the same company: Alpaca (independent of SEC) records the
+        # ticker change of this security between the two segments.
+        renames = [
+            a
+            for a in s.execute(
+                select(CorporateAction).where(
+                    CorporateAction.action_type == "name_change",
+                    CorporateAction.old_symbol == link.old_symbol,
+                    CorporateAction.new_symbol == link.new_symbol,
+                )
+            ).scalars()
+            if a.process_date and link.old_last < a.process_date <= link.new_first
+        ]
+        if not renames:
+            problems.append("no Alpaca name change between the two tickers in between")
         gap = max(0, len(trading_days(link.old_last, link.new_first)) - 2)
         failures += bool(problems)
         print(
@@ -259,7 +276,8 @@ def audit_identity_links(s, client) -> int:
             f"{link.new_symbol} {link.new_first}: {gap} sessions without a trade; close "
             f"{old.close if old else None} -> {new.close if new else None}; one security: "
             f"{len(owners) == 1}; issuer {link.cik}; Form 25/15 in between: "
-            f"{len(notices) if company else 'not read'}"
+            f"{len(notices) if company else 'not read'}; Alpaca name change "
+            f"{', '.join(str(a.process_date) for a in renames) or 'none'}"
             + (f"; {'; '.join(problems)}" if problems else "")
         )
     print(

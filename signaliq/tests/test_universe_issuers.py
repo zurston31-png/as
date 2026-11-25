@@ -368,3 +368,14 @@ def test_blank_check_answers_use_only_what_was_on_file_by_the_day(research):
             )
             cut = evidence.blank_check_exclusions(session)[1]
             assert cut(day) == answers[day], day
+
+
+def test_a_missing_answer_stops_the_issuer_step_instead_of_meaning_no_issuer(research):
+    # Nothing is cached: every lookup is unanswered. Storing issuers must refuse, not
+    # store "no issuer" for the security.
+    from app.universe import sec
+
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2019, 1, 2), date(2024, 12, 31))])
+    with session_scope(research) as session, pytest.raises(sec.SecUnavailable, match="not cached"):
+        evidence.store_issuers(session)

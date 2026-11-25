@@ -162,6 +162,11 @@ CURATED_IDENTITY_LINKS: tuple[CuratedIdentityLink, ...] = (
             ),
             SecQuote(
                 f"{_YNDX}/000110465924109545/tm2426436d2_ex99-1.htm",
+                "Trading in the Company\u2019s Class A ordinary shares was suspended on February "
+                "28, 2022",
+            ),
+            SecQuote(
+                f"{_YNDX}/000110465924109545/tm2426436d2_ex99-1.htm",
                 "Following the successful divestment of our Russian assets, which completed the "
                 "separation from all ties with Russia, Nasdaq has determined that trading in our "
                 "shares will resume.",

@@ -1335,14 +1335,35 @@ def fetch_issuers(
     return client.requests, client.failures
 
 
+class StrictCache(sec.CachedSec):
+    """Cache only, recording every request whose answer is not cached (``missing``), so a
+    missing answer is detected instead of being read as "nothing found"."""
+
+    def __init__(self, session: Session) -> None:
+        super().__init__(session, network=False)
+        self.missing: set[str] = set()
+
+    def get(self, url: str, params: dict | None = None) -> str | None:
+        text = super().get(url, params)
+        if text is None:
+            self.missing.add(sec.cache_key(url, params))
+        return text
+
+
 def store_issuers(session: Session) -> dict[int, list[str]]:
     """Store the dated issuer evidence, the issuer at each last trade and the SIC points.
     Returns the ticker periods where two companies' cover pages overlapped."""
     session.execute(delete(IssuerSic))
     session.execute(delete(IssuerEvidence))
     session.execute(delete(SecurityIssuer))
-    client = sec.CachedSec(session, network=False)
+    client = StrictCache(session)
     records, conflicts = issuer_records(session, client, sec_findings(session, client))
+    if client.missing:
+        # A lookup that was never answered must not read as "no issuer": stop instead.
+        raise sec.SecUnavailable(
+            f"{len(client.missing)} SEC answers the issuer step needs are not cached "
+            f"(first: {sorted(client.missing)[0]}); run the fetch again"
+        )
     for sid, last, points, sics in records:
         session.add(
             SecurityIssuer(security_id=sid, cik=last.cik, name=last.name[:160], how=last.how)
