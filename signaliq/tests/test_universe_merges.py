@@ -460,3 +460,99 @@ def test_a_delisting_notice_in_the_registrants_filing_list_keeps_a_rename_apart(
         [row] = session.query(SegmentLink).all()
         assert row.decision == "rename_rejected"
         assert f"25 delisting notice filed {DAYS[119]}" in row.reason
+
+
+# --- Tickers that passed to another company without a pause --------------------------
+
+
+def _handover_market():
+    """TESTC traded throughout for one company; on DAY[60] the company trading as TESTD
+    took the ticker TESTC (Eldorado Resorts taking CZR from the old Caesars)."""
+    days = LONG[:120]
+    segments = {
+        "TESTC": seg.split_segments("TESTC", bars(days, 30.0))[0],
+        "TESTD": seg.split_segments("TESTD", bars(days[:60], 12.0))[0],
+    }
+    rename = seg.NameChange("rn", "TESTD", "TESTC", days[60])
+    return days, segments, rename
+
+
+def test_a_ticker_taken_over_by_another_company_is_cut_into_one_security_each():
+    days, segments, rename = _handover_market()
+    acquired = seg.TickerExit("TESTC", days[59], "cash_merger TESTC -> TESTD")
+    found = seg.handover_cuts(segments, [rename], [acquired])
+    assert found == [seg.Handover("TESTC", days[60], "TESTD", "rn", acquired.note)]
+    cut, _ = seg.split_segments("TESTC", bars(days, 30.0), [found[0].cut])
+    assert [(s.first_session, s.last_session) for s in cut] == [
+        (days[0], days[59]),
+        (days[60], days[119]),
+    ]
+    chains = seg.build_chains({**segments, "TESTC": cut}, [rename])
+    paths = sorted([(s.symbol, s.first_session) for s in c.segments] for c in chains)
+    assert paths == [
+        [("TESTC", days[0])],  # the earlier holder ends where it was acquired
+        [("TESTD", days[0]), ("TESTC", days[60])],  # the new holder keeps its own history
+    ]
+
+
+def test_the_earlier_holder_renaming_away_also_marks_a_handover():
+    # Ingersoll-Rand plc became TT on the day Gardner Denver (GDI) took the ticker IR.
+    days, segments, rename = _handover_market()
+    away = seg.TickerExit("TESTC", days[60], "renamed TESTC -> TESTE")
+    assert [h.cut for h in seg.handover_cuts(segments, [rename], [away])] == [days[60]]
+
+
+def test_no_cut_without_the_earlier_holders_own_exit_record():
+    days, segments, rename = _handover_market()
+    assert seg.handover_cuts(segments, [rename], []) == []
+    # An exit record far from the rename does not count either.
+    late = seg.TickerExit("TESTC", days[100], "cash_merger TESTC -> X")
+    assert seg.handover_cuts(segments, [rename], [late]) == []
+
+
+def test_a_late_rename_date_onto_a_ticker_that_started_after_the_old_one_is_not_a_handover():
+    # BOWX -> WE: the new ticker starts where the old one stops; nothing to cut.
+    days = LONG[:120]
+    segments = {
+        "TESTD": seg.split_segments("TESTD", bars(days[:60], 12.0))[0],
+        "TESTC": seg.split_segments("TESTC", bars(days[60:], 12.0))[0],
+    }
+    rename = seg.NameChange("rn", "TESTD", "TESTC", days[66])
+    gone = seg.TickerExit("TESTC", days[66], "renamed")
+    assert seg.handover_cuts(segments, [rename], [gone]) == []
+
+
+@pytest.mark.parametrize(("missing", "expected"), [([], 2), (["a quote"], 1)])
+def test_a_documented_handover_cuts_the_run_only_when_its_sec_quotes_are_found(
+    research, monkeypatch, missing, expected
+):
+    from app.universe.curated import CuratedHandover
+
+    days = LONG[:120]
+    item = CuratedHandover(
+        "TESTC", days[59], days[60], "0000000001", "0000000002", (SecQuote("u", "t"),), "test"
+    )
+    monkeypatch.setattr(evidence, "curated_handovers", lambda s: [(item, missing)])
+    with session_scope(research) as session:
+        _ticker_bars(session, "TESTC", days, 30.0)
+    with session_scope(research) as session:
+        assembled = p.assemble(session)
+    assert len(assembled.chains) == expected
+    if expected == 2:
+        assert [c.first_session for c in assembled.chains] == [days[0], days[60]]
+        assert [h.link_id for h in assembled.handovers] == [evidence.handover_link_id(item)]
+
+
+def test_the_randgold_barrick_exception_names_both_registrants_and_the_exact_cut():
+    from app.universe.curated import CURATED_DEALS, CURATED_HANDOVERS
+
+    (gold,) = [h for h in CURATED_HANDOVERS if h.symbol == "GOLD"]
+    assert (gold.old_last, gold.new_first) == (date(2018, 12, 28), date(2019, 1, 2))
+    assert (gold.old_cik, gold.new_cik) == ("0001175580", "0000756894")
+    assert len(trading_days(gold.old_last, gold.new_first)) == 3  # 2018-12-31 in between
+    (deal,) = [d for d in CURATED_DEALS if d.target_symbol == "GOLD"]
+    assert (deal.last_trade, deal.shares_per_share, deal.cash_per_share) == (
+        gold.old_last,
+        6.128,
+        0.0,
+    )

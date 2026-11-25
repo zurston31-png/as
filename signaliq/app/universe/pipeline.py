@@ -9,7 +9,7 @@ import logging
 import math
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time
 
 from sqlalchemy import delete, select
@@ -294,6 +294,9 @@ class Assembled:
     chains: list[seg.Chain]
     fillers_by_symbol: dict[str, int]
     segments_by_symbol: dict[str, list[seg.Segment]]
+    #: Tickers cut where they passed from one company to another (``seg.handover_cuts`` and
+    #: the documented exceptions in ``CURATED_HANDOVERS``).
+    handovers: list[seg.Handover] = field(default_factory=list)
     #: Permanent security ids, one per chain (set by ``store_securities``).
     ids: list[int] | None = None
 
@@ -375,6 +378,54 @@ def assemble(session: Session) -> Assembled:
         ).scalars()
         if e.old_symbol and e.new_symbol and e.process_date
     ]
+    # Tickers that passed to another company without a pause are cut at the new holder's
+    # first session, so each company keeps its own segment.
+    exits = [
+        seg.TickerExit(
+            e.acquiree_symbol,
+            e.process_date,
+            f"{e.action_type} {e.acquiree_symbol} -> {e.acquirer_symbol or '?'} ({e.process_date})",
+        )
+        for e in session.execute(
+            select(CorporateAction).where(
+                CorporateAction.action_type.in_(
+                    ("cash_merger", "stock_merger", "stock_and_cash_merger")
+                )
+            )
+        ).scalars()
+        if e.acquiree_symbol and e.process_date
+    ] + [
+        seg.TickerExit(
+            r.old_symbol,
+            r.process_date,
+            f"renamed {r.old_symbol} -> {r.new_symbol} ({r.process_date})",
+        )
+        for r in renames
+        if r.old_symbol != r.new_symbol
+    ]
+    from app.universe.evidence import curated_handovers, handover_link_id
+
+    handovers = seg.handover_cuts(segments, renames, exits)
+    for item, missing in curated_handovers(session):
+        held = next(
+            (
+                s
+                for s in segments.get(item.symbol, ())
+                if s.first_session <= item.old_last < item.new_first <= s.last_session
+                and {item.old_last, item.new_first} <= {b.session for b in s.bars}
+            ),
+            None,
+        )
+        if missing or held is None:
+            continue
+        handovers.append(
+            seg.Handover(item.symbol, item.new_first, "", handover_link_id(item), item.note)
+        )
+    cuts: dict[str, list] = defaultdict(list)
+    for item in handovers:
+        cuts[item.symbol].append(item.cut)
+    for symbol, days in cuts.items():
+        segments[symbol], fillers[symbol] = seg.split_segments(symbol, by_symbol[symbol], days)
     from app.universe.models import SegmentLink  # derived each run, read here
 
     gaps = [
@@ -400,7 +451,9 @@ def assemble(session: Session) -> Assembled:
         for link, missing in curated_identity_links(session)
         if not missing
     ]
-    return Assembled(seg.build_chains(segments, renames, gaps, identities), fillers, segments)
+    return Assembled(
+        seg.build_chains(segments, renames, gaps, identities), fillers, segments, handovers
+    )
 
 
 def classify_exit(chain: seg.Chain, events: list[CorporateAction], data_end_sessions: list[date]):

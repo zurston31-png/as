@@ -37,10 +37,12 @@ from app.universe.batch import PLAIN_TICKER
 from app.universe.curated import (
     CURATED_DEALS,
     CURATED_FACTS,
+    CURATED_HANDOVERS,
     CURATED_IDENTITY_LINKS,
     CURATED_RENAMES,
     CURATED_SPIN_OFFS,
     CuratedFact,
+    CuratedHandover,
     CuratedIdentityLink,
     CuratedRename,
 )
@@ -918,7 +920,13 @@ def fetch_curated_documents(
     """Fetch (or reuse from the cache) every SEC document a curated entry quotes."""
     client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
     try:
-        for entry in (*CURATED_RENAMES, *CURATED_IDENTITY_LINKS, *CURATED_FACTS, *CURATED_DEALS):
+        for entry in (
+            *CURATED_RENAMES,
+            *CURATED_IDENTITY_LINKS,
+            *CURATED_HANDOVERS,
+            *CURATED_FACTS,
+            *CURATED_DEALS,
+        ):
             for quote in entry.quotes:
                 client.get(quote.url)
     finally:
@@ -961,6 +969,16 @@ def curated_identity_links(session: Session) -> list[tuple[CuratedIdentityLink, 
 
 def identity_link_id(link: CuratedIdentityLink) -> str:
     return f"identity:{link.old_symbol}>{link.new_symbol}:{link.old_last}:{link.new_first}"
+
+
+def curated_handovers(session: Session) -> list[tuple[CuratedHandover, list]]:
+    """Each documented ticker handover with its missing quotes (cache only)."""
+    client = sec.CachedSec(session, network=False)
+    return [(item, missing_quotes(client, item.quotes)) for item in CURATED_HANDOVERS]
+
+
+def handover_link_id(item: CuratedHandover) -> str:
+    return f"handover:{item.symbol}:{item.old_last}:{item.new_first}"
 
 
 def curated_facts(session: Session) -> dict[int, list[tuple[CuratedFact, list]]]:
@@ -1313,12 +1331,39 @@ def issuer_points(
                 clash = next((k for k in kept if _overlap(k, span)), None)
                 if clash is None:
                     kept.append(span)
-                else:
-                    conflicts[sid].append(
-                        f"{h.symbol}: CIK {span[0].cik} ({len(span)} cover pages "
-                        f"{span[0].filed}..{span[-1].filed}) overlaps CIK {clash[0].cik} "
-                        f"({len(clash)}); kept {clash[0].cik}"
+                    continue
+                # A ticker passing from one company to another can show both companies'
+                # cover pages around the closing (HTA's and the old Healthcare Realty's on
+                # 2022-07-19..21, before HTA took the ticker HR). What lies more than
+                # UNCOVERED_DAYS outside every kept company's stretch is a later (or earlier)
+                # holder, not a co-registrant, and is kept.
+                outside = [
+                    p
+                    for p in span
+                    if all(
+                        p.filed < k[0].filed or p.filed > k[-1].filed
+                        for k in kept
+                        if _overlap(k, span)
                     )
+                ]
+                after = [p for p in outside if p.filed > clash[-1].filed]
+                before = [p for p in outside if p.filed < clash[0].filed]
+                handed = [
+                    part
+                    for part in (before, after)
+                    if part and (part[-1].filed - part[0].filed).days > UNCOVERED_DAYS
+                ]
+                note = (
+                    f"; kept its own {', '.join(f'{x[0].filed}..{x[-1].filed}' for x in handed)}"
+                    if handed
+                    else ""
+                )
+                conflicts[sid].append(
+                    f"{h.symbol}: CIK {span[0].cik} ({len(span)} cover pages "
+                    f"{span[0].filed}..{span[-1].filed}) overlaps CIK {clash[0].cik} "
+                    f"({len(clash)}); kept {clash[0].cik}{note}"
+                )
+                kept += handed
             found_text = None
             if not kept and h.valid_to >= sh.COVER_FIRST:
                 # No candidate had cover pages: the companies that wrote the ticker in an
@@ -1341,7 +1386,7 @@ def issuer_points(
                 found_text = sh.ticker_candidates(client, h.symbol, h.valid_from, h.valid_to)
             for cik in sh.ranked_candidates(found_text):
                 confirmed_hit = sh.confirm_writer(
-                    client, found_text[cik], h.symbol, window=sh.ISSUER_WINDOW
+                    client, found_text[cik], h.symbol, window=sh.ISSUER_WINDOW, whole_name=True
                 )
                 if not confirmed_hit:
                     continue

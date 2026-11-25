@@ -189,6 +189,64 @@ CURATED_IDENTITY_LINKS: tuple[CuratedIdentityLink, ...] = (
 
 
 @dataclass(frozen=True)
+class CuratedHandover:
+    """A ticker that passed from one company to another without a pause, where Alpaca has no
+    rename to show it: a documented exception, applied only when every passage is found.
+
+    The ticker's run of real trades is cut between ``old_last`` (the earlier holder's last
+    trade) and ``new_first`` (the new holder's first). ``audit_merges.py`` checks the cut
+    from raw bars and the issuers on both sides.
+    """
+
+    symbol: str
+    old_last: date
+    new_first: date
+    old_cik: str
+    new_cik: str
+    quotes: tuple[SecQuote, ...]
+    note: str
+
+
+_RANDGOLD = f"{SEC}/1175580"
+
+CURATED_HANDOVERS: tuple[CuratedHandover, ...] = (
+    CuratedHandover(
+        "GOLD",
+        date(2018, 12, 28),
+        date(2019, 1, 2),
+        "0001175580",
+        "0000756894",
+        (
+            SecQuote(
+                f"{_RANDGOLD}/000114420418066704/tv510120_ex99-1.htm",
+                "NASDAQ Trading Symbol: GOLD",
+            ),
+            SecQuote(
+                f"{_RANDGOLD}/000114420418064968/tv509301_ex99-1.htm",
+                "Randgold\u2019s NASDAQ trading ticker \u201cGOLD\u201d will be transferred to "
+                "Barrick on the NYSE",
+            ),
+            SecQuote(
+                f"{_RANDGOLD}/000114420419000112/tv510199_ex99-2.htm",
+                "Trading of Randgold ADSs on NASDAQ will be cancelled with effect from 4:00 a.m. "
+                "(ET) today.",
+            ),
+            SecQuote(
+                f"{_RANDGOLD}/000114420419000112/tv510199_ex99-2.htm",
+                "and on the NYSE under ticker \u201cGOLD\u201d at or around 9:30 a.m. (ET) today",
+            ),
+        ),
+        "Randgold Resources' ADSs traded on Nasdaq as GOLD until 2018-12-28 (halted on "
+        "2018-12-31, cancelled on 2019-01-02). Barrick Gold acquired Randgold (scheme effective "
+        "2019-01-01) and its shares, until then NYSE: ABX, traded on the NYSE as GOLD from "
+        "2019-01-02. Alpaca records no rename, so one uninterrupted GOLD series joined Randgold "
+        "and Barrick (the price fell from 82.89 to 13.10, the 6.1280 exchange ratio). Barrick's "
+        "earlier ABX history is not in this batch.",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class CuratedFact:
     """Type and/or exit evidence for the security that last traded as ``symbol`` on ``last_trade``."""
 
@@ -718,6 +776,33 @@ CURATED_DEALS: tuple[CuratedDeal, ...] = (
         "UTC shares per Raytheon share. UTC renamed itself Raytheon Technologies and traded as "
         "RTX from that day, after spinning off Carrier and Otis to its own holders of record "
         "(Raytheon holders did not receive them), so RTX's close that day is the value.",
+    ),
+    CuratedDeal(
+        "GOLD",
+        date(2018, 12, 28),
+        "GOLD",
+        date(2019, 1, 1),
+        0.0,
+        6.128,
+        (
+            SecQuote(
+                f"{_RANDGOLD}/000114420419000112/tv510199_ex99-3.htm",
+                "Under the terms of the Merger, Randgold shareholders were entitled to receive "
+                "6.1280 common shares of Barrick for each Randgold share held.",
+            ),
+            SecQuote(
+                f"{_RANDGOLD}/000114420418066704/tv510120_ex99-1.htm",
+                "One ADS represents one ordinary share",
+            ),
+            SecQuote(
+                f"{_RANDGOLD}/000114420419000112/tv510199_ex99-1.htm",
+                "Randgold is therefore pleased to announce that the Scheme has now become "
+                "effective in accordance with its terms.",
+            ),
+        ),
+        "Barrick Gold acquired Randgold Resources by a scheme effective 2019-01-01 (all stock): "
+        "6.1280 Barrick shares per Randgold share, and one Randgold ADS is one share. Barrick "
+        "traded on the NYSE as GOLD from 2019-01-02, so that close is the value.",
     ),
 )
 

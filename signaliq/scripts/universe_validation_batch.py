@@ -21,6 +21,7 @@ import re
 import sys
 from collections import Counter, defaultdict
 from contextlib import redirect_stdout
+from datetime import timedelta
 from itertools import pairwise
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
 from app.universe import checks, curated, evidence, sectypes
 from app.universe import pipeline as p
+from app.universe import segments as seg
 from app.universe import stage as universe_stage
 from app.universe.batch import KNOWN_CASES
 from app.universe.database import open_research_database, research_database_url
@@ -214,6 +216,7 @@ def run(settings, refresh: bool, stage: int | None = None) -> dict:
                         renamed = evidence.decide_issuer_renames(session)
                         if not any(row.decision == "merged" for row in new) and not renamed:
                             break
+                facts["handovers"] = assembled.handovers
                 facts["merges_stable"] = not any(row.decision == "merged" for row in new) and (
                     not renamed
                 )
@@ -1108,6 +1111,74 @@ def report(facts: dict) -> str:
                 )
             )
             print(f"      {link.note}")
+        handovers = facts.get("handovers") or []
+        points = evidence.stored_issuer_points(s)
+
+        def issuer_text(sid, day):
+            point, later = evidence.issuer_on(points.get(sid, []), day)
+            if point is None:
+                return "no issuer evidence"
+            return f"CIK {point.cik} {point.name[:30]}" + (" (later document)" if later else "")
+
+        print(
+            f"  Tickers that passed to another company without a pause, cut into one security "
+            f"per company (checked by scripts/audit_merges.py): {len(handovers)}"
+        )
+        for h in handovers:
+            before = next(
+                (
+                    sid
+                    for sid, items in history.items()
+                    if any(
+                        t.symbol == h.symbol
+                        and t.valid_to < h.cut
+                        and seg.sessions_between(t.valid_to, h.cut) <= seg.MAX_GAP_SESSIONS
+                        for t in items
+                    )
+                ),
+                None,
+            )
+            after = next(
+                (
+                    sid
+                    for sid, items in history.items()
+                    if any(t.symbol == h.symbol and t.valid_from == h.cut for t in items)
+                ),
+                None,
+            )
+            how = (
+                f"rename {h.renamed_from} -> {h.symbol}"
+                if h.renamed_from
+                else "documented exception"
+            )
+            print(
+                f"    {h.symbol} cut at {h.cut} ({how}); earlier holder's exit: {h.exit_note[:120]}"
+            )
+            print(
+                "      earlier holder: "
+                + (
+                    f"id {before} {path(before)}, "
+                    f"{issuer_text(before, h.cut - timedelta(days=1))} before the cut; "
+                    f"{securities[before].status}"
+                    + (
+                        f", outcome {securities[before].outcome} "
+                        f"({securities[before].outcome_status}), value "
+                        f"{securities[before].assumed_exit_value}"
+                        if securities[before].status == "ended"
+                        else ""
+                    )
+                    if before is not None
+                    else "NOT FOUND"
+                )
+            )
+            print(
+                "      new holder: "
+                + (
+                    f"id {after} {path(after)}, {issuer_text(after, h.cut)} at the cut"
+                    if after is not None
+                    else "NOT FOUND"
+                )
+            )
 
         print("\n10. EXIT-VALUE AUDIT (no value without evidence)")
         deals = {d.security_id: d for d in s.execute(select(DealValue)).scalars()}

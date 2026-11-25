@@ -20,6 +20,7 @@ from app.universe import sec_history as sh
 from app.universe.curated import (
     CURATED_DEALS,
     CURATED_FACTS,
+    CURATED_HANDOVERS,
     CURATED_IDENTITY_LINKS,
     CURATED_RENAMES,
 )
@@ -32,12 +33,15 @@ def main() -> int:
         for kind, entries in (
             ("rename", CURATED_RENAMES),
             ("same", CURATED_IDENTITY_LINKS),
+            ("handover", CURATED_HANDOVERS),
             ("fact", CURATED_FACTS),
             ("deal", CURATED_DEALS),
         ):
             for e in entries:
                 if kind in ("rename", "same"):
                     label = f"{e.old_symbol} -> {e.new_symbol}"
+                elif kind == "handover":
+                    label = f"{e.symbol} {e.old_last} | {e.new_first}"
                 else:
                     symbol = getattr(e, "symbol", getattr(e, "target_symbol", ""))
                     label = f"{symbol} {e.last_trade}"

@@ -29,11 +29,24 @@ belong to one security, whose issuer is the link's CIK; the issuer's own filing 
 the ticker change of the same security in between (one security, not only one company).
 The price on each side is reported.
 
+Then every ticker handover (a ticker that passed from one company to another without a
+pause, cut into one security per company) is re-derived from the raw bars and the raw
+Alpaca events with separate code: a rename X -> T where X's last trade is within 10
+sessions of the rename, T traded before and after it, and T's earlier holder's own exit
+(acquired, or renamed away from T) is recorded within 10 sessions; plus the documented
+exceptions (``CURATED_HANDOVERS``, every passage found). For each: T's run is split in the
+stored securities exactly at the new holder's first trade, the earlier part and the new
+holder belong to different securities, the new holder's security came from X, and the
+issuer evidence differs across the cut and continues the new holder's own company. Every
+place where the stored securities split one uninterrupted run of a ticker must be one of
+these handovers.
+
 Exits with status 1 if any merge or exception fails a check.
 """
 
 import sys
 from datetime import date, timedelta
+from itertools import pairwise
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -44,10 +57,11 @@ from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
 from app.universe import sec
 from app.universe import sec_history as sh
-from app.universe.curated import CURATED_IDENTITY_LINKS
+from app.universe.curated import CURATED_HANDOVERS, CURATED_IDENTITY_LINKS
 from app.universe.database import open_research_database
 from app.universe.models import (
     CorporateAction,
+    IssuerEvidence,
     Security,
     SecurityIssuer,
     SegmentLink,
@@ -184,8 +198,17 @@ def main() -> int:
         rejected_failures = audit_rejections(s, client, actions)
         identity_failures = audit_identity_links(s, client)
         rename_failures = audit_issuer_renames(s, client, actions)
+        handover_failures = audit_handovers(s, client)
     engine.dispose()
-    return 1 if failures or rejected_failures or identity_failures or rename_failures else 0
+    return (
+        1
+        if failures
+        or rejected_failures
+        or identity_failures
+        or rename_failures
+        or handover_failures
+        else 0
+    )
 
 
 def audit_issuer_renames(s, client, actions) -> int:
@@ -527,3 +550,148 @@ def audit_rejections(s, client, actions) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def audit_handovers(s, client) -> int:
+    """Recheck every ticker handover from raw data (see the module docstring)."""
+    window = 10
+    days = trading_days(date(2015, 12, 1), SCOPE_END)
+    position = {d: i for i, d in enumerate(days)}
+
+    def apart(a, b):  # sessions from a to b (signed), on the exchange calendar
+        return position.get(b, 0) - position.get(a, 0)
+
+    real: dict[str, list[date]] = {}
+    for b in s.execute(select(TickerBar).order_by(TickerBar.session)).scalars():
+        if b.volume > 0 or b.trade_count > 0:
+            real.setdefault(b.symbol, []).append(b.session)
+    events = [
+        a
+        for a in s.execute(select(CorporateAction)).scalars()
+        if a.process_date and date(2016, 1, 1) <= a.process_date <= SCOPE_END
+    ]
+    expected: dict[tuple[str, date], str] = {}
+    for a in events:
+        if a.action_type != "name_change" or not a.old_symbol or a.old_symbol == a.new_symbol:
+            continue
+        old_days = [
+            d for d in real.get(a.old_symbol, []) if abs(apart(d, a.process_date)) <= window + 1
+        ]
+        if not old_days:
+            continue
+        last_old = max(old_days)
+        held = real.get(a.new_symbol, [])
+        if not any(d < last_old for d in held) or not any(d > last_old for d in held):
+            continue
+        gone = [
+            e
+            for e in events
+            if abs(apart(e.process_date, a.process_date)) <= window + 1
+            and (
+                (e.action_type.endswith("merger") and e.acquiree_symbol == a.new_symbol)
+                or (
+                    e.action_type == "name_change"
+                    and e.old_symbol == a.new_symbol
+                    and e.new_symbol != a.new_symbol
+                )
+            )
+        ]
+        if gone:
+            cut = min(d for d in held if d > last_old)
+            expected[(a.new_symbol, cut)] = f"rename {a.old_symbol} -> {a.new_symbol}"
+    curated_problems = {}
+    for item in CURATED_HANDOVERS:
+        missing = [
+            q.url
+            for q in item.quotes
+            if " ".join(q.text.split()) not in sh.plain_text(client.get(q.url))
+        ]
+        sessions = real.get(item.symbol, [])
+        between = [d for d in sessions if item.old_last < d < item.new_first]
+        if missing or item.old_last not in sessions or item.new_first not in sessions or between:
+            curated_problems[(item.symbol, item.new_first)] = (
+                f"quotes missing {missing}; real trades between {between}"
+            )
+        expected[(item.symbol, item.new_first)] = "documented exception"
+    history: dict[str, list] = {}
+    for h in s.execute(select(TickerHistory)).scalars():
+        history.setdefault(h.symbol, []).append(h)
+    # Every place the stored securities split one uninterrupted run of a ticker.
+    splits = {}
+    for symbol, items in history.items():
+        items = sorted(items, key=lambda h: h.valid_from)
+        for a, b in pairwise(items):
+            if a.security_id != b.security_id and 0 < apart(a.valid_to, b.valid_from) <= window + 1:
+                splits[(symbol, b.valid_from)] = (a, b)
+    print(f"\nTicker handovers to audit: {len(expected)}\n")
+    failures = 0
+    for key in sorted(expected | dict.fromkeys(splits)):
+        symbol, cut = key
+        problems = []
+        if key in curated_problems:
+            problems.append(curated_problems[key])
+        if key not in expected:
+            problems.append("the securities split this ticker's run, but no handover explains it")
+        pair = splits.get(key)
+        if pair is None:
+            problems.append("the stored securities do not split the run here")
+            failures += 1
+            print(f"FAIL {symbol:5} cut {cut}: {'; '.join(problems)}")
+            continue
+        before, after = pair
+        prior = sorted(
+            (
+                h
+                for items in history.values()
+                for h in items
+                if h.security_id == after.security_id and h.valid_to < cut
+            ),
+            key=lambda h: h.valid_to,
+        )
+        came_from = prior[-1].symbol if prior else ""
+        if expected.get(key, "").startswith("rename") and came_from != expected[key].split()[1]:
+            problems.append(f"new holder's security came from {came_from or 'nothing'}")
+
+        def ciks(sid, sym, first, last):
+            return {
+                e.cik
+                for e in s.execute(
+                    select(IssuerEvidence).where(
+                        IssuerEvidence.security_id == sid,
+                        IssuerEvidence.symbol == sym,
+                        IssuerEvidence.filed >= first,
+                        IssuerEvidence.filed <= last,
+                    )
+                ).scalars()
+            }
+
+        old_side = ciks(before.security_id, symbol, before.valid_from, before.valid_to)
+        new_side = ciks(after.security_id, symbol, cut, after.valid_to)
+        own = ciks(after.security_id, came_from, date(2000, 1, 1), cut) if came_from else set()
+        if old_side and new_side and old_side & new_side and not (new_side - old_side):
+            problems.append(f"same issuer on both sides of the cut: {sorted(old_side)}")
+        if own and new_side and not own & new_side:
+            problems.append(
+                f"new holder's issuer under {symbol} {sorted(new_side)} is not its issuer under "
+                f"{came_from} {sorted(own)}"
+            )
+        for item in CURATED_HANDOVERS:
+            if (item.symbol, item.new_first) == key:
+                if new_side and item.new_cik not in new_side:
+                    problems.append(f"issuer after the cut {sorted(new_side)}, not {item.new_cik}")
+                if old_side and item.old_cik not in old_side:
+                    problems.append(f"issuer before the cut {sorted(old_side)}, not {item.old_cik}")
+                if not new_side:
+                    problems.append("no issuer evidence after the cut")
+        failures += bool(problems)
+        print(
+            f"{'FAIL' if problems else 'ok  '} {symbol:5} cut {cut} ({expected.get(key, '?')}): "
+            f"id {before.security_id} to {before.valid_to} (issuer {sorted(old_side) or 'none'}) | "
+            f"id {after.security_id} from {after.valid_from}, earlier ticker {came_from or '-'} "
+            f"(issuer {sorted(new_side) or 'none'}; "
+            f"under {came_from or '-'}: {sorted(own) or 'none'})"
+            + (f"; {'; '.join(problems)}" if problems else "")
+        )
+    total = len(expected | dict.fromkeys(splits))
+    print(f"\n{total - failures} of {total} handovers pass every check")
+    return failures

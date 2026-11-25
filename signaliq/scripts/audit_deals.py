@@ -39,7 +39,11 @@ TOLERANCE = 0.10
 
 
 def written(day) -> set[str]:
-    return {f"{day:%B} {day.day}, {day.year}", f"{day:%B} {day.day} , {day.year}"}
+    return {
+        f"{day:%B} {day.day}, {day.year}",
+        f"{day:%B} {day.day} , {day.year}",
+        f"{day.day} {day:%B} {day.year}",  # British style ("1 January 2019")
+    }
 
 
 def main() -> int:

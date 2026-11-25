@@ -21,6 +21,10 @@ So a security is assembled as follows:
 * Segments of different tickers are **linked** into one security when a
   name_change event joins them: the old ticker's segment ends shortly before
   the event and the new ticker's segment starts shortly after it.
+* A ticker can pass from one company to another without a pause (Eldorado Resorts
+  took the ticker CZR the session after it acquired the old Caesars). Such a run is
+  **cut** at the new holder's first session (``handover_cuts``), so each company keeps
+  its own segment and the rename links the new holder's.
 * Every chain of linked segments is one security with one internal ID. Its
   ticker history is the list of segments.
 """
@@ -115,6 +119,33 @@ class IdentityLink:
     new_first: date
 
 
+@dataclass(frozen=True)
+class Handover:
+    """A ticker that passed from one company to another with no pause in trading.
+
+    ``cut`` is the new holder's first session under the ticker: the run of real trades is
+    cut there into two segments, one per company. ``renamed_from`` is the new holder's
+    previous ticker (empty for a documented exception whose earlier ticker is not in the
+    data), ``link_id`` the rename event or the exception, ``exit_note`` the earlier holder's
+    own exit record.
+    """
+
+    symbol: str
+    cut: date
+    renamed_from: str
+    link_id: str
+    exit_note: str
+
+
+@dataclass(frozen=True)
+class TickerExit:
+    """A record that a ticker's holder stopped using it on ``day`` (acquired, renamed)."""
+
+    symbol: str
+    day: date
+    note: str
+
+
 @dataclass
 class Chain:
     """One security: segments in time order, and the events that joined them."""
@@ -145,18 +176,27 @@ def sessions_between(first: date, second: date) -> int:
     return max(0, len(trading_days(first, second)) - 2)
 
 
-def split_segments(symbol: str, bars: Sequence[Bar]) -> tuple[list[Segment], int]:
+def split_segments(
+    symbol: str, bars: Sequence[Bar], cuts: Iterable[date] = ()
+) -> tuple[list[Segment], int]:
     """Cut one ticker's bars into segments of real trades.
 
-    Returns the segments and the number of filler bars dropped.
+    A segment also starts at each date in ``cuts`` (a handover: the first session of a new
+    holder of the ticker). Returns the segments and the number of filler bars dropped.
     """
     ordered = sorted(bars, key=lambda bar: bar.session)
     real = [bar for bar in ordered if not bar.is_filler]
     fillers = len(ordered) - len(real)
+    cut_days = sorted(set(cuts))
     segments: list[Segment] = []
     current: list[Bar] = []
     for bar in real:
-        if current and sessions_between(current[-1].session, bar.session) > MAX_GAP_SESSIONS:
+        handed = (
+            any(current[-1].session < day <= bar.session for day in cut_days) if current else False
+        )
+        if current and (
+            handed or sessions_between(current[-1].session, bar.session) > MAX_GAP_SESSIONS
+        ):
             segments.append(Segment(symbol, tuple(current)))
             current = []
         current.append(bar)
@@ -178,6 +218,70 @@ def _near(day: date, event_day: date, limit: int) -> bool:
     2021-10-27), so a link may not insist on the event coming first.
     """
     return _within(day, event_day, limit + 1) or _within(event_day, day, limit + 1)
+
+
+def handover_cuts(
+    segments_by_symbol: Mapping[str, Sequence[Segment]],
+    name_changes: Iterable[NameChange],
+    exits: Iterable[TickerExit],
+) -> list[Handover]:
+    """Tickers taken over by another company without a pause, from two Alpaca records.
+
+    A rename X -> T is a handover when, at once:
+
+    * X's segment ends within ``LINK_WINDOW_SESSIONS`` of the rename;
+    * T was trading before X's last session and goes on trading after it (another company
+      held T: one uninterrupted run would otherwise join two companies);
+    * T's earlier holder has its own exit recorded within ``LINK_WINDOW_SESSIONS`` of the
+      rename: acquired (a merger naming T as the acquired company) or renamed away from T.
+
+    The run of T is cut at its first real trade after X's last session. Without the second
+    record nothing is cut (a late rename date alone does not split a security).
+    """
+    exits_by_symbol: dict[str, list[TickerExit]] = {}
+    for item in exits:
+        exits_by_symbol.setdefault(item.symbol, []).append(item)
+    found: dict[tuple[str, date], Handover] = {}
+    for event in sorted(name_changes, key=lambda e: (e.process_date, e.event_id)):
+        if event.old_symbol == event.new_symbol:
+            continue
+        old = next(
+            (
+                s
+                for s in segments_by_symbol.get(event.old_symbol, ())
+                if _near(s.last_session, event.process_date, LINK_WINDOW_SESSIONS)
+            ),
+            None,
+        )
+        if old is None:
+            continue
+        held = next(
+            (
+                s
+                for s in segments_by_symbol.get(event.new_symbol, ())
+                if s.first_session < old.last_session < s.last_session
+            ),
+            None,
+        )
+        if held is None:
+            continue
+        gone = sorted(
+            (
+                x
+                for x in exits_by_symbol.get(event.new_symbol, ())
+                if _near(x.day, event.process_date, LINK_WINDOW_SESSIONS)
+            ),
+            key=lambda x: (x.day, x.note),
+        )
+        if not gone:
+            continue
+        cut = next(b.session for b in held.bars if b.session > old.last_session)
+        key = (event.new_symbol, cut)
+        if key not in found:
+            found[key] = Handover(
+                event.new_symbol, cut, event.old_symbol, event.event_id, gone[0].note
+            )
+    return [found[k] for k in sorted(found)]
 
 
 def build_chains(

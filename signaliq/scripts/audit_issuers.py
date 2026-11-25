@@ -30,6 +30,7 @@ import hashlib
 import re
 import sys
 from collections import defaultdict
+from dataclasses import astuple
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -75,6 +76,63 @@ def listed_on_cover(text: str, ticker: str) -> bool:
     return False
 
 
+#: Words that do not identify a company (written separately from sec_history._NAME_NOISE).
+NOT_NAMES = {
+    "AG",
+    "AND",
+    "CL",
+    "CLASS",
+    "CO",
+    "COM",
+    "COMMON",
+    "COMPANY",
+    "CORP",
+    "CORPORATION",
+    "DEL",
+    "ETF",
+    "FUND",
+    "GROUP",
+    "HOLDING",
+    "HOLDINGS",
+    "INC",
+    "INCORPORATED",
+    "LIMITED",
+    "LLC",
+    "LP",
+    "LTD",
+    "NEW",
+    "NV",
+    "OF",
+    "PLC",
+    "SA",
+    "SHARES",
+    "SHS",
+    "THE",
+    "TRUST",
+    "US",
+    "USA",
+}
+
+
+def names_itself(text: str, ticker: str, company: str, reach: int = 60) -> bool:
+    """Written separately from ``sec_history.own_ticker_mention``: "(NYSE: XOM)" or
+    "(Nasdaq: XOM)" with every word of the company's own name in the ``reach``
+    characters before it, and no "formerly" just before."""
+
+    def words(t: str) -> set[str]:
+        return set(re.findall(r"[A-Z0-9]+", t.replace("\\n", " ").upper()))
+
+    name = words(re.sub(r"/[^/]*/", " ", company)) - NOT_NAMES
+    if not name:
+        return False
+    exchange = r"(?:NASDAQ|NYSE(?:\s+AMERICAN|\s+ARCA|\s+MKT)?)"
+    for m in re.finditer(rf"{exchange}\s*:\s*{re.escape(ticker)}(?![A-Za-z0-9])", text, re.I):
+        before = text[max(0, m.start() - reach) : m.start()]
+        if "formerly" not in before[-30:].lower() and name <= words(before):
+            return True
+    return False
+
+
 def sic_on(rows, day):
     known = [sic for d, sic in sorted(rows) if d <= day and sic]
     return known[-1] if known else None
@@ -100,7 +158,8 @@ def main() -> int:
         same = {
             sid
             for sid in set(replay) | set(stored_points)
-            if sorted(replay.get(sid, [])) == sorted(stored_points.get(sid, []))
+            if sorted(map(astuple, replay.get(sid, [])))
+            == sorted(map(astuple, stored_points.get(sid, [])))
         }
         say("1. CACHE COMPLETENESS")
         say(f"  Issuer step replayed from the cache: requests to SEC {strict.requests}")
@@ -157,6 +216,20 @@ def main() -> int:
                 problems.append(
                     f"id {e.security_id} {e.symbol}: {e.filed} outside its ticker period"
                 )
+        own_filings = 0
+        for e in rows:
+            if e.how != "full_text":
+                continue
+            raw = client.get(e.url)
+            if raw is None:
+                problems.append(f"id {e.security_id} {e.symbol}: own filing {e.url} not cached")
+            elif names_itself(sec.plain_text(raw), e.symbol, e.name):
+                own_filings += 1
+            else:
+                problems.append(
+                    f"id {e.security_id} {e.symbol}: {e.url} does not show {e.name} naming "
+                    f"{e.symbol} as its own"
+                )
         runs = defaultdict(list)
         for e in rows:
             if e.how == "cover_page":
@@ -178,6 +251,10 @@ def main() -> int:
         say(
             f"  Cover-page runs (security, ticker, company): {len(runs)}; "
             f"ends re-read and listing the ticker: {confirmed_ends}"
+        )
+        say(
+            f"  Own-filing evidence re-read, the company naming the ticker as its own: "
+            f"{own_filings} of {sum(e.how == 'full_text' for e in rows)}"
         )
         issuers = list(s.execute(select(SecurityIssuer)).scalars())
         bad_how = [i for i in issuers if i.how not in KINDS]

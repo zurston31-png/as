@@ -447,24 +447,42 @@ def _lead_word(name: str) -> str | None:
 plain_text = _sec.plain_text  # one definition: cover snippets must read exactly the same
 
 
-def own_ticker_mention(text: str, ticker: str, company: str, window: int = 200) -> str | None:
+def _words(text: str) -> list[str]:
+    # Some cached documents hold a literal backslash-n where a line broke ("Weight\\nWatchers").
+    text = text.replace("\\n", " ")
+    return "".join(ch if ch.isalnum() else " " for ch in text.upper()).split()
+
+
+def _name_words(name: str) -> set[str]:
+    """The significant words of a company name ("U.S. GOLD CORP." -> U, S, GOLD); EDGAR's
+    state suffixes ("/DE/") are dropped."""
+    return {w for w in _words(re.sub(r"/[^/]*/", " ", name)) if w not in _NAME_NOISE}
+
+
+def own_ticker_mention(
+    text: str, ticker: str, company: str, window: int = 200, *, whole_name: bool = False
+) -> str | None:
     """The sentence fragment where ``company`` names ``ticker`` as its own, or None.
 
     "FSB Bancorp, Inc. (NASDAQ: FSBC)" counts for FSB Bancorp. "Sears Holdings Corp.
     (formerly NASDAQ: SHLD)" in another company's director biography does not count for
     that company: the name right before the ticker must be the filer's own, and
     "formerly" disqualifies it.
+
+    With ``whole_name`` every significant word of the company's name must stand before the
+    ticker, not only the first: U.S. Gold Corp's proxy statement mentions "Barrick Gold
+    Corporation (NYSE: GOLD)" in a director's biography, which names Barrick, not U.S. Gold.
     """
     lead = _lead_word(company)
     if lead is None:
         return None
+    needed = _name_words(company) if whole_name else {lead}
     pattern = rf"\b(?:NASDAQ|NYSE(?:\s+(?:American|Arca|MKT))?)\s*:\s*{re.escape(ticker)}\b"
     for match in re.finditer(pattern, text, re.I):
         before = text[max(0, match.start() - window) : match.start()]
         if "formerly" in before[-30:].lower():
             continue
-        words = "".join(ch if ch.isalnum() else " " for ch in before.upper()).split()
-        if lead in words:
+        if needed <= set(_words(before)):
             return text[max(0, match.start() - window) : match.end() + 1].strip()
     return None
 
@@ -489,13 +507,17 @@ def confirm_writer(
     ticker: str,
     docs: int = 2,
     window: int = CANDIDATE_WINDOW,
+    *,
+    whole_name: bool = False,
 ):
     """(hit, fragment) where the candidate names the ticker as its own, from its own filing.
 
     Reads at most ``docs`` documents, press releases first.
     """
     for hit in sorted(hits, key=_preference)[:docs]:
-        fragment = own_ticker_mention(plain_text(sec.get(hit.url)), ticker, hit.name, window)
+        fragment = own_ticker_mention(
+            plain_text(sec.get(hit.url)), ticker, hit.name, window, whole_name=whole_name
+        )
         if fragment:
             return hit, fragment
     return None

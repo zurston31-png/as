@@ -471,3 +471,58 @@ def test_a_ticker_on_two_cover_rows_names_no_single_class():
     assert (
         sh.cover_page_class(COVER.format(ticker="TSTX"), "TSTX") == "Common Stock, $0.01 par value"
     )
+
+
+def test_a_company_taking_over_the_ticker_is_kept_beside_the_cover_pages_of_the_closing(research):
+    # HTA took the ticker HR from the old Healthcare Realty: both filed cover pages listing
+    # HR around the closing. The new holder's own later stretch is kept, not dropped as a
+    # co-registrant.
+    filings, documents = build(
+        [
+            ("0000000111", date(2019, 8, 1), "TSTX", 1, True),
+            ("0000000111", date(2021, 5, 1), "TSTX", 2, True),
+            ("0000000111", date(2022, 7, 21), "TSTX", 3, True),
+            ("0000000222", date(2022, 7, 19), "TSTX", 4, True),
+            ("0000000222", date(2023, 5, 1), "TSTX", 5, True),
+            ("0000000222", date(2024, 5, 1), "TSTX", 6, True),
+        ]
+    )
+    client = FakeSec({"TSTX": ("0000000222", "New Co")}, filings, documents)
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), date(2024, 12, 31))])
+        points, conflicts = evidence.issuer_points(session, client, {})
+    assert issuer_on(points[1], date(2021, 12, 31))[0].cik == "0000000111"
+    assert issuer_on(points[1], date(2024, 6, 28))[0].cik == "0000000222"
+    assert "kept its own 2023-05-01..2024-05-01" in conflicts[1][0]
+
+
+def test_a_co_registrant_filing_alongside_the_parent_is_still_set_aside(research):
+    # A subsidiary listing the parent's ticker on the same filings, over the same years.
+    rows = []
+    for n, year in enumerate((2019, 2020, 2021, 2022, 2023, 2024)):
+        rows.append(("0000000111", date(year, 5, 1), "TSTX", 2 * n + 1, True))
+        if year < 2024:
+            rows.append(("0000000222", date(year, 5, 2), "TSTX", 2 * n + 2, True))
+    filings, documents = build(rows)
+    client = FakeSec({"TSTX": ("0000000222", "Sub")}, filings, documents)
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), date(2024, 12, 31))])
+        points, conflicts = evidence.issuer_points(session, client, {})
+    assert {p.cik for p in points[1]} == {"0000000111"}
+    assert "kept its own" not in conflicts[1][0]
+
+
+def test_a_filing_naming_the_ticker_counts_only_with_the_whole_company_name():
+    # U.S. Gold Corp's proxy names a director's former employer, Barrick Gold.
+    text = (
+        "In 2018, Mr. Bee concluded a third term with Barrick\\nGold Corporation "
+        "(“Barrick Gold”) (NYSE: GOLD) as Senior VP"
+    )
+    assert sh.own_ticker_mention(text, "GOLD", "U.S. GOLD CORP.", 60)  # first word only
+    assert not sh.own_ticker_mention(text, "GOLD", "U.S. GOLD CORP.", 60, whole_name=True)
+    assert sh.own_ticker_mention(text, "GOLD", "BARRICK GOLD CORP", 60, whole_name=True)
+    # A line break written as a literal backslash-n does not hide a word.
+    wtw = "February 25, 2016 \u2013 Weight\\nWatchers International, Inc. (NYSE: WTW)"
+    assert sh.own_ticker_mention(
+        wtw, "WTW", "WEIGHT WATCHERS INTERNATIONAL INC", 60, whole_name=True
+    )
