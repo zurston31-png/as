@@ -1224,6 +1224,11 @@ def cover_page_points(
             good = mid
         else:
             bad = mid
+    if not listed(good):
+        # It held only through its neighbour: the stretch starts at the neighbour, the
+        # first document that lists the ticker itself (IAC's 10-Q of May 2020 lists IAC;
+        # its first cover page listing MTCH came after the separation).
+        good += 1
     lo, hi = found, n - 1  # latest: hits[lo] holds
     if listed(hi):
         lo = hi
@@ -1233,6 +1238,9 @@ def cover_page_points(
             lo = mid
         else:
             hi = mid
+    while lo > good and not listed(lo):
+        lo -= 1
+    # Both ends of the stretch are documents that list the ticker themselves.
     return [
         IssuerPoint(h.filed, h.cik, h.name, "cover_page", h.url, ticker)
         for h in hits[good : lo + 1]

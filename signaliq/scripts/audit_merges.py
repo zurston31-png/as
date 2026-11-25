@@ -548,10 +548,6 @@ def audit_rejections(s, client, actions) -> int:
     return failures
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def audit_handovers(s, client) -> int:
     """Recheck every ticker handover from raw data (see the module docstring)."""
     window = 10
@@ -695,3 +691,7 @@ def audit_handovers(s, client) -> int:
     total = len(expected | dict.fromkeys(splits))
     print(f"\n{total - failures} of {total} handovers pass every check")
     return failures
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

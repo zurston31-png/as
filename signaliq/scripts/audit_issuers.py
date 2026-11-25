@@ -69,9 +69,14 @@ def listed_on_cover(text: str, ticker: str) -> bool:
             after = window[i + len(ticker)] if i + len(ticker) < len(window) else " "
             if before.isalnum() or before in ".&'-" or after.isalnum() or after in "&'-.":
                 continue
-            rest = window[i + len(ticker) : i + len(ticker) + 20].replace("\u200b", " ")
+            # The name must start within 20 characters; it may run past them.
+            rest = window[i + len(ticker) : i + len(ticker) + 60].replace("\u200b", " ")
             m = EXCHANGES.search(rest)
-            if m and not rest[: m.start()].replace("\xa0", " ").strip(" ,;:|()-"):
+            if (
+                m
+                and m.start() <= 20
+                and not rest[: m.start()].replace("\xa0", " ").strip(" ,;:|()-")
+            ):
                 return True
     return False
 
@@ -243,8 +248,9 @@ def main() -> int:
                     problems.append(f"id {sid} {symbol}: cover page {e.url} not cached")
                 elif listed_on_cover(text, symbol):
                     confirmed_ends += 1
-                elif e is run[0]:
-                    problems.append(f"id {sid} {symbol}: first cover page {e.url} does not list it")
+                else:
+                    end = "first" if e is run[0] else "last"
+                    problems.append(f"id {sid} {symbol}: {end} cover page {e.url} does not list it")
         say("\n2. EVIDENCE")
         kinds = dict(sorted(_count(e.how for e in rows).items()))
         say(f"  Evidence rows: {len(rows)}; kinds {kinds}")
@@ -263,7 +269,7 @@ def main() -> int:
             f"cover page, Form 25 or own filing: {len(bad_how)}"
         )
         say(f"  Problems: {len(problems)}")
-        for p in problems[:40]:
+        for p in problems:
             say(f"    {p}")
         failures += bool(problems) + bool(bad_how)
 

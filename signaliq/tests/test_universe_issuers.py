@@ -262,6 +262,28 @@ def test_a_companys_evidence_ends_when_its_cover_pages_stop_listing_the_ticker(r
     assert conflicts == {}
 
 
+def test_a_companys_evidence_starts_at_its_first_cover_page_listing_the_ticker(research):
+    # MTCH, 2020: IAC's 10-Q of May 2020 names MTCH but its cover lists IAC; IAC's first
+    # cover page listing MTCH came after the separation in July. The run must not start one
+    # document early on the strength of its neighbour, or IAC would hold MTCH in May-June.
+    rows = [("0000000111", date(2019, 5, 8), "TSTX", 1, True)]
+    rows += [("0000000111", date(2019, 8 + i, 1), "TSTX", 2 + i, True) for i in range(4)]
+    rows += [("0000000111", date(2020, 2 + i, 1), "TSTX", 10 + i, True) for i in range(5)]
+    rows += [("0000000222", date(2019, 5 + i, 9), "TSTX", 20 + i, "TSTZ") for i in range(4)]
+    rows += [("0000000222", date(2020, 5, 8), "TSTX", 30, "TSTZ")]
+    rows += [("0000000222", date(2020, 8, 1 + i), "TSTX", 40 + i, True) for i in range(6)]
+    filings, documents = build(rows)
+    client = FakeSec({}, filings, documents)
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), date(2024, 12, 31))])
+        points, _ = evidence.issuer_points(session, client, {})
+    later = [pt for pt in points[1] if pt.cik == "0000000222"]
+    assert later[0].filed == date(2020, 8, 1)
+    assert issuer_on(points[1], date(2020, 6, 30))[0].cik == "0000000111"
+    for pt in (later[0], later[-1]):
+        assert sh.cover_page_symbol(documents[pt.url], "TSTX")
+
+
 def test_a_search_hit_without_the_ticker_on_its_cover_page_is_not_evidence(research):
     # The search matched (the ticker and "Trading Symbol" somewhere in the filing), but no
     # document lists the ticker in the cover table: no evidence, never a guess.
