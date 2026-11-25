@@ -284,4 +284,11 @@ handovers.
   - a stretch of a ticker period with no evidence is searched for other holders (Apache
     Corp before APA Corp);
   - a candidate whose cover heading SEC's index misses is read through its filings naming
-    the ticker (ViacomCBS).
+    the ticker (ViacomCBS);
+  - both ends of a company's stretch must be documents that list the ticker themselves.
+    The halving lets one document without the table pass on the strength of its neighbour
+    (an exhibit filed as the main document). At the start of a stretch, that had let IAC's
+    10-Q of May 2020 open IAC's MTCH stretch, though its cover lists IAC. IAC's first cover
+    page listing MTCH came after the separation in July 2020. This gave IAC the MTCH ticker
+    in May–June 2020, and moved 102 other stretches one filing early. `audit_issuers.py`
+    found it, and a test reproduces it.
