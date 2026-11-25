@@ -290,5 +290,6 @@ handovers.
     (an exhibit filed as the main document). At the start of a stretch, that had let IAC's
     10-Q of May 2020 open IAC's MTCH stretch, though its cover lists IAC. IAC's first cover
     page listing MTCH came after the separation in July 2020. This gave IAC the MTCH ticker
-    in May–June 2020, and moved 102 other stretches one filing early. `audit_issuers.py`
-    found it, and a test reproduces it.
+    in May–June 2020, and moved 102 other stretches one filing early. The same holds for a
+    new holder's stretch cut out of its run by the overlap rule (CCO Holdings for CHTR,
+    Biohaven Ltd for BHVN). `audit_issuers.py` found both, and tests reproduce both.
