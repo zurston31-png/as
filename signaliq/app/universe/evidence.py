@@ -476,9 +476,9 @@ def resolve_types(session: Session) -> None:
         wiki_rows = [(h, row) for h in tickers for row in _wikidata_rows(session, h, shared)]
         wiki_names = sorted({row["itemLabel"]["value"] for _, row in wiki_rows})
         cover = [p for p in held.get(security.security_id, []) if p.how == "cover_page"]
-        # Names known for the security's own period: Wikidata's, and its issuers' on the
-        # cover pages it was listed on.
-        period_names = sorted(set(wiki_names) | {p.name for p in cover})
+        # The issuer's names from SEC filings made while the security traded (its cover
+        # pages, its delisting notice, its own filings naming the ticker).
+        sec_names = sorted({p.name for p in held.get(security.security_id, []) if p.name})
         # The issuer's own class title, read from the first and the last cover page of each
         # ticker and company (documents the issuer step confirmed).
         for (symbol, cik), run in _runs(cover).items():
@@ -528,20 +528,26 @@ def resolve_types(session: Session) -> None:
                     # new ticker like FB -> META) may have passed to another company since,
                     # so the answer is used only if its name agrees with the company
                     # Wikidata places under the ticker at the time.
-                    # OpenFIGI answered after the data ends (the ticker may have passed to
-                    # another company or fund since, LAZR to an ETF), so the answer is used
-                    # only if its name agrees with a company known for the security's own
-                    # period (Wikidata, its issuers' cover pages), when any is known.
-                    if period_names and not any(
-                        sectypes.names_agree(name, other) for other in period_names
-                    ):
+                    # OpenFIGI answered after the data ends: the ticker may have passed to
+                    # another company or fund since (LAZR to an ETF). Its answer is not used
+                    # when its name disagrees with the issuer's names in SEC filings of the
+                    # period; for a ticker this security no longer used at the end of 2024,
+                    # also when it disagrees with the company Wikidata places under the
+                    # ticker then. For a ticker still in use, a disagreement with Wikidata
+                    # alone is not settled here (Wikidata can list an earlier holder without
+                    # an end date): both votes stand, and they conflict.
+                    no_longer_used = (
+                        security.status == "ended" or h.valid_to < security.last_trade_session
+                    )
+                    check = sec_names or (wiki_names if no_longer_used else [])
+                    if check and not any(sectypes.names_agree(name, other) for other in check):
                         note(
                             security,
                             "openfigi_rejected",
                             h.symbol,
                             kind,
                             f"{detail}: names a different company than "
-                            f"{'/'.join(period_names)[:200]}; not used",
+                            f"{'/'.join(check)[:200]}; not used",
                         )
                         continue
                     votes.append(sectypes.TypeVote("openfigi", kind))
@@ -1087,8 +1093,8 @@ def issuer_on(points: Sequence[IssuerPoint], day: date) -> tuple[IssuerPoint | N
 
 #: Candidates per ticker period proposed by a search that is not limited to one company.
 OPEN_CANDIDATES = 3
-#: Documents read (earliest first, then latest first) to confirm a company's cover pages.
-COVER_CONFIRM_TRIES = 3
+#: A stretch of a ticker period longer than this without evidence is searched on its own.
+UNCOVERED_DAYS = 120
 
 
 def _cover_confirmed(client: sec.CachedSec, hit, ticker: str) -> bool:
@@ -1100,10 +1106,12 @@ def cover_page_points(
 ) -> list[IssuerPoint]:
     """Company ``cik``'s cover-page evidence for ``ticker`` between ``first`` and ``last``.
 
-    Its filings found by the search, from the earliest whose document confirms the ticker
-    under "Trading Symbol(s)" (of the first few) to the latest that does, found by halving
-    (a company holds a ticker for one stretch of time: IAC/InterActiveCorp's filings list
-    IAC until mid-2020 and MTCH after). None if no document confirms it.
+    Its filings found by the search, from the earliest to the latest whose document lists
+    the ticker under "Trading Symbol(s)". A company holds a ticker for one stretch of time
+    (IAC/InterActiveCorp's filings list IAC until mid-2020 and MTCH after), and the first
+    filings of a run can predate SEC's cover table (McDonald's 10-Q of May 2019), so: a
+    confirming document is looked for at spread positions, then the stretch's first and
+    last confirming documents are found by halving. None if no document confirms it.
     """
     # The cover table is in a filing's main document, not in its exhibits.
     mains = [
@@ -1112,25 +1120,31 @@ def cover_page_points(
         if not h.file_type or h.file_type.upper() == h.form.upper()
     ]
     hits = sorted({(h.filed, h.adsh): h for h in mains}.values(), key=lambda h: (h.filed, h.adsh))
-    head = next(
-        (
-            i
-            for i, h in enumerate(hits[:COVER_CONFIRM_TRIES])
-            if _cover_confirmed(client, h, ticker)
-        ),
-        None,
-    )
-    if head is None:
+    n = len(hits)
+    if not n:
         return []
 
-    def holds(i: int) -> bool:
-        # One document may lack the table (an exhibit); its neighbour decides with it.
-        return _cover_confirmed(client, hits[i], ticker) or (
-            i + 1 < len(hits) and _cover_confirmed(client, hits[i + 1], ticker)
-        )
+    def listed(i: int) -> bool:
+        return _cover_confirmed(client, hits[i], ticker)
 
-    lo, hi = head, len(hits) - 1
-    if _cover_confirmed(client, hits[hi], ticker):
+    def holds(i: int) -> bool:
+        # One document may lack the table (an exhibit filed as the main document); its
+        # neighbour decides with it.
+        return listed(i) or (i + 1 < n and listed(i + 1))
+
+    probes = sorted({i for i in (0, 1, 2, n // 4, n // 2, (3 * n) // 4, n - 1) if 0 <= i < n})
+    found = next((i for i in probes if listed(i)), None)
+    if found is None:
+        return []
+    bad, good = -1, found  # earliest: hits[good] holds, hits[bad] does not
+    while good - bad > 1:
+        mid = (bad + good) // 2
+        if holds(mid):
+            good = mid
+        else:
+            bad = mid
+    lo, hi = found, n - 1  # latest: hits[lo] holds
+    if listed(hi):
         lo = hi
     while hi - lo > 1:
         mid = (lo + hi) // 2
@@ -1140,7 +1154,7 @@ def cover_page_points(
             hi = mid
     return [
         IssuerPoint(h.filed, h.cik, h.name, "cover_page", h.url, ticker)
-        for h in hits[head : lo + 1]
+        for h in hits[good : lo + 1]
     ]
 
 
@@ -1229,7 +1243,30 @@ def issuer_points(
                 break
             candidates += sorted(confirmed)
         for index, h in enumerate(tickers):
-            spans = sorted(found_by_period.get(index, []), key=lambda s: (-len(s), s[0].cik))
+            spans = list(found_by_period.get(index, []))
+            # A stretch of the ticker period the evidence does not reach (the ticker had
+            # another holder then: Apache Corp until APA Corp took over the ticker in 2021)
+            # gets its own search for candidates, not limited to one company.
+            window_start = max(h.valid_from, sh.COVER_FIRST)
+            covered = sorted(p.filed for span in spans for p in span)
+            gaps = []
+            if covered and (covered[0] - window_start).days > UNCOVERED_DAYS:
+                gaps.append((window_start, covered[0] - timedelta(days=1)))
+            if covered and (h.valid_to - covered[-1]).days > UNCOVERED_DAYS:
+                gaps.append((covered[-1] + timedelta(days=1), h.valid_to))
+            tried = set(ordered)
+            for gap_first, gap_last in gaps:
+                counts = Counter(
+                    hit.cik for hit in sh.cover_page_hits(client, h.symbol, gap_first, gap_last)
+                )
+                for cik, _ in counts.most_common(OPEN_CANDIDATES):
+                    if cik in tried:
+                        continue
+                    tried.add(cik)
+                    span = cover_page_points(client, h.symbol, h.valid_from, h.valid_to, cik)
+                    if span:
+                        spans.append(span)
+            spans.sort(key=lambda s: (-len(s), s[0].cik))
             kept: list[list[IssuerPoint]] = []
             for span in spans:
                 clash = next((k for k in kept if _overlap(k, span)), None)
@@ -1609,3 +1646,156 @@ def decide_gap_links(session: Session) -> list[SegmentLink]:
         rows.append(row)
     session.flush()
     return rows
+
+
+# =============================================================================
+# Renames confirmed by the issuer: one security under a new ticker
+# =============================================================================
+
+#: The issuer's cover pages must show the old ticker this close before the switch and the
+#: new one this close after it.
+RENAME_EVIDENCE_DAYS = 120
+
+
+def rename_link_id(old: str, new: str, last: date, first: date) -> str:
+    return f"rename:{old}>{new}:{last.isoformat()}:{first.isoformat()}"
+
+
+def renamed_symbols(link_id: str) -> tuple[str, str]:
+    old, _, new = link_id.split(":")[1].partition(">")
+    return old, new
+
+
+def decide_issuer_renames(session: Session) -> list[SegmentLink]:
+    """Decide, with reasons, which consecutive securities under different tickers are one
+    security renamed, when no rename record joined them (Alpaca has none, or dates it
+    weeks late: CBS -> VIAC is recorded 48 sessions after VIAC first traded).
+
+    For a security whose last trade under ticker X is followed, at most
+    ``segments.MAX_GAP_SESSIONS`` sessions later, by another security starting under
+    ticker Y, they are one security only if all of these hold:
+
+    1. one SEC registrant listed X on its cover pages within ``RENAME_EVIDENCE_DAYS`` before
+       the switch (or filed X's delisting notice) and listed Y on its cover pages within
+       ``RENAME_EVIDENCE_DAYS`` after it: the same company's shares, under a new ticker;
+    2. no delisting notice for the earlier security was filed before Y started trading;
+    3. no Alpaca cash or stock merger names X as the company acquired around the switch;
+    4. the price resumes within ``TRADING_GAP_PRICE_RATIO`` of where it stopped, after any
+       split recorded for either ticker in between.
+
+    Only pairs that pass test 1 are recorded (as ``renamed`` or ``rename_rejected``, with
+    the reasons); renames decided in an earlier pass are kept. Returns the new ``renamed``
+    rows.
+    """
+    session.execute(delete(SegmentLink).where(SegmentLink.decision == "rename_rejected"))
+    kept = {
+        r.link_id
+        for r in session.execute(
+            select(SegmentLink).where(SegmentLink.decision == "renamed")
+        ).scalars()
+    }
+    history: dict[int, list[TickerHistory]] = defaultdict(list)
+    for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
+        history[h.security_id].append(h)
+    held = stored_issuer_points(session)
+    events = list(session.execute(select(CorporateAction)).scalars())
+    closes = {
+        (b.security_id, b.session): b.close for b in session.execute(select(SecurityBar)).scalars()
+    }
+    sec_found = cached_sec_findings(session)
+    heads = sorted((items[0].valid_from, sid, items[0].symbol) for sid, items in history.items())
+    window = timedelta(days=RENAME_EVIDENCE_DAYS)
+    rows: list[SegmentLink] = []
+    for sid, items in sorted(history.items()):
+        tail = items[-1]
+        old, last = tail.symbol, tail.valid_to
+        for start, other, new in heads:
+            if other == sid or new == old or start <= last:
+                continue
+            if seg.sessions_between(last, start) > seg.MAX_GAP_SESSIONS:
+                if start > last + timedelta(days=30):
+                    break
+                continue
+            before = {
+                p.cik
+                for p in held.get(sid, [])
+                if p.symbol == old
+                and p.how in ("cover_page", "form25")
+                and last - window <= p.filed <= last
+            }
+            after = {
+                p.cik
+                for p in held.get(other, [])
+                if p.symbol == new and p.how == "cover_page" and start <= p.filed <= start + window
+            }
+            same = sorted(before & after)
+            if not same:
+                continue
+            link_id = rename_link_id(old, new, last, start)
+            if link_id in kept:
+                continue
+            reasons = []
+            finding = sec_found.get(sid)
+            if finding is not None:
+                for filing, _notice in finding.notices:
+                    if filing.filed < start:
+                        reasons.append(f"{filing.form} delisting notice filed {filing.filed}")
+            for e in events:
+                if (
+                    e.acquiree_symbol == old
+                    and e.action_type in ("cash_merger", "stock_merger", "stock_and_cash_merger")
+                    and e.process_date
+                    and last - timedelta(days=7) <= e.process_date <= start + timedelta(days=30)
+                ):
+                    reasons.append(f"Alpaca {e.action_type} {e.process_date} acquired {old}")
+            ratio = gap_split_ratio(events, old, last, start) * gap_split_ratio(
+                events, new, last, start
+            )
+            close_before, close_after = closes.get((sid, last)), closes.get((other, start))
+            low, high = TRADING_GAP_PRICE_RATIO
+            adjusted = close_before / ratio if close_before else None
+            if not (adjusted and close_after and low <= close_after / adjusted <= high):
+                reasons.append(
+                    "price does not continue"
+                    + (
+                        f" ({close_after} against {adjusted:.6g})"
+                        if adjusted and close_after
+                        else ""
+                    )
+                )
+            alpaca = [
+                e.process_date
+                for e in events
+                if e.action_type == "name_change" and e.old_symbol == old and e.new_symbol == new
+            ]
+            why = (
+                f"one security renamed: CIK {same[0]} listed {old} until the switch and {new} "
+                f"from it; no delisting notice or merger; price {close_after} against "
+                f"{adjusted:.6g}"
+                + (f" after splits x{ratio:g}" if ratio != 1.0 else "")
+                + (
+                    f"; Alpaca records the rename on {', '.join(map(str, alpaca))}"
+                    if alpaca
+                    else "; no Alpaca rename record"
+                )
+                if not reasons
+                else f"same registrant (CIK {same[0]}), but " + "; ".join(reasons)
+            )
+            row = SegmentLink(
+                link_id=link_id,
+                symbol=old,
+                earlier_last=last,
+                later_first=start,
+                gap_sessions=seg.sessions_between(last, start),
+                close_before=close_before,
+                close_after=close_after,
+                split_ratio=ratio,
+                issuer_before=same[0],
+                issuer_after=same[0],
+                decision="rename_rejected" if reasons else "renamed",
+                reason=why[:1000],
+            )
+            session.add(row)
+            rows.append(row)
+    session.flush()
+    return [r for r in rows if r.decision == "renamed"]

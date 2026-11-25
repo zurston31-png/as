@@ -183,8 +183,133 @@ def main() -> int:
         print(f"\n{len(links) - failures} of {len(links)} merges pass every check")
         rejected_failures = audit_rejections(s, client, actions)
         identity_failures = audit_identity_links(s, client)
+        rename_failures = audit_issuer_renames(s, client, actions)
     engine.dispose()
-    return 1 if failures or rejected_failures or identity_failures else 0
+    return 1 if failures or rejected_failures or identity_failures or rename_failures else 0
+
+
+def audit_issuer_renames(s, client, actions) -> int:
+    """Recheck every rename confirmed by the issuer, and every rejected one, from raw data."""
+    from app.universe.models import IssuerEvidence
+
+    links = list(
+        s.execute(
+            select(SegmentLink)
+            .where(SegmentLink.decision.in_(("renamed", "rename_rejected")))
+            .order_by(SegmentLink.symbol, SegmentLink.earlier_last)
+        ).scalars()
+    )
+    print(f"\nRenames confirmed by the issuer, and rejected ones, to audit: {len(links)}\n")
+    failures = 0
+    for link in links:
+        old, new = link.link_id.split(":")[1].split(">")
+        problems, facts = [], []
+        a = s.scalar(
+            select(TickerBar).where(TickerBar.symbol == old, TickerBar.session == link.earlier_last)
+        )
+        b = s.scalar(
+            select(TickerBar).where(TickerBar.symbol == new, TickerBar.session == link.later_first)
+        )
+        if a is None or a.volume == 0 or b is None or b.volume == 0:
+            problems.append("a segment end is not a real trade")
+        gap = max(0, len(trading_days(link.earlier_last, link.later_first)) - 2)
+        if gap > 10:
+            problems.append(f"{gap} sessions apart")
+        ratio = 1.0
+        for x in actions:
+            when = x.ex_date or x.process_date
+            if (
+                x.action_type in ("forward_split", "reverse_split", "unit_split")
+                and x.symbol in (old, new)
+                and when
+                and link.earlier_last < when <= link.later_first
+                and x.old_rate
+                and x.new_rate
+            ):
+                ratio *= x.new_rate / x.old_rate
+        price = b.close / (a.close / ratio) if a and b and a.close else None
+        price_ok = price is not None and PRICE_LOW <= price <= PRICE_HIGH
+        company = sh.submissions(client, link.issuer_before)
+        notices = sorted(
+            f"{form} {filed}"
+            for form, filed, _ in (company.filings if company else ())
+            if form.startswith("25")
+            and link.earlier_last - timedelta(days=45) <= filed < link.later_first
+        )
+        merger = [
+            x.process_date
+            for x in actions
+            if x.acquiree_symbol == old
+            and x.action_type.endswith("merger")
+            and x.process_date
+            and link.earlier_last - timedelta(days=7)
+            <= x.process_date
+            <= link.later_first + timedelta(days=30)
+        ]
+        if link.decision == "renamed":
+            owners = {
+                h.security_id
+                for h in s.execute(
+                    select(TickerHistory).where(
+                        (
+                            (TickerHistory.symbol == old)
+                            & (TickerHistory.valid_to == link.earlier_last)
+                        )
+                        | (
+                            (TickerHistory.symbol == new)
+                            & (TickerHistory.valid_from == link.later_first)
+                        )
+                    )
+                ).scalars()
+            }
+            if len(owners) != 1:
+                problems.append(f"segments belong to {len(owners)} securities")
+            sides = {}
+            for symbol in (old, new):
+                rows = [
+                    e
+                    for e in s.execute(
+                        select(IssuerEvidence).where(
+                            IssuerEvidence.symbol == symbol,
+                            IssuerEvidence.cik == link.issuer_before,
+                            IssuerEvidence.how == "cover_page",
+                        )
+                    ).scalars()
+                    if abs(
+                        (e.filed - (link.earlier_last if symbol == old else link.later_first)).days
+                    )
+                    <= 120
+                ]
+                sides[symbol] = any(
+                    sh.cover_page_symbol(sh.plain_text(client.get(e.url)), symbol)
+                    for e in rows
+                    if client.get(e.url) is not None
+                )
+            if not all(sides.values()):
+                problems.append(f"cover page of CIK {link.issuer_before} not re-read for {sides}")
+            if not price_ok:
+                problems.append(f"price ratio {price}")
+            if notices:
+                problems.append(f"delisting notice {notices}")
+            if merger:
+                problems.append(f"Alpaca merger {merger}")
+        else:
+            if not price_ok:
+                facts.append(f"price ratio {price if price is None else round(price, 3)}")
+            facts += [f"delisting notice {n}" for n in notices]
+            facts += [f"Alpaca merger {m}" for m in merger]
+            if not facts:
+                problems.append("no fact re-established that keeps them apart")
+        failures += bool(problems)
+        print(
+            f"{'FAIL' if problems else 'ok  '} {link.decision:15} {old} {link.earlier_last} -> "
+            f"{new} {link.later_first}: {gap} sessions apart, CIK {link.issuer_before}, "
+            f"price ratio {'n/a' if price is None else f'{price:.3f}'}"
+            + (f"; {'; '.join(facts)}" if facts else "")
+            + (f"; {'; '.join(problems)}" if problems else "")
+        )
+    print(f"\n{len(links) - failures} of {len(links)} rename decisions pass every check")
+    return failures
 
 
 def audit_identity_links(s, client) -> int:

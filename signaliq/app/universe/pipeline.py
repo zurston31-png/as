@@ -383,6 +383,14 @@ def assemble(session: Session) -> Assembled:
             select(SegmentLink).where(SegmentLink.decision == "merged")
         ).scalars()
     ]
+    from app.universe.evidence import renamed_symbols
+
+    # Renames confirmed by the issuer (evidence.decide_issuer_renames), dated at the switch.
+    for row in session.execute(
+        select(SegmentLink).where(SegmentLink.decision == "renamed")
+    ).scalars():
+        old, new = renamed_symbols(row.link_id)
+        renames.append(seg.NameChange(row.link_id, old, new, row.later_first))
     from app.universe.evidence import curated_identity_links, identity_link_id
 
     identities = [

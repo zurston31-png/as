@@ -373,3 +373,63 @@ def test_the_yandex_nebius_exception_names_one_registrant_and_its_exact_segments
     # Every quote is from the registrant's own filings, all dated before 2025.
     assert all("/edgar/data/1513845/" in q.url for q in link.quotes)
     assert all(q.url.split("/")[-2][10:12] in ("22", "24") for q in link.quotes)
+
+
+# =============================================================================
+# Renames confirmed by the issuer (no rename record joins them)
+# =============================================================================
+
+
+def _cover(session, sid, symbol, day, cik):
+    session.add(
+        IssuerEvidence(
+            security_id=sid,
+            symbol=symbol,
+            filed=day,
+            cik=cik,
+            name=f"Co {cik}",
+            how="cover_page",
+            url="u",
+        )
+    )
+
+
+def _two_tickers(session, price_after, cik_after="0000000001"):
+    add(session, 1, "TESTA", DAYS[:120], 10.0)
+    add(session, 2, "TESTB", DAYS[121:], price_after, status="trading")
+    for sid, symbol, days in ((1, "TESTA", DAYS[:120]), (2, "TESTB", DAYS[121:])):
+        _ticker_bars(session, symbol, days, 10.0 if sid == 1 else price_after)
+    _cover(session, 1, "TESTA", DAYS[100], "0000000001")
+    _cover(session, 2, "TESTB", DAYS[140], cik_after)
+
+
+def test_one_registrant_listing_the_old_ticker_then_the_new_one_is_one_security(research):
+    with session_scope(research) as session:
+        _two_tickers(session, 10.3)
+    with session_scope(research) as session:
+        [row] = evidence.decide_issuer_renames(session)
+        assert row.decision == "renamed"
+        assert "CIK 0000000001 listed TESTA until the switch and TESTB" in row.reason
+    with session_scope(research) as session:
+        chains = p.assemble(session).chains
+    assert [[s.symbol for s in c.segments] for c in chains] == [["TESTA", "TESTB"]]
+
+
+def test_a_price_break_or_another_registrant_keeps_consecutive_tickers_apart(research):
+    with session_scope(research) as session:
+        _two_tickers(session, 31.0)
+    with session_scope(research) as session:
+        assert evidence.decide_issuer_renames(session) == []
+        [row] = session.query(SegmentLink).all()
+        assert row.decision == "rename_rejected"
+        assert "price does not continue" in row.reason
+    with session_scope(research) as session:
+        session.execute(SegmentLink.__table__.delete())
+        session.execute(IssuerEvidence.__table__.delete())
+        _cover(session, 1, "TESTA", DAYS[100], "0000000001")
+        _cover(session, 2, "TESTB", DAYS[140], "0000000002")
+    with session_scope(research) as session:
+        assert evidence.decide_issuer_renames(session) == []
+        assert session.query(SegmentLink).count() == 0  # not even a candidate
+    with session_scope(research) as session:
+        assert len(p.assemble(session).chains) == 2

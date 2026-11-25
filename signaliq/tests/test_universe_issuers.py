@@ -5,7 +5,7 @@ Nothing here calls SEC; a fake client answers from prepared texts.
 """
 
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -390,3 +390,46 @@ def test_rebuilding_the_securities_clears_their_issuer_evidence_first(research):
     with session_scope(research) as session:
         p.store_securities(session, p.Assembled([], {}, {}))
         assert session.query(IssuerEvidence).count() == 0
+
+
+def test_filings_from_before_the_cover_table_do_not_hide_a_company(research):
+    # McDonald's first filings found (spring 2019) predate SEC's cover table: no document
+    # among the first few lists the ticker, later ones all do.
+    rows = [("0000000111", date(2019, 5, 8 + i), "TSTX", 1 + i, False) for i in range(4)]
+    rows += [
+        ("0000000111", date(2019 + i // 4, 1 + 3 * (i % 4), 15), "TSTX", 10 + i, True)
+        for i in range(4, 24)
+    ]
+    filings, documents = build(rows)
+    client = FakeSec({"TSTX": ("0000000111", "Co")}, filings, documents)
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), date(2024, 12, 31))])
+        points, _ = evidence.issuer_points(session, client, {})
+    assert {pt.cik for pt in points[1]} == {"0000000111"}
+    assert points[1][0].filed <= date(2020, 4, 15)
+
+
+def test_the_ticker_holder_before_todays_company_is_found_in_the_uncovered_stretch(research):
+    # APA: today's holder (a new holding company) lists the ticker from May 2021; before
+    # that the operating company did. Noise filings crowd the search over the whole period.
+    rows = []
+    for k, cik in enumerate(("0000000901", "0000000902", "0000000903")):
+        rows += [
+            (cik, date(2021 + i // 6, 1 + i % 6 * 2, 3), "TSTX", 100 * (k + 1) + i, False)
+            for i in range(20)
+        ]
+    rows += [
+        ("0000000222", date(2021, 5, 6) + timedelta(days=60 * i), "TSTX", 50 + i, True)
+        for i in range(8)
+    ]
+    rows += [
+        ("0000000111", date(2019, 8, 1) + timedelta(days=150 * i), "TSTX", 80 + i, True)
+        for i in range(5)
+    ]
+    filings, documents = build(rows)
+    client = FakeSec({"TSTX": ("0000000222", "New Holding Co")}, filings, documents)
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), date(2024, 12, 31))])
+        points, _ = evidence.issuer_points(session, client, {})
+    assert issuer_on(points[1], date(2020, 1, 31))[0].cik == "0000000111"
+    assert issuer_on(points[1], date(2022, 1, 31))[0].cik == "0000000222"

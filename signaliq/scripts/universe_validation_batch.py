@@ -211,9 +211,12 @@ def run(settings, refresh: bool, stage: int | None = None) -> dict:
                         evidence.resolve_outcomes(session, trading_days(p.DATA_START, p.DATA_END))
                     with session_scope(factory) as session:
                         new = evidence.decide_gap_links(session)
-                        if not any(row.decision == "merged" for row in new):
+                        renamed = evidence.decide_issuer_renames(session)
+                        if not any(row.decision == "merged" for row in new) and not renamed:
                             break
-                facts["merges_stable"] = not any(row.decision == "merged" for row in new)
+                facts["merges_stable"] = not any(row.decision == "merged" for row in new) and (
+                    not renamed
+                )
                 with session_scope(factory) as session:
                     facts["decisions"] = p.decide_membership(session, RULE)
                 if not stage:
@@ -694,9 +697,15 @@ def report(facts: dict) -> str:
                 select(SegmentLink).order_by(SegmentLink.symbol, SegmentLink.earlier_last)
             ).scalars()
         )
+        decisions = Counter(r.decision for r in links)
         print(
-            f"  Candidates: {len(links)}; merged {sum(1 for r in links if r.decision == 'merged')}, "
-            f"kept separate {sum(1 for r in links if r.decision == 'kept_separate')}"
+            f"  Same-ticker candidates: {decisions['merged'] + decisions['kept_separate']}; "
+            f"merged {decisions['merged']}, kept separate {decisions['kept_separate']}"
+        )
+        print(
+            "  Renames confirmed by the issuer (consecutive securities, different tickers, same "
+            f"registrant on its cover pages): renamed {decisions['renamed']}, "
+            f"rejected {decisions['rename_rejected']}"
         )
         for r in links:
             print(
@@ -1060,7 +1069,7 @@ def report(facts: dict) -> str:
         kept_by_pair = {
             (r.symbol, r.earlier_last, r.later_first): r
             for r in links
-            if r.decision == "kept_separate"
+            if r.decision in ("kept_separate", "rename_rejected")
         }
         unexplained_pairs = 0
         print(

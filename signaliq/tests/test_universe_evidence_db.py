@@ -394,3 +394,28 @@ def test_a_reverse_split_during_the_gap_is_allowed_for(research):
     with session_scope(research) as session:
         first = session.get(Security, 1)
         assert (first.outcome, first.outcome_status) == ("trading_gap", "not_an_exit")
+
+
+def test_openfigi_against_wikidata_alone_is_a_conflict_for_a_ticker_still_in_use(research):
+    # A 2024 ETF under a ticker Wikidata still gives (without an end date) to an earlier
+    # company (INFO): neither source can be preferred, so the type is a conflict, never
+    # common. For an ended security the ticker's holder today is someone else, and
+    # OpenFIGI is set aside as before.
+    etf = {"name": "SOME DYNAMIC ETF", "securityType": "ETP", "securityType2": "Mutual Fund"}
+    FakeHttp.figi = {"TESTA": [etf], "TESTB": [etf]}
+    FakeHttp.wiki = {
+        "TESTA": [wiki_row("TESTA", "Old Company", types="public company")],
+        "TESTB": [wiki_row("TESTB", "Old Company B", types="public company")],
+    }
+    with session_scope(research) as session:
+        add_security(session, 1, "TESTA", DAYS[0], DAYS[-1], status="trading")
+        add_security(session, 2, "TESTB", DAYS[0], DAYS[100], status="ended")
+        evidence.fetch_openfigi(session, ["TESTA", "TESTB"], sleep=lambda s: None)
+        evidence.fetch_wikidata(session, ["TESTA", "TESTB"], sleep=lambda s: None)
+        evidence.resolve_types(session)
+    with session_scope(research) as session:
+        assert session.get(Security, 1).type_status == "conflict"
+        assert (session.get(Security, 2).security_type, session.get(Security, 2).type_status) == (
+            "common",
+            "single_source",
+        )
