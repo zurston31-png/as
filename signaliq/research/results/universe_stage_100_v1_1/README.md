@@ -147,18 +147,84 @@ The rules are printed at the top of section 3 of the report (`app/universe/secty
    partnership units and anything else a company issues; only a fund or a note
    contradicts it.
    - In Stage 1, "real estate investment trust" matched "investment trust" and was read as
-     a fund. That is how CCI, DLR, SPG, AVB, INVH, CONE and AAIC fell into conflict.
+     a fund. That is how CCI, DLR, SPG, AVB, INVH, CONE and AAIC fell into conflict; all are
+     now confirmed common stock.
 7. **New source, `sec_cover`:** the class title the issuer gives the ticker on its own cover
-   page while the security traded under it. Examples:
-   - "Class A common stock" (common);
-   - "American depositary shares, each representing 20 Class A common shares" (ADR);
-   - "Common units representing limited partner interests" (partnership).
-8. **OpenFIGI** describes today's holder of a ticker. It is used only when its company name
-   agrees with a company known for the security's own period (Wikidata, cover pages).
+   page. It votes only when the title names exactly one class:
+   - not when the ticker is on two rows (KSU's preferred and common; TIGR's shares and
+     ADSs);
+   - not when a column layout runs several titles together ("Common Stock ... 1.900% Notes
+     Due 2022", Walmart and Costco 2019);
+   - only from cover pages filed in the membership window (2020 on): a type applies to
+     every decision, and Blackstone's partnership units became common stock in July 2019;
+   - on a 20-F only an explicit ADS title counts, because a 20-F registers the underlying
+     shares with a footnote that they trade as ADSs (TSM).
+8. **OpenFIGI** describes today's holder of a ticker.
+   - It is set aside when its name disagrees with the issuer's names in SEC filings of the
+     period, and an ETF answer agrees with an issuer that is a fund trust.
+   - For a ticker the security no longer used at the end of 2024, it is also set aside when
+     its name disagrees with Wikidata.
+   - For a ticker still in use, a disagreement with Wikidata alone is a conflict, not a
+     choice.
 9. **Disagreements are settled only by the issuer's own SEC description:** a hand-read SEC
    passage first, then the cover-page class title. Such a type is `resolved`, and the
    outvoted evidence is kept and listed in the report. Otherwise it stays in `conflict`
-   (for example, an ADR that became an ordinary listing). Nothing is guessed.
+   (for example, CRH: ADR until 2023, ordinary shares after). Nothing is guessed.
 
 `confirmed`, `single_source` and `resolved` common stocks may be members. Each type keeps
-its sources (`type_evidence`).
+its sources (`type_evidence`), including the votes not counted, with the reason.
+
+## 5. Renames confirmed by the issuer
+
+The first full Stage 1.1 run found five securities split in two at a rename. Alpaca's rename
+records were dated 20–48 sessions after the real switch (CBS→VIAC, PSAC→FFIE, SGAM→RDBX,
+BTX→ERNA), or missing (LB→BBWI). Stage 1.0 could not see this without issuers.
+
+`evidence.decide_issuer_renames` treats two consecutive securities under different tickers
+(at most 10 sessions apart) as one security only if all of these hold:
+
+- one registrant's cover pages list the old ticker within 120 days before the switch and the
+  new one within 120 days after;
+- no delisting notice was filed, neither one matched to the security nor one in the
+  registrant's own filing list from 45 days before the switch;
+- no Alpaca merger acquired the old ticker;
+- the price continues within 0.5–2×.
+
+Every decision, including each rejection, is recorded with its reasons. `audit_merges.py`
+rechecks it from raw data.
+
+The rule is conservative: a Form 25 at the switch keeps two securities apart even when it
+marks only an exchange transfer (CBS left the NYSE as ViacomCBS listed on Nasdaq) or a SPAC's
+units (PSAC, SGAM). Those three are listed as open items below.
+
+## 6. How the issuer evidence is fetched, cached and checked
+
+- **Prefetch:** `scripts/prefetch_issuer_evidence.py` runs the pipeline's issuer step with six
+  securities in flight. It stays under SEC's limit with one request every 0.15 s across all
+  workers, and retries as the pipeline does. It stores every answer in the same cache. The
+  stage run then reads them from the cache: the report shows 0 SEC requests.
+- **Cover pages are cached as snippets:** only the plain text up to just past the "Trading
+  Symbol" table is stored (a few KB, `CachedSec.cover_text`), never the whole 10-K. A
+  filing already cached whole gives its snippet without a request.
+- **A missing answer stops the run:** the issuer step reads the cache through `StrictCache`,
+  which stops the run on any answer it needs but cannot find, rather than reading it as
+  "no issuer". A request SEC never answers stops the run too.
+- **Resuming is safe:** answers are keyed by request and replaced, never appended, so a rerun
+  cannot duplicate them. The issuer tables are rebuilt from the cache on every run.
+- **Independent audit:** `scripts/audit_issuers.py` uses separate code and checks that:
+  - the issuer step replayed from the cache alone matches what was stored;
+  - every evidence row is in the company's own EDGAR folder and filing list, and inside the
+    ticker's period;
+  - the first and last cover page of each run, re-read, list the ticker;
+  - every member decision has an issuer;
+  - every blank-check exclusion, and every member, re-derives from SIC filed by the
+    decision date.
+
+  It also prints a fingerprint of the evidence, so runs can be compared.
+- **Search refinements found during the runs:**
+  - spread probes plus halving find a company whose first filings predate SEC's cover table
+    (McDonald's);
+  - a stretch of a ticker period with no evidence is searched for other holders (Apache
+    Corp before APA Corp);
+  - a candidate whose cover heading SEC's index misses is read through its filings naming
+    the ticker (ViacomCBS).
