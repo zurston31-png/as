@@ -433,3 +433,30 @@ def test_a_price_break_or_another_registrant_keeps_consecutive_tickers_apart(res
         assert session.query(SegmentLink).count() == 0  # not even a candidate
     with session_scope(research) as session:
         assert len(p.assemble(session).chains) == 2
+
+
+def test_a_delisting_notice_in_the_registrants_filing_list_keeps_a_rename_apart(research):
+    import json
+
+    from app.universe import sec_history as sh
+    from app.universe.models import ExternalResponse
+
+    with session_scope(research) as session:
+        _two_tickers(session, 10.3)
+        filings = {
+            "form": ["25", "10-Q"],
+            "filingDate": [DAYS[119].isoformat(), DAYS[100].isoformat()],
+            "accessionNumber": ["0000000001-22-000002", "0000000001-22-000001"],
+        }
+        session.add(
+            ExternalResponse(
+                source="sec",
+                request_key=sh.SUBMISSIONS_URL.format(cik="0000000001"),
+                response=json.dumps({"cik": "1", "name": "Co", "filings": {"recent": filings}}),
+            )
+        )
+    with session_scope(research) as session:
+        assert evidence.decide_issuer_renames(session) == []
+        [row] = session.query(SegmentLink).all()
+        assert row.decision == "rename_rejected"
+        assert f"25 delisting notice filed {DAYS[119]}" in row.reason

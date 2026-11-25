@@ -545,6 +545,12 @@ CURATED_DEALS: tuple[CuratedDeal, ...] = (
                 f"{SEC}/1124610/000119312523266257/d573017dex991.htm",
                 "elected to receive the stock consideration and in accordance with the proration procedures",
             ),
+            # Stage 1.1: the completion date, from VMware's own 8-K on completion.
+            SecQuote(
+                f"{SEC}/1124610/000119312523282097/d559518d8k.htm",
+                "trading of VMware Common Shares, which traded under the ticker symbol \u201cVMW\u201d on "
+                "the NYSE, was suspended prior to opening of trading on November 22, 2023",
+            ),
         ),
         "Broadcom: holders chose $142.50 cash or 0.252 AVGO share. About 96% chose stock and were prorated; "
         "shares that elected cash or made no election received $142.50 in cash. Shares bought in the market "

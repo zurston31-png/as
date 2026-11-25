@@ -1690,7 +1690,9 @@ def decide_issuer_renames(session: Session) -> list[SegmentLink]:
     1. one SEC registrant listed X on its cover pages within ``RENAME_EVIDENCE_DAYS`` before
        the switch (or filed X's delisting notice) and listed Y on its cover pages within
        ``RENAME_EVIDENCE_DAYS`` after it: the same company's shares, under a new ticker;
-    2. no delisting notice for the earlier security was filed before Y started trading;
+    2. no delisting notice for the earlier security was filed before Y started trading, and
+       none is in the registrant's own filing list from 45 days before the switch (an
+       exchange transfer such as CBS's NYSE to Nasdaq move is kept apart too: conservative);
     3. no Alpaca cash or stock merger names X as the company acquired around the switch;
     4. the price resumes within ``TRADING_GAP_PRICE_RATIO`` of where it stopped, after any
        split recorded for either ticker in between.
@@ -1715,6 +1717,7 @@ def decide_issuer_renames(session: Session) -> list[SegmentLink]:
         (b.security_id, b.session): b.close for b in session.execute(select(SecurityBar)).scalars()
     }
     sec_found = cached_sec_findings(session)
+    client = sec.CachedSec(session, network=False)
     heads = sorted((items[0].valid_from, sid, items[0].symbol) for sid, items in history.items())
     window = timedelta(days=RENAME_EVIDENCE_DAYS)
     rows: list[SegmentLink] = []
@@ -1752,6 +1755,15 @@ def decide_issuer_renames(session: Session) -> list[SegmentLink]:
                 for filing, _notice in finding.notices:
                     if filing.filed < start:
                         reasons.append(f"{filing.form} delisting notice filed {filing.filed}")
+            # Any delisting notice in the registrant's own filing list around the switch
+            # (CBS's NYSE listing was withdrawn the day ViacomCBS moved to Nasdaq), as the
+            # independent audit reads it.
+            company = sh.submissions(client, same[0])
+            for form, filed, _ in company.filings if company else ():
+                if form.startswith("25") and last - timedelta(days=45) <= filed < start:
+                    notice = f"{form} delisting notice filed {filed}"
+                    if notice not in reasons:
+                        reasons.append(notice)
             for e in events:
                 if (
                     e.acquiree_symbol == old
