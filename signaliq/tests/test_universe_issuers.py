@@ -379,3 +379,14 @@ def test_a_missing_answer_stops_the_issuer_step_instead_of_meaning_no_issuer(res
         add_security(session, 1, [("TSTX", date(2019, 1, 2), date(2024, 12, 31))])
     with session_scope(research) as session, pytest.raises(sec.SecUnavailable, match="not cached"):
         evidence.store_issuers(session)
+
+
+def test_rebuilding_the_securities_clears_their_issuer_evidence_first(research):
+    from app.universe import pipeline as p
+
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2019, 1, 2), date(2024, 12, 31))])
+        store(session, 1, [point(date(2020, 1, 2), "A")], {"A": [(date(2019, 1, 15), "7372")]})
+    with session_scope(research) as session:
+        p.store_securities(session, p.Assembled([], {}, {}))
+        assert session.query(IssuerEvidence).count() == 0
