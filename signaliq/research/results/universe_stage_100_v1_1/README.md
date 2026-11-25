@@ -305,9 +305,16 @@ handovers.
   - a Form 25 is evidence only when its notice was read. SEC's match accepts a company
     that filed any Form 25 around the last trade. For 35 securities the notice could not
     be read (no machine-readable primary document), yet the match had been turned into
-    evidence. 31 of them agree with the security's own cover pages or filings. AXON did
-    not: Hercules Capital, a lender whose filings mention Axovant's ticker, filed a Form 25
-    for its own notes the day AXON last traded, and became AXON's issuer. Such a company
-    is now only a candidate, accepted on its own filings like any other. The audit had
+    evidence. For 33 of them the security's own cover pages or filings independently name
+    the same company. AXON did not: Hercules Capital, a lender whose filings mention
+    Axovant's ticker, filed a Form 25 for its own notes the day AXON last traded, and
+    became AXON's issuer. AXON's issuer is now Axovant Sciences (its own 2016 filing). The
+    35th, DD (E. I. du Pont de Nemours, CIK 30554, last trade 2017-08-31), has no other
+    issuer evidence and now has no issuer; it traded only before the first membership
+    decision, so no decision reads it. Such a company is now only a candidate, accepted on
+    its own filings like any other. Report section 4b marks each such match "candidate
+    only", with the issuer from dated evidence. Its 8-Ks are still read as exit evidence:
+    for the 33 they are the issuer's own; AXON's candidate has none; DD's single-source
+    "acquired" outcome rests on CIK 30554's 8-K of 2017-09-01 (the DowDuPont merger). The audit had
     skipped Form 25 rows; it now re-reads every notice: in the company's own folder and
     filing list as a Form 25, filed near the last trade, naming the company as issuer.
