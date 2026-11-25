@@ -134,6 +134,12 @@ class FakeSec:
             return json.dumps({"hits": {"total": {"value": len(hits)}, "hits": hits}})
         return self.documents.get(url)
 
+    def cover_text(self, url):
+        from app.universe import sec
+
+        text = self.get(url)
+        return None if text is None else sec.cover_snippet(text)
+
 
 def filing(cik, filed, ticker, n, cover=True):
     """A filing the search finds for ``ticker``; its cover page lists ``ticker`` when

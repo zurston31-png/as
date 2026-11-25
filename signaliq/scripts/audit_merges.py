@@ -281,9 +281,7 @@ def audit_issuer_renames(s, client, actions) -> int:
                     <= 120
                 ]
                 sides[symbol] = any(
-                    sh.cover_page_symbol(sh.plain_text(client.get(e.url)), symbol)
-                    for e in rows
-                    if client.get(e.url) is not None
+                    sh.cover_page_symbol(client.cover_text(e.url) or "", symbol) for e in rows
                 )
             if not all(sides.values()):
                 problems.append(f"cover page of CIK {link.issuer_before} not re-read for {sides}")

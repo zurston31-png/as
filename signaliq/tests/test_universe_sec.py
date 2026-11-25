@@ -708,3 +708,36 @@ def test_lists_asked_by_cik_come_from_json_and_ticker_lookups_from_browse_edgar(
         assert client.company("TSTX", date(2022, 6, 1)).cik == "0000000456"
         assert asked[-1] == "www.sec.gov"
     engine.dispose()
+
+
+DOC = (
+    "<html><div>FORM 10-Q</div><table><tr><td>Title of each class</td><td>Trading Symbol(s)</td>"
+    "<td>Name of each exchange on which registered</td></tr><tr><td>Common Stock</td><td>TSTX</td>"
+    "<td>New York Stock Exchange</td></tr></table>" + "<p>Management discussion.</p>" * 20000
+)
+
+
+def test_a_cover_snippet_keeps_the_cover_table_and_little_else():
+    snippet = sec.cover_snippet(DOC)
+    assert "Common Stock TSTX New York Stock Exchange" in snippet
+    assert len(snippet) < len(sec.plain_text(DOC)) // 10
+    assert sec.cover_snippet("<p>no table here</p>") == "no table here"
+
+
+def test_cover_text_reads_a_whole_cached_document_and_stores_only_snippets(research):
+    from app.universe.models import ExternalResponse
+
+    with session_scope(research) as session:
+        session.add(ExternalResponse(source="sec", request_key="https://x/a.htm", response=DOC))
+    with session_scope(research) as session:
+        offline = sec.CachedSec(session, network=False)
+        assert offline.cover_text("https://x/a.htm") == sec.cover_snippet(DOC)  # no request
+        assert offline.cover_text("https://x/missing.htm") is None  # never "no cover page"
+        online = sec.CachedSec(session, network=True, sleep=lambda s: None)
+        online._fetch = lambda key, url, params: DOC  # SEC's answer, without the network
+        assert online.cover_text("https://x/b.htm") == sec.cover_snippet(DOC)
+        session.commit()
+        stored = session.get(ExternalResponse, ("sec", sec.COVER_PREFIX + "https://x/b.htm"))
+        assert stored.response == sec.cover_snippet(DOC)
+        assert session.get(ExternalResponse, ("sec", "https://x/b.htm")) is None
+        online.close()

@@ -13,13 +13,13 @@ Read-only, through the same cache as ``app.universe.sec`` (source ``sec``).
   each date, so a membership decision only uses what was on file by then.
 """
 
-import html
 import json
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from app.universe import sec as _sec
 from app.universe.sec import ARCHIVES, SCOPE_END, SUBMISSIONS_PAGE_URL, CachedSec, SecUnavailable
 from app.universe.sectypes import _NAME_NOISE
 
@@ -430,8 +430,7 @@ def _lead_word(name: str) -> str | None:
     return words[0] if words else None
 
 
-def plain_text(raw: str | None) -> str:
-    return " ".join(re.sub(r"<[^>]+>", " ", html.unescape(raw or "")).split())
+plain_text = _sec.plain_text  # one definition: cover snippets must read exactly the same
 
 
 def own_ticker_mention(text: str, ticker: str, company: str, window: int = 200) -> str | None:

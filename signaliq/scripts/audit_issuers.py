@@ -165,8 +165,10 @@ def main() -> int:
         for (sid, symbol, _cik), run in runs.items():
             run.sort(key=lambda e: e.filed)
             for e in {run[0].id: run[0], run[-1].id: run[-1]}.values():
-                text = sh.plain_text(client.get(e.url))
-                if listed_on_cover(text, symbol):
+                text = client.cover_text(e.url)
+                if text is None:
+                    problems.append(f"id {sid} {symbol}: cover page {e.url} not cached")
+                elif listed_on_cover(text, symbol):
                     confirmed_ends += 1
                 elif e is run[0]:
                     problems.append(f"id {sid} {symbol}: first cover page {e.url} does not list it")

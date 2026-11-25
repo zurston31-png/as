@@ -484,7 +484,7 @@ def resolve_types(session: Session) -> None:
         for (symbol, cik), run in _runs(cover).items():
             seen_titles = set()
             for p in (run[0], run[-1]):
-                text = sh.plain_text(client.get(p.url))
+                text = client.cover_text(p.url) or ""
                 if not sh.cover_page_symbol(text, symbol):
                     continue
                 title = sh.cover_page_class(text, symbol)
@@ -1098,7 +1098,7 @@ UNCOVERED_DAYS = 120
 
 
 def _cover_confirmed(client: sec.CachedSec, hit, ticker: str) -> bool:
-    return bool(sh.cover_page_symbol(sh.plain_text(client.get(hit.url)), ticker))
+    return bool(sh.cover_page_symbol(client.cover_text(hit.url) or "", ticker))
 
 
 def cover_page_points(
@@ -1384,6 +1384,12 @@ class StrictCache(sec.CachedSec):
         text = super().get(url, params)
         if text is None:
             self.missing.add(sec.cache_key(url, params))
+        return text
+
+    def cover_text(self, url: str) -> str | None:
+        text = super().cover_text(url)
+        if text is None:
+            self.missing.add(sec.COVER_PREFIX + sec.cache_key(url))
         return text
 
 

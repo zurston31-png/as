@@ -60,7 +60,7 @@ class SharedFetcher:
         self.sink: queue.Queue = queue.Queue()
         self.requests = 0
 
-    def fetch(self, key: str, url: str, params: dict | None) -> str:
+    def fetch(self, key: str, url: str, params: dict | None, transform=None) -> str:
         response = None
         for attempt in range(sec.MAX_ATTEMPTS):
             self.pacer.wait()
@@ -81,6 +81,8 @@ class SharedFetcher:
                 f"SEC did not answer after {sec.MAX_ATTEMPTS} tries ({status}): {key}"
             )
         text = response.text if response.status_code == 200 else ""
+        if transform is not None:
+            text = transform(text)  # a cover page: only its snippet is kept
         with self.lock:
             self.pending[key] = text
         self.sink.put((key, text))
@@ -104,6 +106,19 @@ class PrefetchSec(sec.CachedSec):
             if key in self.fetcher.pending:
                 return self.fetcher.pending[key]
         return self.fetcher.fetch(key, url, params)
+
+    def cover_text(self, url):
+        key = sec.COVER_PREFIX + sec.cache_key(url)
+        row = self.session.get(ExternalResponse, ("sec", key))
+        if row is not None:
+            return row.response
+        whole = self.session.get(ExternalResponse, ("sec", sec.cache_key(url)))
+        if whole is not None:
+            return sec.cover_snippet(whole.response)
+        with self.fetcher.lock:
+            if key in self.fetcher.pending:
+                return self.fetcher.pending[key]
+        return self.fetcher.fetch(key, url, None, transform=sec.cover_snippet)
 
 
 def one_security(factory, fetcher, sid: int, found) -> int:

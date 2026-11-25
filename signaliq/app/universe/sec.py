@@ -424,6 +424,27 @@ def cash_terms(text: str) -> tuple[float | None, str]:
 # =============================================================================
 
 
+#: Cache keys of cover-page snippets (``CachedSec.cover_text``) start with this.
+COVER_PREFIX = "cover:"
+#: Plain text kept after the last "Trading Symbol" heading found near a document's start.
+COVER_TAIL = 4000
+COVER_SEARCH = 60000
+
+
+def plain_text(raw: str | None) -> str:
+    """A document's text without markup and with spacing collapsed."""
+    return " ".join(re.sub(r"<[^>]+>", " ", html.unescape(raw or "")).split())
+
+
+def cover_snippet(raw: str | None) -> str:
+    """The cover-page part of a filing as plain text: up to ``COVER_TAIL`` characters past
+    the last "Trading Symbol" heading in the first ``COVER_SEARCH`` characters (the cover
+    table), or the first ``COVER_SEARCH`` characters when there is no such heading."""
+    text = plain_text(raw)
+    ends = [m.end() for m in re.finditer(r"Trading\s+Symbol", text[:COVER_SEARCH], re.I)]
+    return text[: ends[-1] + COVER_TAIL] if ends else text[:COVER_SEARCH]
+
+
 def cache_key(url: str, params: dict | None = None) -> str:
     """The cache key of an SEC request (stable between runs)."""
     key = url + (
@@ -459,6 +480,38 @@ class CachedSec:
             return row.response
         if not self.network:
             return None
+        text = self._fetch(key, url, params)
+        self._store(key, text)
+        return text
+
+    def _store(self, key: str, text: str) -> None:
+        self.session.merge(ExternalResponse(source="sec", request_key=key, response=text))
+        self.stored += 1
+        if self.stored % COMMIT_EVERY == 0:
+            self.session.commit()
+
+    def cover_text(self, url: str) -> str | None:
+        """The cover-page part of a filing's main document, as plain text (``cover_snippet``).
+
+        Only that part is stored (a few kilobytes, not the whole 10-K), under its own key.
+        A document already cached whole gives its snippet without a request. None when
+        neither is cached and the client is cache-only.
+        """
+        key = COVER_PREFIX + cache_key(url)
+        row = self.session.get(ExternalResponse, ("sec", key))
+        if row is not None and not self.refresh:
+            return row.response
+        whole = self.session.get(ExternalResponse, ("sec", cache_key(url)))
+        if whole is not None and not self.refresh:
+            return cover_snippet(whole.response)
+        if not self.network:
+            return None
+        snippet = cover_snippet(self._fetch(key, url, None))
+        self._store(key, snippet)
+        return snippet
+
+    def _fetch(self, key: str, url: str, params: dict | None) -> str:
+        """SEC's answer (``""`` for 404), retried; ``SecUnavailable`` if it never answers."""
         for attempt in range(MAX_ATTEMPTS):
             self.sleep(PAUSE_SECONDS)
             try:
@@ -480,12 +533,7 @@ class CachedSec:
             self.session.commit()
             status = "connection failed" if response is None else f"HTTP {response.status_code}"
             raise SecUnavailable(f"SEC did not answer after {MAX_ATTEMPTS} tries ({status}): {key}")
-        text = response.text if response.status_code == 200 else ""
-        self.session.merge(ExternalResponse(source="sec", request_key=key, response=text))
-        self.stored += 1
-        if self.stored % COMMIT_EVERY == 0:
-            self.session.commit()
-        return text
+        return response.text if response.status_code == 200 else ""
 
     def ticker_cik(self, ticker: str) -> str | None:
         """Today's holder of a ticker in SEC's ticker list (as browse-edgar resolves CIK=TICKER)."""
