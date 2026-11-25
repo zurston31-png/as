@@ -395,7 +395,7 @@ class Split:
     event_id: str | None = None
 
 
-def owned_on(chain: Chain, symbol: str, day: date) -> bool:
+def owned_on(chain: Chain, symbol: str, day: date, handed: Iterable[tuple[str, date]] = ()) -> bool:
     """Whether an event recorded for ``symbol`` on ``day`` belongs to ``chain``.
 
     A ticker owns the dates after the previous ticker's last trade (so an event
@@ -403,22 +403,36 @@ def owned_on(chain: Chain, symbol: str, day: date) -> bool:
     counts) up to the first trade under the next ticker (so an event recorded
     under the old ticker on the rename date, like UTX on 2020-04-03, counts).
     An event on the first day of the security belongs to nothing earlier.
+
+    ``handed`` lists (ticker, first session) where a ticker passed to a new holder
+    (``handover_cuts``). An event recorded under that ticker on or before that first
+    session belongs to the earlier holder, never to the new one: Ingersoll-Rand plc's share
+    consolidation is recorded under IR on 2020-03-02, the day it became TT and Gardner
+    Denver took the ticker IR.
     """
+    handed = set(handed)
     for index, segment in enumerate(chain.segments):
         later = chain.segments[index + 1] if index + 1 < len(chain.segments) else None
         earlier = chain.segments[index - 1] if index > 0 else None
         start = earlier.last_session if earlier is not None else segment.first_session
+        if (segment.symbol, segment.first_session) in handed:
+            start = segment.first_session
         end = later.first_session if later is not None else segment.last_session
         if symbol == segment.symbol and start < day <= end:
             return True
     return False
 
 
-def owned_splits(chain: Chain, splits: Iterable[Split]) -> list[Split]:
-    return [split for split in splits if owned_on(chain, split.symbol, split.ex_date)]
+def owned_splits(
+    chain: Chain, splits: Iterable[Split], handed: Iterable[tuple[str, date]] = ()
+) -> list[Split]:
+    handed = set(handed)
+    return [split for split in splits if owned_on(chain, split.symbol, split.ex_date, handed)]
 
 
-def split_factors(chain: Chain, splits: Iterable[Split]) -> dict[date, float]:
+def split_factors(
+    chain: Chain, splits: Iterable[Split], handed: Iterable[tuple[str, date]] = ()
+) -> dict[date, float]:
     """Factor that turns each raw price of ``chain`` into a split-adjusted one.
 
     Adjusted price = raw price / factor, where the factor is the product of the
@@ -429,7 +443,7 @@ def split_factors(chain: Chain, splits: Iterable[Split]) -> dict[date, float]:
     2020-04-03) belongs to the security too: each ticker owns the dates up to
     the first trade under the next ticker.
     """
-    owned = owned_splits(chain, splits)
+    owned = owned_splits(chain, splits, handed)
     factors = {}
     for _, bar in chain.bars():
         factor = 1.0

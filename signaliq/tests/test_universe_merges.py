@@ -556,3 +556,27 @@ def test_the_randgold_barrick_exception_names_both_registrants_and_the_exact_cut
         6.128,
         0.0,
     )
+
+
+def test_an_event_on_the_handover_day_belongs_to_the_earlier_holder_only():
+    # Ingersoll-Rand plc's consolidation is recorded under IR on the day it became TT and
+    # Gardner Denver (GDI) took the ticker IR: one owner, the company that became TT.
+    days = LONG[:120]
+    earlier = seg.Chain(
+        [
+            seg.Segment("TESTC", tuple(bars(days[:60], 30.0))),
+            seg.Segment("TESTE", tuple(bars(days[60:], 26.0))),
+        ]
+    )
+    new_holder = seg.Chain(
+        [
+            seg.Segment("TESTD", tuple(bars(days[:60], 12.0))),
+            seg.Segment("TESTC", tuple(bars(days[60:], 12.0))),
+        ]
+    )
+    handed = {("TESTC", days[60])}
+    assert seg.owned_on(earlier, "TESTC", days[60], handed)
+    assert not seg.owned_on(new_holder, "TESTC", days[60], handed)
+    assert seg.owned_on(new_holder, "TESTC", days[61], handed)
+    # Without the handover the new holder would claim it too (an ordinary rename).
+    assert seg.owned_on(new_holder, "TESTC", days[60])

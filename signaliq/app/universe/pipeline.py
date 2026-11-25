@@ -596,9 +596,10 @@ def store_security_bars(session: Session, assembled: Assembled) -> None:
         ).scalars()
         if e.symbol and e.new_rate and e.old_rate and (e.ex_date or e.process_date)
     ]
+    handed = {(h.symbol, h.cut) for h in assembled.handovers}
     ids = assembled.ids or assign_security_ids(session, assembled.chains)
     for security_id, chain in zip(ids, assembled.chains, strict=True):
-        factors = seg.split_factors(chain, splits)
+        factors = seg.split_factors(chain, splits, handed)
         session.add_all(
             SecurityBar(
                 security_id=security_id,

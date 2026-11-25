@@ -23,6 +23,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
+from itertools import pairwise
 
 import httpx
 from sqlalchemy import delete, select
@@ -231,11 +232,32 @@ def _close_around(chain: seg.Chain, day: date) -> tuple[float | None, float | No
 # =============================================================================
 
 
+def handover_days(session: Session) -> set[tuple[str, date]]:
+    """(ticker, first session of the new holder) wherever two securities hold one ticker
+    back to back, with no pause long enough to end a listing (a handover, see
+    ``segments.handover_cuts``)."""
+    by_symbol: dict[str, list[TickerHistory]] = defaultdict(list)
+    for h in session.execute(select(TickerHistory)).scalars():
+        by_symbol[h.symbol].append(h)
+    found = set()
+    for symbol, items in by_symbol.items():
+        items.sort(key=lambda h: h.valid_from)
+        for a, b in pairwise(items):
+            if (
+                a.security_id != b.security_id
+                and a.valid_to < b.valid_from
+                and seg.sessions_between(a.valid_to, b.valid_from) <= seg.MAX_GAP_SESSIONS
+            ):
+                found.add((symbol, b.valid_from))
+    return found
+
+
 def apply_price_adjustments(session: Session, client: AlpacaClient, utc_window) -> None:
     """Check every owned split against prices, add spin-offs, and store the factors."""
     session.execute(delete(SplitCheck))
     session.execute(delete(SpinOff))
     chains = chains_by_id(session)
+    handed = handover_days(session)
     splits = [
         seg.Split(e.symbol, e.ex_date or e.process_date, e.new_rate / e.old_rate, e.id)
         for e in session.execute(
@@ -247,7 +269,7 @@ def apply_price_adjustments(session: Session, client: AlpacaClient, utc_window) 
     ]
     accepted: dict[int, list[seg.Split]] = defaultdict(list)
     for security_id, chain in chains.items():
-        for split in seg.owned_splits(chain, splits):
+        for split in seg.owned_splits(chain, splits, handed):
             before, on = _close_around(chain, split.ex_date)
             verdict = adjustments.check_split(split.ratio, before, on)
             session.add(
@@ -286,7 +308,7 @@ def apply_price_adjustments(session: Session, client: AlpacaClient, utc_window) 
     spin_factors: dict[int, list[tuple[date, float]]] = defaultdict(list)
     for source, reference, parent, ex_date, children in records:
         for security_id, chain in chains.items():
-            if not seg.owned_on(chain, parent, ex_date):
+            if not seg.owned_on(chain, parent, ex_date, handed):
                 continue
             before, on = _close_around(chain, ex_date)
             child_prices = []
@@ -323,7 +345,7 @@ def apply_price_adjustments(session: Session, client: AlpacaClient, utc_window) 
                 spin_factors[security_id].append((ex_date, result.factor))
 
     for security_id, chain in chains.items():
-        split_factor = seg.split_factors(chain, accepted.get(security_id, []))
+        split_factor = seg.split_factors(chain, accepted.get(security_id, []), handed)
         dist = adjustments.distribution_factors(split_factor, spin_factors.get(security_id, []))
         for bar in session.execute(
             select(SecurityBar).where(SecurityBar.security_id == security_id)
