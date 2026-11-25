@@ -518,6 +518,33 @@ def test_a_company_taking_over_the_ticker_is_kept_beside_the_cover_pages_of_the_
     assert "kept its own 2023-05-01..2024-05-01" in conflicts[1][0]
 
 
+def test_a_new_holders_kept_stretch_starts_on_a_cover_page_listing_the_ticker(research):
+    # The part of the new holder's run outside the old holder's stretch begins with a
+    # document without the cover table (it passed inside the run on its neighbour). Cut out
+    # of the run, the stretch must still start on a document that lists the ticker.
+    filings, documents = build(
+        [
+            ("0000000111", date(2019, 8, 1), "TSTX", 1, True),
+            ("0000000111", date(2020, 5, 1), "TSTX", 8, True),
+            ("0000000111", date(2021, 5, 1), "TSTX", 2, True),
+            ("0000000111", date(2022, 2, 1), "TSTX", 9, True),
+            ("0000000111", date(2022, 7, 21), "TSTX", 3, True),
+            ("0000000222", date(2022, 7, 19), "TSTX", 4, True),
+            ("0000000222", date(2022, 10, 1), "TSTX", 5, False),
+            ("0000000222", date(2023, 5, 1), "TSTX", 6, True),
+            ("0000000222", date(2024, 5, 1), "TSTX", 7, True),
+        ]
+    )
+    client = FakeSec({"TSTX": ("0000000222", "New Co")}, filings, documents)
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), date(2024, 12, 31))])
+        points, conflicts = evidence.issuer_points(session, client, {})
+    later = [pt for pt in points[1] if pt.cik == "0000000222"]
+    assert later[0].filed == date(2023, 5, 1)
+    assert "kept its own 2023-05-01..2024-05-01" in conflicts[1][0]
+    assert issuer_on(points[1], date(2022, 12, 30))[0].cik == "0000000111"
+
+
 def test_a_co_registrant_filing_alongside_the_parent_is_still_set_aside(research):
     # A subsidiary listing the parent's ticker on the same filings, over the same years.
     rows = []

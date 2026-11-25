@@ -1247,6 +1247,17 @@ def cover_page_points(
     ]
 
 
+def _listed_ends(client: sec.CachedSec, part: list[IssuerPoint], ticker: str) -> list[IssuerPoint]:
+    """``part`` without the documents at either end that do not list ``ticker`` themselves:
+    a stretch cut out of a longer one must still start and end on confirmed cover pages."""
+    lo, hi = 0, len(part) - 1
+    while lo <= hi and not _cover_confirmed(client, part[lo], ticker):
+        lo += 1
+    while hi > lo and not _cover_confirmed(client, part[hi], ticker):
+        hi -= 1
+    return part[lo : hi + 1]
+
+
 def _overlap(a: list[IssuerPoint], b: list[IssuerPoint]) -> bool:
     return a[0].filed <= b[-1].filed and b[0].filed <= a[-1].filed
 
@@ -1376,8 +1387,12 @@ def issuer_points(
                         if _overlap(k, span)
                     )
                 ]
-                after = [p for p in outside if p.filed > clash[-1].filed]
-                before = [p for p in outside if p.filed < clash[0].filed]
+                after = _listed_ends(
+                    client, [p for p in outside if p.filed > clash[-1].filed], h.symbol
+                )
+                before = _listed_ends(
+                    client, [p for p in outside if p.filed < clash[0].filed], h.symbol
+                )
                 handed = [
                     part
                     for part in (before, after)
