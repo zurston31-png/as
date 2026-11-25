@@ -300,6 +300,31 @@ def test_a_dropped_connection_is_retried_and_never_read_as_an_empty_answer(tmp_p
     engine.dispose()
 
 
+def test_every_new_cache_row_is_counted_as_an_answer_stored(tmp_path):
+    """The batch report checks the growth of the SEC cache against ``stored``: a cached
+    answer is reused without a request, and each fetched answer adds exactly one row."""
+    import httpx
+
+    engine = open_research_database(f"sqlite:///{(tmp_path / 'r.db').as_posix()}")
+    factory = create_session_factory(engine)
+    with session_scope(factory) as session:
+        session.add(ExternalResponse(source="sec", request_key="https://x/old", response="o"))
+    with session_scope(factory) as session:
+        client = sec.CachedSec(session, network=True, sleep=lambda _s: None)
+        client._http = httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, text=DOC))
+        )
+        assert client.get("https://x/old") == "o"  # cached: no request, nothing stored
+        client.get("https://x/a")
+        client.get("https://x/a")  # fetched once, then read back
+        client.cover_text("https://x/b.htm")
+        client.cover_text("https://x/old")  # a whole cached document gives its cover page
+        assert (client.requests, client.stored, client.failures) == (2, 2, [])
+    with session_scope(factory) as session:
+        assert session.query(ExternalResponse).count() == 1 + client.stored
+    engine.dispose()
+
+
 # =============================================================================
 # Matching a security to an SEC company
 # =============================================================================

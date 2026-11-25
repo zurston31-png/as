@@ -106,10 +106,30 @@ def stage_pool(session, client, settings):
 MAX_DISCOVERY_ROUNDS = 6
 
 
+SEC_STEPS = (("curated", "curated documents"), ("sec", "evidence"), ("issuer", "issuers"))
+
+
+def _sec_cached(session) -> int:
+    return session.scalar(
+        select(func.count()).select_from(ExternalResponse).where(ExternalResponse.source == "sec")
+    )
+
+
+def _count_sec(facts: dict, step: str, result: tuple[int, int, list[str]]) -> None:
+    """Add one SEC fetch's (requests, answers stored, failures) to the run's totals."""
+    made, stored, failed = result
+    facts[f"{step}_requests"] = facts.get(f"{step}_requests", 0) + made
+    facts[f"{step}_stored"] = facts.get(f"{step}_stored", 0) + stored
+    facts[f"{step}_failures"] = facts.get(f"{step}_failures", []) + failed
+
+
 def run(settings, refresh: bool, stage: int | None = None) -> dict:
     engine = open_research_database()
     factory = create_session_factory(engine)
     facts: dict = {"database": Path(research_database_url().removeprefix("sqlite:///")).name}
+    facts["refresh"] = refresh
+    with session_scope(factory) as session:
+        facts["sec_cached_at_start"] = _sec_cached(session)
     try:
         with p.sip_client(settings) as client:
             if stage:
@@ -131,8 +151,8 @@ def run(settings, refresh: bool, stage: int | None = None) -> dict:
                     # depends on an earlier run. Renames are followed until no new ticker appears.
                     session.execute(delete(CorporateAction))
                     # Renames that Alpaca lacks, read from SEC filings and re-verified each run.
-                    facts["curated_requests"], facts["curated_failures"] = (
-                        evidence.fetch_curated_documents(session, refresh=refresh)
+                    _count_sec(
+                        facts, "curated", evidence.fetch_curated_documents(session, refresh=refresh)
                     )
                     facts["renames"] = [
                         (r.old_symbol, r.new_symbol, r.date, len(r.quotes), len(missing))
@@ -197,14 +217,15 @@ def run(settings, refresh: bool, stage: int | None = None) -> dict:
                             facts["wikidata_requests"], facts["wikidata_missing"] = (
                                 evidence.fetch_wikidata(session, tickers, refresh=refresh)
                             )
+                    # SEC requests are added up over every pass and step, so the report
+                    # accounts for each one (checked against the growth of the cache).
+                    for step, fetch in (
+                        ("sec", evidence.fetch_sec),
+                        ("issuer", evidence.fetch_issuers),
+                    ):
+                        with session_scope(factory) as session:
+                            _count_sec(facts, step, fetch(session, refresh=refresh))
                     with session_scope(factory) as session:
-                        facts["sec_requests"], facts["sec_failures"] = evidence.fetch_sec(
-                            session, refresh=refresh
-                        )
-                    with session_scope(factory) as session:
-                        facts["issuer_requests"], facts["issuer_failures"] = evidence.fetch_issuers(
-                            session, refresh=refresh
-                        )
                         facts["issuer_conflicts"] = evidence.store_issuers(session)
                     with session_scope(factory) as session:
                         evidence.value_deals(session, client, p.utc_window)
@@ -389,15 +410,28 @@ def report(facts: dict) -> str:
             + (f": {', '.join(missing)}" if missing else "")
         )
         print(f"  Alpaca spin-off records 2016-2024: {facts.get('spin_off_records', 0)}")
-        sec_cached = s.scalar(
-            select(func.count())
-            .select_from(ExternalResponse)
-            .where(ExternalResponse.source == "sec")
-        )
-        print(
-            f"  SEC: {sec_cached} cached responses (requests this run: {facts.get('sec_requests', 0)}, "
-            f"failed: {len(facts.get('sec_failures', []))})"
-        )
+        sec_cached = _sec_cached(s)
+        made = sum(facts.get(f"{k}_requests", 0) for k, _ in SEC_STEPS)
+        stored = sum(facts.get(f"{k}_stored", 0) for k, _ in SEC_STEPS)
+        failed = sum(len(facts.get(f"{k}_failures", [])) for k, _ in SEC_STEPS)
+        print(f"  SEC: {sec_cached} cached responses (requests this run: {made}, failed: {failed})")
+        for k, label in SEC_STEPS:
+            print(
+                f"    {label}: {facts.get(f'{k}_requests', 0)} HTTP responses (retries included), "
+                f"{facts.get(f'{k}_stored', 0)} answers stored, "
+                f"{len(facts.get(f'{k}_failures', []))} failed"
+            )
+        start = facts.get("sec_cached_at_start")
+        if start is not None:
+            grown = sec_cached - start
+            if facts.get("refresh"):
+                verdict = "not comparable (--refresh replaces cached answers)"
+            else:
+                verdict = "every new answer accounted for" if grown == stored else "MISMATCH"
+            print(
+                f"    cache at start {start}, now {sec_cached}: {grown} new; "
+                f"answers stored this run {stored}: {verdict}"
+            )
 
         print("\n3. SECURITY TYPES")
         print("  Classification rules (app.universe.sectypes):")

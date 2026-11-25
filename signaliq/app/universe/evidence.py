@@ -429,14 +429,16 @@ def sec_findings(session: Session, client: sec.CachedSec) -> dict[int, sec.SecFi
 
 def fetch_sec(
     session: Session, *, refresh: bool = False, sleep=time.sleep
-) -> tuple[int, list[str]]:
-    """Ask SEC about every ended security and cache the answers. Returns (requests, failures)."""
+) -> tuple[int, int, list[str]]:
+    """Ask SEC about every ended security and cache the answers.
+
+    Returns (HTTP requests including retries, answers stored, failed keys)."""
     client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
     try:
         sec_findings(session, client)
     finally:
         client.close()
-    return client.requests, client.failures
+    return client.requests, client.stored, client.failures
 
 
 def cached_sec_findings(session: Session) -> dict[int, sec.SecFinding]:
@@ -938,8 +940,10 @@ def missing_quotes(client: sec.CachedSec, quotes) -> list:
 
 def fetch_curated_documents(
     session: Session, *, refresh: bool = False, sleep=time.sleep
-) -> tuple[int, list[str]]:
-    """Fetch (or reuse from the cache) every SEC document a curated entry quotes."""
+) -> tuple[int, int, list[str]]:
+    """Fetch (or reuse from the cache) every SEC document a curated entry quotes.
+
+    Returns (HTTP requests including retries, answers stored, failed keys)."""
     client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
     try:
         for entry in (
@@ -953,7 +957,7 @@ def fetch_curated_documents(
                 client.get(quote.url)
     finally:
         client.close()
-    return client.requests, client.failures
+    return client.requests, client.stored, client.failures
 
 
 def apply_curated_renames(session: Session) -> list[tuple[CuratedRename, list]]:
@@ -1492,7 +1496,10 @@ def issuer_records(
 
 def fetch_issuers(
     session: Session, *, refresh: bool = False, sleep=time.sleep
-) -> tuple[int, list[str]]:
+) -> tuple[int, int, list[str]]:
+    """Fetch the SEC answers the issuer step needs (cover pages, filing lists) and cache them.
+
+    Returns (HTTP requests including retries, answers stored, failed keys)."""
     client = sec.CachedSec(session, network=True, refresh=refresh, sleep=sleep)
     try:
         found = sec_findings(session, client)
@@ -1500,7 +1507,7 @@ def fetch_issuers(
         issuer_records(session, client, found, commit_each=True)
     finally:
         client.close()
-    return client.requests, client.failures
+    return client.requests, client.stored, client.failures
 
 
 class StrictCache(sec.CachedSec):
