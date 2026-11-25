@@ -575,3 +575,38 @@ def test_a_filing_naming_the_ticker_counts_only_with_the_whole_company_name():
     assert sh.own_ticker_mention(
         wtw, "WTW", "WEIGHT WATCHERS INTERNATIONAL INC", 60, whole_name=True
     )
+
+
+def test_a_form25_counts_only_when_its_notice_was_read_and_names_the_company(research):
+    # The SEC match accepts a company that filed some Form 25 around the last trade. When
+    # that notice could not be read, nothing says which class it delisted: a lender whose
+    # filings mention the ticker (Hercules Capital and Axovant's AXON, February 2019) must
+    # not become the issuer. It is only a candidate, rejected for want of cover pages.
+    from app.universe import sec
+
+    filings, documents = build(
+        [
+            ("0000000111", date(2019, 5, 1), "TSTX", 1, True),
+            ("0000000111", date(2020, 5, 1), "TSTX", 2, True),
+        ]
+    )
+    client = FakeSec({}, filings, documents)
+    last = date(2020, 6, 30)
+    href = f"{sh.ARCHIVES}/Archives/edgar/data/111/000011120000099/0000000111-20-000099-index.htm"
+    notice = sec.RemovalNotice("0000000111", "Company 111", "NYSE", "Common Stock", "", None)
+    unread = {1: sec.SecFinding(cik="0000000888", company="Lender Inc")}
+    read = {
+        1: sec.SecFinding(
+            cik="0000000111",
+            company="Company 111",
+            notices=[(sec.Filing("25-NSE", date(2020, 7, 1), "", href), notice)],
+        )
+    }
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2016, 1, 4), last)], status="ended")
+        unread_points, _ = evidence.issuer_points(session, client, unread)
+        read_points, _ = evidence.issuer_points(session, client, read)
+    assert {p.cik for p in unread_points[1]} == {"0000000111"}
+    assert not any(p.how == "form25" for p in unread_points[1])
+    assert issuer_on(unread_points[1], last)[0].cik == "0000000111"
+    assert [(p.how, p.url) for p in read_points[1] if p.how == "form25"] == [("form25", href)]

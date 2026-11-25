@@ -1309,17 +1309,23 @@ def issuer_points(
         if finding is not None and finding.cik:
             cik = str(int(finding.cik)).zfill(10)
             candidates.append(cik)
-            notice = finding.notices[-1][0] if finding.notices else None
-            points.append(
-                IssuerPoint(
-                    security.last_trade_session,
-                    cik,
-                    finding.company or "",
-                    "form25",
-                    notice.href if notice is not None else "",
-                    tickers[-1].symbol if tickers else security.last_symbol,
+            # Evidence only when the notice itself was read and names this company as the
+            # issuer. A company matched merely for filing some Form 25 in the window, whose
+            # notice could not be read, is a candidate like any other: it must show the
+            # ticker on its own filings (Hercules Capital, a lender whose filings mention
+            # Axovant's AXON, filed a Form 25 for its own notes the day AXON last traded).
+            read = [f for f, n in finding.notices if str(int(n.issuer_cik or 0)).zfill(10) == cik]
+            if read:
+                points.append(
+                    IssuerPoint(
+                        security.last_trade_session,
+                        cik,
+                        finding.company or "",
+                        "form25",
+                        read[-1].href,
+                        tickers[-1].symbol if tickers else security.last_symbol,
+                    )
                 )
-            )
         for h in tickers:
             if h.symbol in today:
                 candidates.append(today[h.symbol][0])

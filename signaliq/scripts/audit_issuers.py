@@ -56,6 +56,51 @@ EXCHANGES = re.compile(
 )
 
 
+REMOVAL_FORMS = {"25", "25-NSE", "25/A", "25-NSE/A"}
+# The window in which sec.find looks for the delisting notice around the last trade.
+NOTICE_DAYS_BEFORE, NOTICE_DAYS_AFTER = 45, 90
+
+
+def _filings(client, cik: str, filings_of: dict) -> dict | None:
+    """{accession without dashes: (form, filed)} from the company's own filing list."""
+    if cik not in filings_of:
+        company = sh.submissions(client, cik)
+        filings_of[cik] = (
+            {acc.replace("-", ""): (form, filed) for form, filed, acc in company.filings}
+            if company
+            else None
+        )
+    return filings_of[cik]
+
+
+def form25_problems(client, e, filings_of: dict) -> list[str]:
+    """A delisting notice is evidence only if it was read: it is in the company's own folder
+    and filing list as a Form 25, filed around the last trade (the point's date), and the
+    notice itself names this company as the issuer."""
+    where = f"id {e.security_id} {e.symbol} form25"
+    if f"/edgar/data/{int(e.cik)}/" not in e.url:
+        return [f"{where}: notice {e.url or '(none)'} not in CIK {e.cik}'s folder"]
+    listed = _filings(client, e.cik, filings_of)
+    if listed is None:
+        return [f"{where}: CIK {e.cik}'s filing list not cached"]
+    accession = e.url.split("/")[-2]
+    form, filed = listed.get(accession, (None, None))
+    if form not in REMOVAL_FORMS:
+        return [f"{where}: {accession} is {form or 'not'} in CIK {e.cik}'s list, not a Form 25"]
+    if not (-NOTICE_DAYS_BEFORE <= (filed - e.filed).days <= NOTICE_DAYS_AFTER):
+        return [f"{where}: notice filed {filed}, too far from the last trade {e.filed}"]
+    index = client.get(e.url)
+    docs = re.findall(r'href="(/Archives/edgar/data/[^"]+primary_doc\.xml)"', index or "")
+    docs = [d for d in docs if "/xsl" not in d]
+    xml = client.get(sec.ARCHIVES + docs[0]) if docs else None
+    issuer = re.search(r"<issuer>.*?<cik>(\d+)</cik>", xml or "", re.S)
+    if issuer is None:
+        return [f"{where}: notice {accession} not cached or has no issuer"]
+    if int(issuer.group(1)) != int(e.cik):
+        return [f"{where}: notice {accession} names issuer CIK {issuer.group(1)}, not {e.cik}"]
+    return []
+
+
 def listed_on_cover(text: str, ticker: str) -> bool:
     """Written separately from ``sec_history.cover_page_symbol``: the ticker as a whole
     capitalised word within 600 characters after "Trading Symbol", with an exchange name
@@ -192,26 +237,21 @@ def main() -> int:
                 problems.append(f"id {e.security_id}: {e.symbol} is not one of its tickers")
                 continue
             if e.how == "form25":
+                problems += form25_problems(client, e, filings_of)
                 continue
             if f"/edgar/data/{int(e.cik)}/" not in e.url:
                 problems.append(
                     f"id {e.security_id} {e.symbol}: {e.url} not in CIK {e.cik}'s folder"
                 )
             accession = e.url.split("/")[-2]
-            if e.cik not in filings_of:
-                company = sh.submissions(client, e.cik)
-                filings_of[e.cik] = (
-                    {acc.replace("-", ""): filed for _, filed, acc in company.filings}
-                    if company
-                    else None
-                )
-            listed = filings_of[e.cik]
+            listed = _filings(client, e.cik, filings_of)
             if listed is None:
                 problems.append(f"CIK {e.cik}: filing list not cached")
-            elif listed.get(accession) != e.filed:
+            elif listed.get(accession, (None, None))[1] != e.filed:
                 problems.append(
-                    f"id {e.security_id} {e.symbol}: {accession} filed {listed.get(accession)} "
-                    f"in CIK {e.cik}'s list, evidence says {e.filed}"
+                    f"id {e.security_id} {e.symbol}: {accession} filed "
+                    f"{listed.get(accession, (None, None))[1]} in CIK {e.cik}'s list, "
+                    f"evidence says {e.filed}"
                 )
             slack = 30 if e.how == "full_text" else 0
             if not any(
@@ -261,6 +301,12 @@ def main() -> int:
         say(
             f"  Own-filing evidence re-read, the company naming the ticker as its own: "
             f"{own_filings} of {sum(e.how == 'full_text' for e in rows)}"
+        )
+        n25 = [e for e in rows if e.how == "form25"]
+        bad25 = {e.id for e in n25 for _ in form25_problems(client, e, filings_of)}
+        say(
+            f"  Delisting notices re-read, a Form 25 in the company's own list near the last "
+            f"trade and naming it as the issuer: {len(n25) - len(bad25)} of {len(n25)}"
         )
         issuers = list(s.execute(select(SecurityIssuer)).scalars())
         bad_how = [i for i in issuers if i.how not in KINDS]
