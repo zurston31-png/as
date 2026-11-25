@@ -82,10 +82,10 @@ ok   YNDX 2022-02-25 -> NBIS 2024-10-21: 665 sessions without a trade; close 18.
 Renames confirmed by the issuer, and rejected ones, to audit: 6
 
 ok   renamed         BTX 2022-10-14 -> ERNA 2022-10-17: 0 sessions apart, CIK 0000748592, price ratio 1.199
-FAIL renamed         CBS 2019-12-04 -> VIAC 2019-12-05: 0 sessions apart, CIK 0000813828, price ratio 1.002; delisting notice ['25 2019-12-04']
+ok   rename_rejected CBS 2019-12-04 -> VIAC 2019-12-05: 0 sessions apart, CIK 0000813828, price ratio 1.002; delisting notice 25 2019-12-04
 ok   renamed         IIVI 2022-09-07 -> COHR 2022-09-08: 0 sessions apart, CIK 0000820318, price ratio 1.031
 ok   renamed         LB 2021-08-02 -> BBWI 2021-08-03: 0 sessions apart, CIK 0000701985, price ratio 0.826
 ok   rename_rejected PSAC 2021-07-21 -> FFIE 2021-07-22: 0 sessions apart, CIK 0001805521, price ratio 1.015; delisting notice 25-NSE 2021-07-21
 ok   rename_rejected SGAM 2021-10-22 -> RDBX 2021-10-25: 0 sessions apart, CIK 0001820201, price ratio 1.237; delisting notice 25-NSE 2021-10-22
 
-5 of 6 rename decisions pass every check
+6 of 6 rename decisions pass every check

@@ -450,3 +450,18 @@ def test_only_the_issuers_own_sec_description_settles_a_disagreement():
         "conflict",
     )
     assert "resolved" in sectypes.USABLE_STATUSES
+
+
+def test_a_title_naming_several_classes_gives_no_vote():
+    t = sectypes.cover_class_type
+    # A cover table laid out by columns: titles first, then tickers (Walmart, Costco 2019).
+    assert (
+        t("Common Stock, par value $0.10 per share 1.900% Notes Due 2022 2.550% Notes Due 2026")
+        is None
+    )
+    assert (
+        t("Common Stock, par value $.01 per share Preferred Stock, par value $.01 per share")
+        is None
+    )
+    # "United" is not "Units".
+    assert t("United Continental Holdings, Inc. Common Stock, $0.01 par value") == "common"

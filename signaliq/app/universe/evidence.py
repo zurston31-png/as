@@ -435,6 +435,10 @@ def _sec_relevant(finding: sec.SecFinding, symbol: str, last: date | None = None
     return kind, relevant
 
 
+#: Cover pages filed from this date vote on a security's type (the membership window).
+COVER_TYPE_FROM = date(2020, 1, 1)
+
+
 def _runs(points: "list[IssuerPoint]") -> "dict[tuple[str, str], list[IssuerPoint]]":
     runs: dict[tuple[str, str], list[IssuerPoint]] = defaultdict(list)
     for p in sorted(points, key=lambda p: p.filed):
@@ -480,18 +484,39 @@ def resolve_types(session: Session) -> None:
         # pages, its delisting notice, its own filings naming the ticker).
         sec_names = sorted({p.name for p in held.get(security.security_id, []) if p.name})
         # The issuer's own class title, read from the first and the last cover page of each
-        # ticker and company (documents the issuer step confirmed).
-        for (symbol, cik), run in _runs(cover).items():
+        # ticker and company filed in the membership window (a type applies to every
+        # decision; Blackstone's 2019 partnership units became common stock that July).
+        forms = {}
+        in_window = [p for p in cover if p.filed >= COVER_TYPE_FROM]
+        for (symbol, cik), run in _runs(in_window).items():
+            if cik not in forms:
+                company = sh.submissions(client, cik)
+                forms[cik] = {
+                    acc.replace("-", ""): form
+                    for form, _, acc in (company.filings if company else ())
+                }
             seen_titles = set()
             for p in (run[0], run[-1]):
                 text = client.cover_text(p.url) or ""
                 if not sh.cover_page_symbol(text, symbol):
                     continue
                 title = sh.cover_page_class(text, symbol)
-                kind = sectypes.cover_class_type(title)
                 if title in seen_titles:
                     continue
                 seen_titles.add(title)
+                kind = sectypes.cover_class_type(title)
+                form = forms[cik].get(p.url.split("/")[-2], "")
+                why = "" if kind else "; not one recognised class, not counted"
+                if title is None:
+                    why = "; the ticker is listed on more than one row, not counted"
+                elif kind and kind != "adr" and form.startswith("20-F"):
+                    # A 20-F registers the underlying shares ("Common Shares ... TSM", with a
+                    # footnote that they trade as ADSs): only an ADS title is conclusive there.
+                    why = (
+                        f"; a {form} names the registered shares, not whether they trade "
+                        "as ADSs: not counted"
+                    )
+                    kind = None
                 if kind:
                     votes.append(sectypes.TypeVote("sec_cover", kind))
                 note(
@@ -499,8 +524,8 @@ def resolve_types(session: Session) -> None:
                     "sec_cover" if kind else "sec_cover_unclear",
                     symbol,
                     kind or "unknown",
-                    f"{p.filed} cover page of CIK {cik} ({p.name}): class '{title}' [{p.url}]"
-                    + ("" if kind else "; not a recognised class title, not counted"),
+                    f"{p.filed} {form or 'filing'} cover page of CIK {cik} ({p.name}): "
+                    f"class '{title}' [{p.url}]{why}",
                 )
         for h, row in wiki_rows:
             labels = row.get("types", {}).get("value", "").split("|")
@@ -540,7 +565,17 @@ def resolve_types(session: Session) -> None:
                         security.status == "ended" or h.valid_to < security.last_trade_session
                     )
                     check = sec_names or (wiki_names if no_longer_used else [])
-                    if check and not any(sectypes.names_agree(name, other) for other in check):
+                    # A fund trust's filings name the trust, not each fund it issues
+                    # ("Market Vectors ETF Trust" issues "VanEck Semiconductor ETF"): an ETF
+                    # or fund answer agrees with an issuer that is a fund.
+                    fund_family = kind in ("etf", "fund") and any(
+                        sec.looks_like_fund(n) for n in sec_names
+                    )
+                    if (
+                        check
+                        and not fund_family
+                        and not any(sectypes.names_agree(name, other) for other in check)
+                    ):
                         note(
                             security,
                             "openfigi_rejected",

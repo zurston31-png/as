@@ -48,6 +48,7 @@ Wikidata ``company`` confirms only common stock), ``single_source`` with one,
 resolved common stocks may join the universe.
 """
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -185,36 +186,54 @@ def wikidata_type(instance_labels: Iterable[str]) -> str | None:
 
 
 def cover_class_type(title: str | None) -> str | None:
-    """Our type for the class title an issuer gives on its cover page; None if unclear."""
+    """Our type for the class title an issuer gives on its cover page; None if unclear.
+
+    A title that names more than one class (a cover table laid out by columns, "Common
+    Stock ... 1.900% Notes Due 2022 ..." before the tickers, or "Common Stock ... Preferred
+    Stock ...") does not say which class the ticker is: no vote.
+    """
     text = " ".join((title or "").lower().split())
     if not text:
         return None
-    if "exchange traded note" in text or "exchange-traded note" in text or " etn" in f" {text}":
-        return "etn"
-    if "partner" in text:
-        return "partnership"
-    if text.startswith("unit") or (" units" in f" {text}" and "warrant" in text):
-        return "unit"
-    if "warrant" in text:
-        return "warrant"
-    if text.startswith("right"):
-        return "right"
-    if "preferred" in text or "preference" in text:
-        return "preferred"
-    if "depositary" in text or "depository" in text or "registry share" in text:
-        return "adr"
-    if any(w in text for w in ("% notes", "notes due", "debentures", "% senior")):
-        return "debt"
-    if any(
-        w in text
-        for w in (
-            "common stock",
-            "common share",
-            "ordinary share",
-            "beneficial interest",
-            "capital stock",
-        )
+    has = {
+        "common": bool(
+            re.search(
+                r"common (stock|share)|ordinary share|beneficial interest|capital stock", text
+            )
+        ),
+        "preferred": bool(re.search(r"preferred|preference", text)),
+        "debt": bool(
+            re.search(r"% (senior |global |subordinated )?notes|notes due|debentures", text)
+        ),
+        "warrant": bool(re.search(r"\bwarrants?\b", text)),
+        "right": bool(re.match(r"rights?\b", text)),
+        "unit": bool(re.match(r"units?\b", text)),
+        "adr": bool(re.search(r"depositary|depository|registry share", text)),
+        "partnership": "partner" in text,
+        "etn": bool(re.search(r"exchange[- ]traded notes?|\betns?\b", text)),
+    }
+    linked = bool(re.search(r"\beach (representing|consisting)|interest in|exercisable for", text))
+    if text.count("par value") >= 2 or (
+        not linked and sum(has[k] for k in ("common", "preferred", "debt")) > 1
     ):
+        return None
+    if has["etn"]:
+        return "etn"
+    if has["partnership"]:
+        return "partnership"
+    if has["unit"]:
+        return "unit"
+    if has["warrant"]:
+        return "warrant"
+    if has["right"]:
+        return "right"
+    if has["preferred"]:
+        return "preferred"
+    if has["adr"]:
+        return "adr"
+    if has["debt"]:
+        return "debt"
+    if has["common"]:
         return "common"
     return None
 

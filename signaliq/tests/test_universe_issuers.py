@@ -456,3 +456,18 @@ def test_a_company_whose_cover_heading_is_not_indexed_is_still_found(research):
         add_security(session, 1, [("TSTX", date(2019, 12, 5), date(2022, 12, 31))])
         points, _ = evidence.issuer_points(session, client, {})
     assert [pt.filed for pt in points[1]] == [date(2020, 3, 1), date(2021, 3, 1), date(2022, 3, 1)]
+
+
+def test_a_ticker_on_two_cover_rows_names_no_single_class():
+    # KSU lists its preferred and its common stock under one ticker; TIGR its ordinary
+    # shares and its ADSs.
+    two_rows = (
+        "Title of each class Trading Symbol(s) Name of each exchange on which registered "
+        "Preferred Stock, Par Value $25 Per Share, 4%, Noncumulative TSTX New York Stock Exchange "
+        "Common Stock, $.01 Per Share Par Value TSTX New York Stock Exchange"
+    )
+    assert sh.cover_page_symbol(two_rows, "TSTX")  # the company does list the ticker
+    assert sh.cover_page_class(two_rows, "TSTX") is None
+    assert (
+        sh.cover_page_class(COVER.format(ticker="TSTX"), "TSTX") == "Common Stock, $0.01 par value"
+    )
