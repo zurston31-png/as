@@ -224,7 +224,7 @@ TYPES (security_type, type_status)
     id 1071 TLN: common/single_source -> common/confirmed
 
 ISSUER AT THE LAST TRADE
-  Known: old 952, new 949; same CIK 925
+  Known: old 952, new 948; same CIK 923
   found only now: 9
     id 90 CBS: old None -> new ('0000813828', 'CBS CORP', 'cover_page')
     id 506 SQ: old None -> new ('0001512673', 'Block, Inc.', 'cover_page')
@@ -235,7 +235,8 @@ ISSUER AT THE LAST TRADE
     id 923 COHR: old None -> new ('0000021510', 'COHERENT INC', 'cover_page')
     id 991 TD: old None -> new ('0000947263', 'TORONTO DOMINION BANK', 'cover_page')
     id 1088 GOLD: old None -> new ('0000756894', 'BARRICK GOLD CORP', 'full_text')
-  lost now: 12
+  lost now: 13
+    id 147 DD: old ('0000030554', 'EIDP, Inc.', 'form25') -> new None
     id 156 DIA: old ('0001041130', 'SPDR DOW JONES INDUSTRIAL AVERAGE ETF TRUST', 'ticker_today') -> new None
     id 341 MDY: old ('0000936958', 'SPDR S&P MIDCAP 400 ETF TRUST', 'ticker_today') -> new None
     id 476 SCO: old ('0001415311', 'ProShares Trust II', 'ticker_today') -> new None
@@ -248,7 +249,8 @@ ISSUER AT THE LAST TRADE
     id 997 VIXY: old ('0001415311', 'ProShares Trust II', 'ticker_today') -> new None
     id 1049 BBWI: old ('0000701985', 'Bath & Body Works, Inc.', 'ticker_today') -> new None
     id 1066 COHR: old ('0000820318', 'COHERENT CORP.', 'ticker_today') -> new None
-  different CIK: 15
+  different CIK: 16
+    id 55 AXON: old ('0001280784', 'Hercules Capital, Inc.', 'form25') -> new ('0001636050', 'Axovant Sciences Ltd.', 'full_text')
     id 75 BLK: old ('0001364742', 'BlackRock Inc.', 'full_text') -> new ('0002012383', 'BlackRock, Inc.', 'cover_page')
     id 144 CZR: old ('0001590895', 'Caesars Entertainment, Inc.', 'ticker_today') -> new ('0000858339', 'CAESARS HOLDINGS, INC.', 'form25')
     id 189 CZR: old ('0000858339', 'CAESARS HOLDINGS, INC.', 'form25') -> new ('0001590895', 'Caesars Entertainment, Inc.', 'cover_page')

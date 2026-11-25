@@ -41,14 +41,14 @@ Rejected merge candidates to audit: 35
 ok   ALF    2022-10-24 -> 2024-08-01 (ids [853] / [893]): gap 443 sessions; price ratio 90.19; issuer 0001833908 delisting notice 25-NSE 2022-10-27; different issuers 0001833908 / 0002010930
 ok   AMR    2019-09-23 -> 2021-02-04 (ids [696] / [737]): gap 344 sessions; price ratio 157.88; issuer 0001690769 delisting notice 25-NSE 2019-10-11; different issuers 0001690769 / 0001704715; later segment is inside another security's history
 ok   AMTD   2020-10-05 -> 2022-01-31 (ids [37] / [775]): gap 332 sessions; price ratio 0.10; issuer 0001173431 delisting notice 25-NSE 2020-10-06; different issuers 0001173431 / 0001769731; Alpaca stock_merger 2020-10-06; later segment is inside another security's history
-ok   AXON   2019-02-13 -> 2021-01-26 (ids [55] / [661]): gap 490 sessions; price ratio 144.80; issuer 0001280784 delisting notice 25-NSE 2019-02-04; different issuers 0001280784 / 0001069183; later segment is inside another security's history
+ok   AXON   2019-02-13 -> 2021-01-26 (ids [55] / [661]): gap 490 sessions; price ratio 144.80; different issuers 0001636050 / 0001069183; later segment is inside another security's history
 ok   BTU    2016-04-12 -> 2017-04-04 (ids [913] / [1013]): price ratio 13.16; issuer 0001064728 delisting notice 25-NSE 2016-05-04
 ok   BTX    2019-08-09 -> 2021-03-26 (ids [82] / [389]): gap 409 sessions; price ratio 5.17; different issuers 0000876343 / 0000748592; later segment is inside another security's history
 ok   CHK    2020-06-26 -> 2021-02-10 (ids [101] / [840]): price ratio 3.80; issuer 0000895126 delisting notice 25-NSE 2020-07-20
 ok   COHR   2022-06-30 -> 2022-09-08 (ids [923] / [953]): price ratio 0.16; issuer 0000021510 delisting notice 25-NSE 2022-07-01; different issuers 0000021510 / 0000820318; Alpaca stock_and_cash_merger 2022-07-01; later segment is inside another security's history
 ok   COR    2021-12-27 -> 2023-08-30 (ids [122] / [7]): gap 420 sessions; issuer 0001490892 delisting notice 25-NSE 2021-12-28; different issuers 0001490892 / 0001140859; Alpaca cash_merger 2021-12-28; later segment is inside another security's history
 ok   CZR    2020-07-20 -> 2020-07-21 (ids [144] / [189]): price ratio 3.10; issuer 0000858339 delisting notice 25-NSE 2020-07-20; different issuers 0000858339 / 0001590895; Alpaca cash_merger 2020-07-20; Alpaca stock_merger 2020-07-20; later segment is inside another security's history
-ok   DD     2017-08-31 -> 2019-06-03 (ids [147] / [761]): gap 438 sessions; price ratio 0.43; issuer 0000030554 delisting notice 25-NSE 2017-09-01; different issuers 0000030554 / 0001666700
+ok   DD     2017-08-31 -> 2019-06-03 (ids [147] / [761]): gap 438 sessions; price ratio 0.43
 ok   DOC    2024-02-29 -> 2024-03-04 (ids [927] / [947]): issuer 0001574540 delisting notice 25-NSE 2024-03-01; different issuers 0001574540 / 0000765880; Alpaca stock_merger 2024-03-01; later segment is inside another security's history
 ok   DOW    2017-08-31 -> 2019-04-02 (ids [164] / [749]): gap 396 sessions; issuer 0000029915 delisting notice 25-NSE 2017-09-01; different issuers 0000029915 / 0001751788
 ok   DWAC   2018-04-04 -> 2021-09-30 (ids [641] / [863]): gap 879 sessions; price ratio 0.39
