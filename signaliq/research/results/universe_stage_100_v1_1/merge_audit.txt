@@ -1,4 +1,4 @@
-Merges to audit: 32
+Merges to audit: 33
 
 ok   ACSG   2019-05-08 -> 2019-06-17: 26 sessions, 26 filler bars inside, price ratio 0.994, one security: True; no SEC issuer known
 ok   ACSG   2019-07-31 -> 2019-08-19: 12 sessions, 12 filler bars inside, price ratio 0.964, one security: True; no SEC issuer known
@@ -13,7 +13,8 @@ ok   DWAC   2017-09-25 -> 2017-10-11: 11 sessions, 11 filler bars inside, price 
 ok   DWAC   2017-10-12 -> 2017-11-02: 14 sessions, 14 filler bars inside, price ratio 1.034, one security: True; no SEC issuer known
 ok   DWAC   2017-11-02 -> 2017-11-21: 12 sessions, 12 filler bars inside, price ratio 1.000, one security: True; no SEC issuer known
 ok   DWAC   2018-03-06 -> 2018-03-28: 15 sessions, 15 filler bars inside, price ratio 1.014, one security: True; no SEC issuer known
-ok   GMHI   2019-08-07 -> 2019-08-27: 13 sessions, 13 filler bars inside, price ratio 0.992, one security: True; issuer 0001783398: notice list read, 0 in gap
+ok   GMHI   2019-08-07 -> 2019-08-27: 13 sessions, 13 filler bars inside, price ratio 0.992, one security: True; issuer 0001758057: notice list read, 0 in gap
+ok   GMHI   2019-09-09 -> 2019-10-09: 21 sessions, 21 filler bars inside, price ratio 0.995, one security: True; issuer 0001758057: notice list read, 0 in gap
 ok   LK     2020-04-06 -> 2020-05-20: 30 sessions, 30 filler bars inside, price ratio 0.642, one security: True; issuer 0001767582: notice list read, 0 in gap
 ok   NUBI   2022-08-17 -> 2022-09-19: 21 sessions, 21 filler bars inside, price ratio 0.996, one security: True; issuer 0001881551: notice list read, 0 in gap
 ok   NUBI   2022-12-14 -> 2023-01-03: 11 sessions, 11 filler bars inside, price ratio 1.007, one security: True; issuer 0001881551: notice list read, 0 in gap
@@ -33,9 +34,9 @@ ok   USFR   2017-05-24 -> 2017-06-15: 14 sessions, 14 filler bars inside, price 
 ok   USFR   2017-08-10 -> 2017-08-31: 14 sessions, 14 filler bars inside, price ratio 1.000, one security: True; no SEC issuer known
 ok   VXX    2019-01-29 -> 2019-05-02: 64 sessions, 64 filler bars inside, price ratio 0.692, one security: True; no SEC issuer known
 
-32 of 32 merges pass every check
+33 of 33 merges pass every check
 
-Rejected merge candidates to audit: 33
+Rejected merge candidates to audit: 35
 
 ok   ALF    2022-10-24 -> 2024-08-01 (ids [853] / [893]): gap 443 sessions; price ratio 90.19; issuer 0001833908 delisting notice 25-NSE 2022-10-27; different issuers 0001833908 / 0002010930
 ok   AMR    2019-09-23 -> 2021-02-04 (ids [696] / [737]): gap 344 sessions; price ratio 157.88; issuer 0001690769 delisting notice 25-NSE 2019-10-11; different issuers 0001690769 / 0001704715; later segment is inside another security's history
@@ -43,16 +44,18 @@ ok   AMTD   2020-10-05 -> 2022-01-31 (ids [37] / [775]): gap 332 sessions; price
 ok   AXON   2019-02-13 -> 2021-01-26 (ids [55] / [661]): gap 490 sessions; price ratio 144.80; issuer 0001280784 delisting notice 25-NSE 2019-02-04; different issuers 0001280784 / 0001069183; later segment is inside another security's history
 ok   BTU    2016-04-12 -> 2017-04-04 (ids [913] / [1013]): price ratio 13.16; issuer 0001064728 delisting notice 25-NSE 2016-05-04
 ok   BTX    2019-08-09 -> 2021-03-26 (ids [82] / [389]): gap 409 sessions; price ratio 5.17; different issuers 0000876343 / 0000748592; later segment is inside another security's history
-ok   CCC    2018-03-08 -> 2018-10-29 (ids [1076] / [1085]): price ratio 0.45; issuer 0000812701 delisting notice 25-NSE 2018-03-09; different issuers 0000812701 / 0001764046
 ok   CHK    2020-06-26 -> 2021-02-10 (ids [101] / [840]): price ratio 3.80; issuer 0000895126 delisting notice 25-NSE 2020-07-20
 ok   COHR   2022-06-30 -> 2022-09-08 (ids [923] / [953]): price ratio 0.16; issuer 0000021510 delisting notice 25-NSE 2022-07-01; different issuers 0000021510 / 0000820318; Alpaca stock_and_cash_merger 2022-07-01; later segment is inside another security's history
 ok   COR    2021-12-27 -> 2023-08-30 (ids [122] / [7]): gap 420 sessions; issuer 0001490892 delisting notice 25-NSE 2021-12-28; different issuers 0001490892 / 0001140859; Alpaca cash_merger 2021-12-28; later segment is inside another security's history
+ok   CZR    2020-07-20 -> 2020-07-21 (ids [144] / [189]): price ratio 3.10; issuer 0000858339 delisting notice 25-NSE 2020-07-20; different issuers 0000858339 / 0001590895; Alpaca cash_merger 2020-07-20; Alpaca stock_merger 2020-07-20; later segment is inside another security's history
 ok   DD     2017-08-31 -> 2019-06-03 (ids [147] / [761]): gap 438 sessions; price ratio 0.43; issuer 0000030554 delisting notice 25-NSE 2017-09-01; different issuers 0000030554 / 0001666700
+ok   DOC    2024-02-29 -> 2024-03-04 (ids [927] / [947]): issuer 0001574540 delisting notice 25-NSE 2024-03-01; different issuers 0001574540 / 0000765880; Alpaca stock_merger 2024-03-01; later segment is inside another security's history
 ok   DOW    2017-08-31 -> 2019-04-02 (ids [164] / [749]): gap 396 sessions; issuer 0000029915 delisting notice 25-NSE 2017-09-01; different issuers 0000029915 / 0001751788
 ok   DWAC   2018-04-04 -> 2021-09-30 (ids [641] / [863]): gap 879 sessions; price ratio 0.39
 ok   EMCR   2017-07-21 -> 2021-08-18 (ids [181] / [738]): gap 1025 sessions; later segment is inside another security's history
 ok   GEN    2021-03-25 -> 2022-11-08 (ids [229] / [792]): gap 409 sessions; price ratio 51.43; issuer 0001351051 delisting notice 25 2021-03-15; different issuers 0001351051 / 0000849399; later segment is inside another security's history
-ok   GMHI   2019-09-09 -> 2019-10-09 (ids [746] / [785]): different issuers 0001783398 / 0001758057
+ok   GOLD   2018-12-28 -> 2019-01-02 (ids [238] / [1088]): price ratio 0.16; issuer 0001175580 delisting notice 25-NSE 2018-12-31; different issuers 0001175580 / 0000756894
+ok   HR     2022-07-20 -> 2022-07-21 (ids [258] / [261]): different issuers 0000899749 / 0001360604; Alpaca stock_merger 2022-07-20; later segment is inside another security's history
 ok   HTZ    2020-10-29 -> 2021-11-09 (ids [262] / [864]): gap 258 sessions; price ratio 14.70; issuer 0001657853 delisting notice 25-NSE 2020-10-30; different issuers 0001657853 / 0000047129
 ok   IBIT   2023-04-28 -> 2024-01-11 (ids [872] / [886]): Alpaca cash_merger 2023-05-01
 ok   INFO   2022-02-25 -> 2024-10-10 (ids [637] / [897]): gap 658 sessions; price ratio 0.19; issuer 0001598014 delisting notice 25-NSE 2022-02-28; Alpaca stock_merger 2022-02-28
@@ -71,7 +74,7 @@ ok   TLN    2016-12-05 -> 2024-07-10 (ids [994] / [1071]): gap 1908 sessions; pr
 ok   WTW    2019-04-18 -> 2022-01-10 (ids [606] / [626]): gap 687 sessions; price ratio 12.20; different issuers 0000105319 / 0001140536; later segment is inside another security's history
 ok   XL     2018-09-11 -> 2020-12-22 (ids [1005] / [1030]): gap 574 sessions; price ratio 0.30; issuer 0000875159 delisting notice 25 2018-09-24; different issuers 0000875159 / 0001772720; later segment is inside another security's history
 
-33 of 33 rejections independently supported
+35 of 35 rejections independently supported
 
 Documented identity exceptions to audit: 1
 
@@ -89,3 +92,13 @@ ok   rename_rejected PSAC 2021-07-21 -> FFIE 2021-07-22: 0 sessions apart, CIK 0
 ok   rename_rejected SGAM 2021-10-22 -> RDBX 2021-10-25: 0 sessions apart, CIK 0001820201, price ratio 1.237; delisting notice 25-NSE 2021-10-22
 
 6 of 6 rename decisions pass every check
+
+Ticker handovers to audit: 5
+
+ok   CZR   cut 2020-07-21 (rename ERI -> CZR): id 144 to 2020-07-20 (issuer ['0000858339']) | id 189 from 2020-07-21, earlier ticker ERI (issuer ['0001590895']; under ERI: ['0001590895'])
+ok   DOC   cut 2024-03-04 (rename PEAK -> DOC): id 927 to 2024-02-29 (issuer ['0001574540']) | id 947 from 2024-03-04, earlier ticker PEAK (issuer ['0000765880']; under PEAK: ['0000765880'])
+ok   GOLD  cut 2019-01-02 (documented exception): id 238 to 2018-12-28 (issuer ['0001175580']) | id 1088 from 2019-01-02, earlier ticker - (issuer ['0000756894']; under -: none)
+ok   HR    cut 2022-07-21 (rename HTA -> HR): id 258 to 2022-07-20 (issuer ['0000899749']) | id 261 from 2022-07-21, earlier ticker HTA (issuer ['0001360604']; under HTA: ['0001360604'])
+ok   IR    cut 2020-03-02 (rename GDI -> IR): id 285 to 2020-02-28 (issuer ['0001466258']) | id 668 from 2020-03-02, earlier ticker GDI (issuer ['0001699150']; under GDI: ['0001699150'])
+
+5 of 5 handovers pass every check

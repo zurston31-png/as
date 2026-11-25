@@ -8,5 +8,6 @@ ok   XLNX  effective 2022-02-14: 0 cash + 1.7234 AMD @ 114.27 (2022-02-14) = 196
 ok   AGN   effective 2020-05-08: 120.3 cash + 0.866 ABBV @ 83.96 (2020-05-08) = 193.0094; target last close 193.02 (-0.0%); quotes 2/2; stored verified, exit value 193.00936
 ok   WORK  effective 2021-07-21: 26.79 cash + 0.0776 CRM @ 242.11 (2021-07-21) = 45.5777; target last close 45.2 (+0.8%); quotes 2/2; stored verified, exit value 45.577736
 ok   RTN   effective 2020-04-03: 0 cash + 2.3348 RTX @ 49.93 (2020-04-03) = 116.5766; target last close 116.96 (-0.3%); quotes 3/3; stored verified, exit value 116.576564
+ok   GOLD  effective 2019-01-01: 0 cash + 6.128 GOLD @ 13.1 (2019-01-02) = 80.2768; target last close 82.89 (-3.2%); quotes 3/3; stored verified, exit value 80.2768
 
-10 of 10 deals pass every check
+11 of 11 deals pass every check

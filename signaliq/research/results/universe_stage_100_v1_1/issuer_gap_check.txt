@@ -1,106 +1,103 @@
 Common stocks without an issuer and without a documented reason: 0
 
-Members: 209; issuer behind each membership decision:
+Members: 208; issuer behind each membership decision:
   id 3 AAL: 21 decisions; CIK 0000006201; evidence cover_page
   id 5 AAPL: 59 decisions; CIK 0000320193; evidence cover_page
   id 6 ABBV: 59 decisions; CIK 0001551152; evidence cover_page
   id 9 ABT: 56 decisions; CIK 0000001800; evidence cover_page
-  id 12 ACN: 48 decisions; CIK 0001467373; evidence cover_page
+  id 12 ACN: 46 decisions; CIK 0001467373; evidence cover_page
   id 13 ADBE: 59 decisions; CIK 0000796343; evidence cover_page
   id 14 ADI: 34 decisions; CIK 0000006281; evidence cover_page
   id 16 ADP: 2 decisions; CIK 0000008670; evidence cover_page
   id 19 AGN: 4 decisions; CIK 0001578845; evidence cover_page
   id 30 AMAT: 55 decisions; CIK 0000006951; evidence cover_page
-  id 31 AMC: 13 decisions; CIK 0001411579; evidence cover_page
+  id 31 AMC: 12 decisions; CIK 0001411579; evidence cover_page
   id 32 AMD: 59 decisions; CIK 0000002488; evidence cover_page
-  id 33 AMGN: 59 decisions; CIK 0000318154; evidence cover_page
-  id 36 AMT: 10 decisions; CIK 0001053507; evidence cover_page
+  id 33 AMGN: 58 decisions; CIK 0000318154; evidence cover_page
+  id 36 AMT: 7 decisions; CIK 0001053507; evidence cover_page
   id 38 AMZN: 59 decisions; CIK 0001018724; evidence cover_page
   id 39 ANET: 8 decisions; CIK 0001596532; evidence cover_page
   id 42 ELV: 16 decisions; CIK 0001156039; evidence cover_page
-  id 52 ASML: 38 decisions; CIK 0000937966; evidence cover_page
-  id 53 ATVI: 25 decisions; CIK 0000718877; evidence cover_page
+  id 53 ATVI: 23 decisions; CIK 0000718877; evidence cover_page
   id 54 AVGO: 59 decisions; CIK 0001730168; evidence cover_page
-  id 56 AXP: 34 decisions; CIK 0000004962; evidence cover_page
+  id 56 AXP: 29 decisions; CIK 0000004962; evidence cover_page
   id 59 BA: 59 decisions; CIK 0000012927; evidence cover_page
   id 61 BAC: 59 decisions; CIK 0000070858; evidence cover_page
-  id 67 BDX: 5 decisions; CIK 0000010795; evidence cover_page
+  id 67 BDX: 4 decisions; CIK 0000010795; evidence cover_page
   id 71 BIIB: 6 decisions; CIK 0000875045; evidence cover_page
-  id 75 BLK: 7 decisions; CIK 0001364742; evidence cover_page
+  id 75 BLK: 6 decisions; CIK 0001364742; evidence cover_page
   id 78 BMY: 57 decisions; CIK 0000014272; evidence cover_page
   id 81 BSX: 1 decisions; CIK 0000885725; evidence cover_page
   id 85 C: 59 decisions; CIK 0000831001; evidence full_text
-  id 88 CAT: 54 decisions; CIK 0000018230; evidence cover_page
+  id 88 CAT: 53 decisions; CIK 0000018230; evidence cover_page
   id 92 CCL: 28 decisions; CIK 0000815097; evidence cover_page
-  id 102 CHTR: 35 decisions; CIK 0001091667; evidence cover_page
-  id 103 CI: 10 decisions; CIK 0001739940; evidence cover_page
+  id 102 CHTR: 34 decisions; CIK 0001091667, 0001271834; evidence cover_page
+  id 103 CI: 8 decisions; CIK 0001739940; evidence cover_page
   id 111 CMCSA: 59 decisions; CIK 0001166691; evidence cover_page
   id 113 CMG: 13 decisions; CIK 0001058090; evidence cover_page
   id 121 COP: 37 decisions; CIK 0001163165; evidence cover_page
+  id 123 COST: 59 decisions; CIK 0000909832; evidence cover_page
   id 130 CRM: 59 decisions; CIK 0001108524; evidence cover_page
   id 132 CSCO: 59 decisions; CIK 0000858877; evidence cover_page
   id 134 CSX: 1 decisions; CIK 0000277948; evidence cover_page
-  id 140 CVS: 34 decisions; CIK 0000064803; evidence cover_page
+  id 140 CVS: 32 decisions; CIK 0000064803; evidence cover_page
   id 141 CVX: 59 decisions; CIK 0000093410; evidence cover_page
-  id 146 DAL: 13 decisions; CIK 0000027904; evidence cover_page
-  id 149 DE: 32 decisions; CIK 0000315189; evidence cover_page
-  id 155 DHR: 52 decisions; CIK 0000313616; evidence cover_page
+  id 146 DAL: 12 decisions; CIK 0000027904; evidence cover_page
+  id 149 DE: 30 decisions; CIK 0000315189; evidence cover_page
+  id 155 DHR: 51 decisions; CIK 0000313616; evidence cover_page
   id 157 DIS: 59 decisions; CIK 0001744489; evidence cover_page
   id 158 DISCA: 2 decisions; CIK 0001437107; evidence cover_page
   id 169 DUK: 1 decisions; CIK 0001326160; evidence cover_page
   id 170 DVN: 10 decisions; CIK 0001090012; evidence cover_page
   id 173 EBAY: 6 decisions; CIK 0001065088; evidence cover_page
-  id 180 EL: 1 decisions; CIK 0001001250; evidence cover_page
   id 184 ENPH: 14 decisions; CIK 0001463101; evidence cover_page
   id 193 ETN: 8 decisions; CIK 0001551182; evidence cover_page
-  id 195 ETSY: 4 decisions; CIK 0001370637; evidence cover_page
-  id 204 F: 50 decisions; CIK 0000037996; evidence cover_page
+  id 195 ETSY: 1 decisions; CIK 0001370637; evidence cover_page
+  id 204 F: 48 decisions; CIK 0000037996; evidence cover_page
   id 207 META: 59 decisions; CIK 0001326801; evidence cover_page
   id 208 FCEL: 3 decisions; CIK 0000886128; evidence cover_page
-  id 209 FCX: 27 decisions; CIK 0000831259; evidence cover_page
+  id 209 FCX: 25 decisions; CIK 0000831259; evidence cover_page
   id 211 FDX: 14 decisions; CIK 0001048911; evidence cover_page
-  id 216 FIS: 11 decisions; CIK 0001136893; evidence cover_page
+  id 216 FIS: 9 decisions; CIK 0001136893; evidence cover_page
   id 217 FI: 4 decisions; CIK 0000798354; evidence cover_page
   id 223 FSLR: 2 decisions; CIK 0001274494; evidence cover_page
   id 228 GE: 45 decisions; CIK 0000040545; evidence cover_page
   id 231 GILD: 25 decisions; CIK 0000882095; evidence cover_page
   id 235 GM: 42 decisions; CIK 0001467858; evidence cover_page
   id 236 GME: 7 decisions; CIK 0001326380; evidence cover_page
-  id 238 GOLD: 1 decisions; CIK 0000027093; evidence full_text
   id 239 GOOG: 59 decisions; CIK 0001652044; evidence cover_page
   id 240 GOOGL: 59 decisions; CIK 0001652044; evidence cover_page
   id 244 GS: 59 decisions; CIK 0000886982; evidence cover_page
   id 250 HD: 59 decisions; CIK 0000354950; evidence cover_page
-  id 255 HON: 48 decisions; CIK 0000773840; evidence cover_page
-  id 265 HUM: 9 decisions; CIK 0000049071; evidence cover_page
+  id 255 HON: 46 decisions; CIK 0000773840; evidence cover_page
+  id 265 HUM: 8 decisions; CIK 0000049071; evidence cover_page
   id 269 IBM: 57 decisions; CIK 0000051143; evidence cover_page
   id 282 INTC: 59 decisions; CIK 0000050863; evidence cover_page
   id 283 INTU: 41 decisions; CIK 0000896878; evidence cover_page
-  id 286 ISRG: 18 decisions; CIK 0001035267; evidence cover_page
+  id 286 ISRG: 17 decisions; CIK 0001035267; evidence cover_page
   id 295 JNJ: 59 decisions; CIK 0000200406; evidence cover_page
   id 299 JPM: 59 decisions; CIK 0000019617; evidence cover_page
   id 306 KLAC: 18 decisions; CIK 0000319201; evidence cover_page
   id 309 KO: 59 decisions; CIK 0000021344; evidence cover_page
   id 319 LLY: 59 decisions; CIK 0000059478; evidence cover_page
-  id 320 LMT: 28 decisions; CIK 0000936468; evidence cover_page
+  id 320 LMT: 26 decisions; CIK 0000936468; evidence cover_page
   id 322 LOW: 55 decisions; CIK 0000060667; evidence cover_page
   id 324 LRCX: 59 decisions; CIK 0000707549; evidence cover_page
-  id 326 LULU: 23 decisions; CIK 0001397187; evidence cover_page
+  id 326 LULU: 22 decisions; CIK 0001397187; evidence cover_page
   id 327 LUV: 3 decisions; CIK 0000092380; evidence cover_page
   id 332 MA: 59 decisions; CIK 0001141391; evidence cover_page
-  id 333 MAR: 1 decisions; CIK 0001048286; evidence cover_page
   id 334 MARA: 15 decisions; CIK 0001507605; evidence cover_page
   id 335 MCD: 59 decisions; CIK 0000063908; evidence cover_page
-  id 339 MDLZ: 3 decisions; CIK 0001103982; evidence cover_page
-  id 340 MDT: 32 decisions; CIK 0001613103; evidence cover_page
-  id 342 MELI: 37 decisions; CIK 0001099590; evidence cover_page
-  id 347 MMM: 9 decisions; CIK 0000066740; evidence cover_page
-  id 350 MO: 5 decisions; CIK 0000764180; evidence full_text
+  id 339 MDLZ: 2 decisions; CIK 0001103982; evidence cover_page
+  id 340 MDT: 29 decisions; CIK 0001613103; evidence cover_page
+  id 342 MELI: 35 decisions; CIK 0001099590; evidence cover_page
+  id 347 MMM: 8 decisions; CIK 0000066740; evidence cover_page
+  id 350 MO: 4 decisions; CIK 0000764180; evidence full_text
   id 352 MOS: 1 decisions; CIK 0001285785; evidence cover_page
-  id 353 MPC: 3 decisions; CIK 0001510295; evidence cover_page
+  id 353 MPC: 2 decisions; CIK 0001510295; evidence cover_page
   id 357 MRK: 59 decisions; CIK 0000310158; evidence cover_page
-  id 359 MRVL: 28 decisions; CIK 0001835632; evidence cover_page
-  id 360 MS: 59 decisions; CIK 0000895421; evidence cover_page
+  id 359 MRVL: 27 decisions; CIK 0001835632; evidence cover_page
+  id 360 MS: 58 decisions; CIK 0000895421; evidence cover_page
   id 362 MSFT: 59 decisions; CIK 0000789019; evidence cover_page
   id 364 MSTR: 11 decisions; CIK 0001050446; evidence cover_page
   id 368 MU: 59 decisions; CIK 0000723125; evidence cover_page
@@ -110,25 +107,26 @@ Members: 209; issuer behind each membership decision:
   id 377 NFLX: 59 decisions; CIK 0001065280; evidence cover_page
   id 379 NKE: 59 decisions; CIK 0000320187; evidence full_text
   id 384 NOW: 59 decisions; CIK 0001373715; evidence cover_page
-  id 394 NVAX: 13 decisions; CIK 0001000694; evidence cover_page
+  id 394 NVAX: 12 decisions; CIK 0001000694; evidence cover_page
   id 396 NVDA: 59 decisions; CIK 0001045810; evidence cover_page
-  id 400 NXPI: 2 decisions; CIK 0001413447; evidence cover_page
+  id 400 NXPI: 1 decisions; CIK 0001413447; evidence cover_page
   id 407 ON: 10 decisions; CIK 0001097864; evidence cover_page
+  id 408 ORCL: 55 decisions; CIK 0001341439; evidence cover_page
   id 410 BYON: 1 decisions; CIK 0001130713; evidence cover_page
-  id 411 OXY: 33 decisions; CIK 0000797468; evidence cover_page
+  id 411 OXY: 32 decisions; CIK 0000797468; evidence cover_page
   id 413 PANW: 35 decisions; CIK 0001327567; evidence cover_page
   id 421 PEP: 59 decisions; CIK 0000077476; evidence cover_page
   id 422 PFE: 59 decisions; CIK 0000078003; evidence cover_page
   id 424 PG: 59 decisions; CIK 0000080424; evidence cover_page
   id 425 PGR: 3 decisions; CIK 0000080661; evidence cover_page
-  id 428 PLD: 4 decisions; CIK 0001045609; evidence cover_page
-  id 429 PLUG: 11 decisions; CIK 0001093691; evidence cover_page
+  id 428 PLD: 3 decisions; CIK 0001045609; evidence cover_page
+  id 429 PLUG: 10 decisions; CIK 0001093691; evidence cover_page
   id 430 PM: 14 decisions; CIK 0001413329; evidence cover_page
   id 441 PXD: 10 decisions; CIK 0001038357; evidence cover_page
   id 442 PYPL: 59 decisions; CIK 0001633917; evidence cover_page
   id 443 QCOM: 59 decisions; CIK 0000804328; evidence cover_page
-  id 452 RCL: 7 decisions; CIK 0000884887; evidence cover_page
-  id 453 REGN: 9 decisions; CIK 0000872589; evidence cover_page
+  id 452 RCL: 6 decisions; CIK 0000884887; evidence cover_page
+  id 453 REGN: 8 decisions; CIK 0000872589; evidence cover_page
   id 462 RTN: 2 decisions; CIK 0001047122; evidence cover_page
   id 471 SBUX: 59 decisions; CIK 0000829224; evidence cover_page
   id 475 SCHW: 23 decisions; CIK 0000316709; evidence cover_page
@@ -139,45 +137,46 @@ Members: 209; issuer behind each membership decision:
   id 498 SPG: 1 decisions; CIK 0001063761; evidence cover_page
   id 506 SQ: 52 decisions; CIK 0001512673; evidence cover_page
   id 527 T: 59 decisions; CIK 0000732717; evidence cover_page
-  id 531 TDOC: 10 decisions; CIK 0001477449; evidence cover_page
-  id 537 TGT: 50 decisions; CIK 0000027419; evidence cover_page
-  id 539 TJX: 7 decisions; CIK 0000109198; evidence cover_page
+  id 531 TDOC: 9 decisions; CIK 0001477449; evidence cover_page
+  id 537 TGT: 47 decisions; CIK 0000027419; evidence cover_page
+  id 539 TJX: 5 decisions; CIK 0000109198; evidence cover_page
   id 541 TMO: 59 decisions; CIK 0000097745; evidence cover_page
-  id 542 TMUS: 45 decisions; CIK 0001283699; evidence cover_page
+  id 542 TMUS: 41 decisions; CIK 0001283699; evidence cover_page
   id 552 TSLA: 59 decisions; CIK 0001318605; evidence cover_page
-  id 553 TSM: 55 decisions; CIK 0001046179; evidence cover_page
   id 557 TWTR: 28 decisions; CIK 0001418091; evidence cover_page
   id 558 TXN: 59 decisions; CIK 0000097476; evidence cover_page
+  id 561 UAL: 19 decisions; CIK 0000100517; evidence cover_page
   id 567 UNH: 59 decisions; CIK 0000731766; evidence cover_page
-  id 568 UNP: 53 decisions; CIK 0000100885; evidence cover_page
-  id 570 UPS: 36 decisions; CIK 0001090727; evidence cover_page
-  id 572 USB: 3 decisions; CIK 0000036104; evidence cover_page
-  id 574 RTX: 28 decisions; CIK 0000101829; evidence cover_page
+  id 568 UNP: 51 decisions; CIK 0000100885; evidence cover_page
+  id 570 UPS: 35 decisions; CIK 0001090727; evidence cover_page
+  id 572 USB: 2 decisions; CIK 0000036104; evidence cover_page
+  id 574 RTX: 26 decisions; CIK 0000101829; evidence cover_page
   id 576 V: 59 decisions; CIK 0001403161; evidence cover_page
   id 583 VLO: 9 decisions; CIK 0001035002; evidence cover_page
   id 586 VRTX: 3 decisions; CIK 0000875320; evidence cover_page
   id 589 VZ: 59 decisions; CIK 0000732712; evidence cover_page
   id 590 W: 4 decisions; CIK 0001616707; evidence cover_page
   id 596 WFC: 59 decisions; CIK 0000072971; evidence cover_page
+  id 601 WMT: 59 decisions; CIK 0000104169; evidence cover_page
   id 609 X: 2 decisions; CIK 0001163302; evidence cover_page
   id 612 XOM: 59 decisions; CIK 0000034088; evidence cover_page
   id 624 ZTS: 2 decisions; CIK 0001555280; evidence cover_page
-  id 631 SPGI: 24 decisions; CIK 0000064040; evidence cover_page
-  id 634 TWLO: 16 decisions; CIK 0001447669; evidence cover_page
-  id 642 TTD: 11 decisions; CIK 0001671933; evidence cover_page
+  id 631 SPGI: 17 decisions; CIK 0000064040; evidence cover_page
+  id 634 TWLO: 15 decisions; CIK 0001447669; evidence cover_page
+  id 642 TTD: 9 decisions; CIK 0001671933; evidence cover_page
   id 657 SNAP: 26 decisions; CIK 0001564408; evidence cover_page
   id 663 CVNA: 3 decisions; CIK 0001690820; evidence cover_page
   id 667 VST: 4 decisions; CIK 0001692819; evidence cover_page
-  id 679 ROKU: 35 decisions; CIK 0001428439; evidence cover_page
+  id 679 ROKU: 34 decisions; CIK 0001428439; evidence cover_page
   id 683 MDB: 4 decisions; CIK 0001441816; evidence cover_page
   id 684 RIOT: 3 decisions; CIK 0001167419; evidence cover_page
   id 699 BKNG: 59 decisions; CIK 0001075531; evidence cover_page
   id 701 ZS: 1 decisions; CIK 0001713683; evidence cover_page
-  id 707 SPOT: 4 decisions; CIK 0001639920; evidence cover_page
-  id 709 DOCU: 13 decisions; CIK 0001261333; evidence cover_page
+  id 707 SPOT: 2 decisions; CIK 0001639920; evidence cover_page
+  id 709 DOCU: 12 decisions; CIK 0001261333; evidence cover_page
   id 714 NKLA: 4 decisions; CIK 0001731289; evidence cover_page
   id 721 VRT: 8 decisions; CIK 0001674101; evidence cover_page
-  id 735 LIN: 33 decisions; CIK 0001707925; evidence cover_page
+  id 735 LIN: 32 decisions; CIK 0001707925; evidence cover_page
   id 739 MRNA: 37 decisions; CIK 0001682852; evidence cover_page
   id 741 DELL: 8 decisions; CIK 0001571996; evidence cover_page
   id 751 PINS: 12 decisions; CIK 0001506293; evidence cover_page
@@ -185,22 +184,21 @@ Members: 209; issuer behind each membership decision:
   id 754 BYND: 6 decisions; CIK 0001655210; evidence cover_page
   id 756 UBER: 59 decisions; CIK 0001543151; evidence cover_page
   id 758 FSLY: 5 decisions; CIK 0001517413; evidence cover_page
-  id 761 DD: 3 decisions; CIK 0001666700; evidence cover_page
-  id 763 CRWD: 50 decisions; CIK 0001535527; evidence cover_page
-  id 768 WORK: 2 decisions; CIK 0001764925; evidence cover_page
+  id 761 DD: 2 decisions; CIK 0001666700; evidence cover_page
+  id 763 CRWD: 49 decisions; CIK 0001535527; evidence cover_page
+  id 768 WORK: 1 decisions; CIK 0001764925; evidence cover_page
   id 779 NET: 1 decisions; CIK 0001477333; evidence cover_page
   id 783 PTON: 17 decisions; CIK 0001639825; evidence cover_page
   id 790 SPCE: 2 decisions; CIK 0001706946; evidence cover_page
   id 795 PARA: 6 decisions; CIK 0000813828; evidence cover_page
   id 798 SMCI: 17 decisions; CIK 0001375365; evidence cover_page
   id 799 CLSK: 3 decisions; CIK 0000827876; evidence cover_page
-  id 806 DKNG: 11 decisions; CIK 0001772757; evidence cover_page
+  id 806 DKNG: 10 decisions; CIK 0001772757; evidence cover_page
   id 817 QS: 2 decisions; CIK 0001811414; evidence cover_page
   id 821 SNOW: 45 decisions; CIK 0001640147; evidence cover_page
   id 822 LCID: 7 decisions; CIK 0001811210; evidence cover_page
-  id 825 PLTR: 30 decisions; CIK 0001321655; evidence cover_page
+  id 825 PLTR: 29 decisions; CIK 0001321655; evidence cover_page
   id 832 AI: 3 decisions; CIK 0001577526; evidence cover_page
-  id 833 DASH: 1 decisions; CIK 0001792789; evidence cover_page
   id 834 ABNB: 39 decisions; CIK 0001559720; evidence cover_page
   id 835 UPST: 11 decisions; CIK 0001647639; evidence cover_page
   id 838 AFRM: 7 decisions; CIK 0001820953; evidence cover_page
@@ -210,4 +208,5 @@ Members: 209; issuer behind each membership decision:
   id 865 RIVN: 8 decisions; CIK 0001874178; evidence cover_page
   id 867 CEG: 6 decisions; CIK 0001868275; evidence cover_page
   id 890 GEV: 3 decisions; CIK 0001996810; evidence cover_page
-Member decisions without an issuer: 0; resting on a later document: 17
+  id 1088 GOLD: 1 decisions; CIK 0000756894; evidence full_text
+Member decisions without an issuer: 0; resting on a later document: 8
