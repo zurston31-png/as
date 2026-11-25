@@ -551,7 +551,22 @@ def report(facts: dict) -> str:
         )
         sec_found = evidence.cached_sec_findings(s)
         matched = {sid: f for sid, f in sec_found.items() if f.cik}
-        print(f"  Matched: {len(matched)} of {len(sec_found)}")
+        known_issuer = {i.security_id: i for i in s.execute(select(SecurityIssuer)).scalars()}
+
+        def notice_read(f) -> bool:
+            cik = str(int(f.cik)).zfill(10)
+            return any(str(int(n.issuer_cik or 0)).zfill(10) == cik for _, n in f.notices)
+
+        print(
+            f"  Matched: {len(matched)} of {len(sec_found)}; the matched company's Form 25 notice read "
+            f"and naming it as the issuer: {sum(map(notice_read, matched.values()))}"
+        )
+        print(
+            "  A match whose notice was not read is a candidate only: it is not taken as the issuer"
+        )
+        print(
+            "  (section 4e has the issuer from dated evidence), but its 8-Ks are still read below."
+        )
         for sid, f in sorted(sec_found.items()):
             x = securities[sid]
             head = f"    id {sid} {path(sid)} (last trade {x.last_trade_session}): "
@@ -562,6 +577,21 @@ def report(facts: dict) -> str:
                 head
                 + f"{f.company} (CIK {f.cik}, SIC {f.sic or 'none'}{', blank check' if f.sic == '6770' else ''})"
             )
+            if not notice_read(f):
+                known = known_issuer.get(sid)
+                print(
+                    "        candidate only: Form 25 notice not read; issuer from dated evidence: "
+                    + (
+                        f"{known.name} (CIK {known.cik}, {known.how})"
+                        + (
+                            ", the same company"
+                            if known.cik == str(int(f.cik)).zfill(10)
+                            else ", a DIFFERENT company"
+                        )
+                        if known
+                        else "none"
+                    )
+                )
             for filing, n in f.notices:
                 print(
                     f"        {filing.form} {filing.filed} {n.exchange}: '{n.class_description}', {n.rule.replace('17 CFR 240.', '')}"
