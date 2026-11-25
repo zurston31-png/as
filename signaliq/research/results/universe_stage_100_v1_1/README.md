@@ -76,7 +76,8 @@ Now an issuer is dated evidence (`issuer_evidence` table, `evidence.issuer_point
   "Trading Symbol(s)", followed by its exchange. SEC has required that cover table since
   2019. The document is read to confirm each company's first and last filing with the
   ticker. A company holds a ticker for one stretch of time, so the end is found by halving.
-- **form25**: the delisting notice at the last trade.
+- **form25**: the delisting notice at the last trade. It counts only when the notice itself
+  was read and names the company as the issuer (see section 7).
 - **full_text**: before 2019, or for a filer without the table, a filing in which the
   company names the ticker as its own ("(NYSE: XOM)" right after its name). Every
   significant word of the company's name must stand right before the ticker. U.S. Gold
@@ -257,7 +258,13 @@ handovers.
 - **Prefetch:** `scripts/prefetch_issuer_evidence.py` runs the pipeline's issuer step with six
   securities in flight. It stays under SEC's limit with one request every 0.15 s across all
   workers, and retries as the pipeline does. It stores every answer in the same cache. The
-  stage run then reads them from the cache: the report shows 0 SEC requests.
+  stage run then reads them from the cache.
+- **Every request is accounted for:** the report lists, for each SEC step (curated
+  documents, evidence, issuers) and added up over every pass, the HTTP responses (retries
+  included), the answers stored and the failures. It then checks that the cache grew by
+  exactly the answers stored. Before this, only the evidence step was shown, and only its
+  last pass: run A5 reported 0 requests while the issuer step had fetched 6 cover pages
+  (the CCO Holdings and Biohaven Ltd documents the end-trim below needed).
 - **Cover pages are cached as snippets:** only the plain text up to just past the "Trading
   Symbol" table is stored (a few KB, `CachedSec.cover_text`), never the whole 10-K. A
   filing already cached whole gives its snippet without a request.
@@ -273,6 +280,8 @@ handovers.
   - the first and last cover page of each run, re-read, list the ticker;
   - every own-filing (full_text) document, re-read, shows the company naming the ticker
     as its own;
+  - every delisting notice (form25), re-read, is a Form 25 in the company's own filing
+    list, filed near the last trade, and names that company as the issuer;
   - every member decision has an issuer;
   - every blank-check exclusion, and every member, re-derives from SIC filed by the
     decision date.
@@ -293,3 +302,12 @@ handovers.
     in May–June 2020, and moved 102 other stretches one filing early. The same holds for a
     new holder's stretch cut out of its run by the overlap rule (CCO Holdings for CHTR,
     Biohaven Ltd for BHVN). `audit_issuers.py` found both, and tests reproduce both.
+  - a Form 25 is evidence only when its notice was read. SEC's match accepts a company
+    that filed any Form 25 around the last trade. For 35 securities the notice could not
+    be read (no machine-readable primary document), yet the match had been turned into
+    evidence. 31 of them agree with the security's own cover pages or filings. AXON did
+    not: Hercules Capital, a lender whose filings mention Axovant's ticker, filed a Form 25
+    for its own notes the day AXON last traded, and became AXON's issuer. Such a company
+    is now only a candidate, accepted on its own filings like any other. The audit had
+    skipped Form 25 rows; it now re-reads every notice: in the company's own folder and
+    filing list as a Form 25, filed near the last trade, naming the company as issuer.
