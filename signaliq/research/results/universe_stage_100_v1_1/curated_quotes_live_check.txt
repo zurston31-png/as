@@ -2,6 +2,7 @@ rename ENRJ -> UAVS               2/2 quotes found
 rename HSACW -> IMVTW             2/2 quotes found
 rename ITHXW -> MONDW             1/1 quotes found
 same   YNDX -> NBIS               5/5 quotes found
+handover GOLD 2018-12-28 | 2019-01-02 4/4 quotes found
 fact   OILD 2016-09-07            2/2 quotes found
 fact   OILD 2020-03-27            2/2 quotes found
 fact   SHLD 2021-08-17            1/1 quotes found
@@ -29,4 +30,5 @@ deal   FLAC 2022-11-22            1/1 quotes found
 deal   AGN 2020-05-08             2/2 quotes found
 deal   WORK 2021-07-20            2/2 quotes found
 deal   RTN 2020-04-02             3/3 quotes found
-TOTAL: 55 of 55 quotes found in 36 live SEC documents
+deal   GOLD 2018-12-28            3/3 quotes found
+TOTAL: 62 of 62 quotes found in 41 live SEC documents

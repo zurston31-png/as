@@ -78,7 +78,10 @@ Now an issuer is dated evidence (`issuer_evidence` table, `evidence.issuer_point
   ticker. A company holds a ticker for one stretch of time, so the end is found by halving.
 - **form25**: the delisting notice at the last trade.
 - **full_text**: before 2019, or for a filer without the table, a filing in which the
-  company names the ticker as its own ("(NYSE: XOM)" right after its name).
+  company names the ticker as its own ("(NYSE: XOM)" right after its name). Every
+  significant word of the company's name must stand right before the ticker. U.S. Gold
+  Corp's proxy statement names a director's former employer, "Barrick Gold Corporation
+  (NYSE: GOLD)", and that does not make U.S. Gold the holder of GOLD.
 
 Candidate companies come from:
 
@@ -92,7 +95,15 @@ Candidate companies come from:
 **A candidate is accepted only on its own cover pages. Today's ticker list proposes
 companies but never decides.** When two companies' cover pages overlap in time (a REIT and
 its operating partnership filing together), the one with more filings is kept, and the
-overlap is reported.
+overlap is reported. The exception is a company whose own cover pages go on for more than
+120 days beyond the other's. That is a new holder whose filings only touch the old one's
+around the closing (HTA taking HR in July 2022), and its own stretch is kept.
+
+Known limitation: for co-registrants that file the same documents, "more filings" can pick
+the subsidiary over the parent. PG&E's utility over PG&E Corp, United Rentals North
+America, Restaurant Brands' partnership and Hertz Corp are examples. Both are in the same
+filings and the same industry, so no blank-check or membership decision changes. All 78
+overlaps are listed in section 4e.
 
 **The issuer on a day** is the company of the latest evidence on or before that day
 (`evidence.issuer_on`). The blank-check test uses that company's SIC as of that day. The SIC
@@ -197,7 +208,51 @@ The rule is conservative: a Form 25 at the switch keeps two securities apart eve
 marks only an exchange transfer (CBS left the NYSE as ViacomCBS listed on Nasdaq) or a SPAC's
 units (PSAC, SGAM). Those three are listed as open items below.
 
-## 6. How the issuer evidence is fetched, cached and checked
+## 6. Tickers that passed to another company without a pause
+
+The comparison against Stage 1.0 found five securities that were really two companies.
+In each case a ticker passed to a new holder from one session to the next. SIP keeps
+returning one uninterrupted series for the ticker, so Stage 1.0 joined the two companies:
+
+| Ticker | Earlier holder, until | New holder, from | How the earlier holder left |
+| --- | --- | --- | --- |
+| CZR | Caesars Entertainment Corp, 2020-07-20 | Eldorado Resorts (ERI), 2020-07-21 | acquired by Eldorado |
+| IR | Ingersoll-Rand plc, 2020-02-28 | Gardner Denver (GDI), 2020-03-02 | renamed itself Trane (TT) |
+| HR | Healthcare Realty Trust, 2022-07-20 | Healthcare Trust of America (HTA), 2022-07-21 | acquired by HTA |
+| DOC | Physicians Realty Trust, 2024-02-29 | Healthpeak (PEAK), 2024-03-04 | acquired by Healthpeak |
+| GOLD | Randgold Resources ADSs, 2018-12-28 | Barrick Gold (NYSE, formerly ABX), 2019-01-02 | acquired by Barrick |
+
+The joined series were wrong in three ways:
+
+- the acquirer looked as if it had ended ("ERI acquired", "HTA acquired");
+- the target's real exit was missing;
+- GOLD showed a false crash from 82.89 to 13.10, which was in fact the 6.1280 exchange
+  ratio.
+
+**The rule** (`segments.handover_cuts`) needs two Alpaca records at the same time:
+
+- a rename X → T onto a ticker T that is still trading;
+- T's earlier holder's own exit: a merger naming T as the acquired company, or a rename
+  away from T.
+
+The run of T is then cut at the new holder's first trade, and the rename links that part
+to the new holder's own history. A late rename date alone never cuts. GOLD has no Alpaca
+rename, so it is a documented exception (`CURATED_HANDOVERS`). It is applied only while its
+four passages from Randgold's own 6-Ks are found, including "Randgold's NASDAQ trading
+ticker "GOLD" will be transferred to Barrick on the NYSE". Randgold's exit value comes from
+quoted terms: 6.1280 Barrick shares per share, and one ADS per share.
+
+`scripts/audit_merges.py` re-derives every handover from the raw bars and raw events with
+separate code. For each one it checks that:
+
+- the stored securities split the run exactly at the cut;
+- the new holder's security came from the renamed ticker;
+- the issuer evidence differs across the cut and continues the new holder's own company.
+
+Every place where the securities split one uninterrupted run must be one of these
+handovers.
+
+## 7. How the issuer evidence is fetched, cached and checked
 
 - **Prefetch:** `scripts/prefetch_issuer_evidence.py` runs the pipeline's issuer step with six
   securities in flight. It stays under SEC's limit with one request every 0.15 s across all
@@ -216,6 +271,8 @@ units (PSAC, SGAM). Those three are listed as open items below.
   - every evidence row is in the company's own EDGAR folder and filing list, and inside the
     ticker's period;
   - the first and last cover page of each run, re-read, list the ticker;
+  - every own-filing (full_text) document, re-read, shows the company naming the ticker
+    as its own;
   - every member decision has an issuer;
   - every blank-check exclusion, and every member, re-derives from SIC filed by the
     decision date.
