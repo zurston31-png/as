@@ -1,0 +1,20 @@
+Protected data check, after the final Stage 1.1 runs (A8 and B) and audits
+
+IEX database data/signaliq.db (opened read-only):
+  bars: 15861 (expected 15861)
+  fingerprint: e66890e79788fc78 (expected e66890e79788fc78)
+  method: sha256 over repr(row) of
+    select symbol,timeframe,timestamp,open,high,low,close,volume,vwap,trade_count,source,feed,adjustment
+    from bars order by 1,2,3; first 16 hex characters
+  -> OK, unchanged
+
+Strategy A archive research/results/strategy_a/:
+  sha256sum -c SHA256SUMS: 13 of 13 files OK
+  git status of the folder: no changes
+  -> OK, unchanged
+
+Stage 1.0 archive research/results/universe_stage_100/: last changed in commit 564378f, before Stage 1.1
+  began; no commit since touches it, and git status shows no changes
+
+No strategy backtest, no Strategy A run, no optimization, no parameter freezing, no trading or
+paper-API access, and no market data dated 2025 or later.
