@@ -292,7 +292,13 @@ def cover_page_class(text: str, ticker: str, window: int = COVER_WINDOW) -> str 
 
 
 def cover_page_hits(
-    sec: CachedSec, ticker: str, first: date, last: date, cik: str | None = None
+    sec: CachedSec,
+    ticker: str,
+    first: date,
+    last: date,
+    cik: str | None = None,
+    *,
+    phrase: bool = True,
 ) -> list[TextHit]:
     """Filings (cover-page forms) dated ``first``..``last`` holding the ticker and the
     "Trading Symbol" heading, optionally only those of company ``cik``. From 2019 on.
@@ -304,7 +310,9 @@ def cover_page_hits(
     if first > last:
         return []
     params = {
-        "q": f'"{ticker}" "Trading Symbol"',
+        # Without ``phrase``, the ticker alone: SEC's index misses the heading in some
+        # filers' cover pages (ViacomCBS), whose documents still show the table.
+        "q": f'"{ticker}" "Trading Symbol"' if phrase else f'"{ticker}"',
         "dateRange": "custom",
         "startdt": first.isoformat(),
         "enddt": last.isoformat(),
@@ -317,8 +325,8 @@ def cover_page_hits(
         # One company with more filings than a page of results: split the period, so none
         # is missed. (Without a company the answer only proposes candidates; one page will do.)
         middle = first + (last - first) / 2
-        return cover_page_hits(sec, ticker, first, middle, cik) + cover_page_hits(
-            sec, ticker, middle + timedelta(days=1), last, cik
+        return cover_page_hits(sec, ticker, first, middle, cik, phrase=phrase) + cover_page_hits(
+            sec, ticker, middle + timedelta(days=1), last, cik, phrase=phrase
         )
     hits = parse_full_text(text) if text else []
     return [h for h in hits if cik is None or h.cik == str(int(cik)).zfill(10)]

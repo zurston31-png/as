@@ -97,6 +97,7 @@ class FakeSec:
         self.filings = filings  # cik -> [(filed, accession, filename, ticker listed)]
         self.documents = documents  # url -> text
         self.asked = []
+        self.unindexed = set()  # companies whose heading SEC's index misses (ViacomCBS)
 
     def get(self, url, params=None):
         self.asked.append((url, params))
@@ -109,7 +110,9 @@ class FakeSec:
             )
         if url == sh.FTS_URL:
             ticker = params["q"].split('"')[1]
-            if "Trading Symbol" not in params["q"]:
+            if "Trading Symbol" not in params["q"] and not params.get("ciks"):
+                return json.dumps({"hits": {"total": {"value": 0}, "hits": []}})
+            if "Trading Symbol" in params["q"] and params.get("ciks") in self.unindexed:
                 return json.dumps({"hits": {"total": {"value": 0}, "hits": []}})
             first = date.fromisoformat(params["startdt"])
             last = date.fromisoformat(params["enddt"])
@@ -439,3 +442,17 @@ def test_the_ticker_holder_before_todays_company_is_found_in_the_uncovered_stret
         points, _ = evidence.issuer_points(session, client, {})
     assert issuer_on(points[1], date(2020, 1, 31))[0].cik == "0000000111"
     assert issuer_on(points[1], date(2022, 1, 31))[0].cik == "0000000222"
+
+
+def test_a_company_whose_cover_heading_is_not_indexed_is_still_found(research):
+    # SEC's index finds no ViacomCBS filing with "VIAC" and "Trading Symbol", though its
+    # cover pages show the table: its filings naming the ticker are read instead.
+    filings, documents = build(
+        [("0000000111", date(2020 + i, 3, 1), "TSTX", 1 + i, True) for i in range(3)]
+    )
+    client = FakeSec({"TSTX": ("0000000111", "Co")}, filings, documents)
+    client.unindexed = {"0000000111"}
+    with session_scope(research) as session:
+        add_security(session, 1, [("TSTX", date(2019, 12, 5), date(2022, 12, 31))])
+        points, _ = evidence.issuer_points(session, client, {})
+    assert [pt.filed for pt in points[1]] == [date(2020, 3, 1), date(2021, 3, 1), date(2022, 3, 1)]

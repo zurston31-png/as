@@ -1113,12 +1113,18 @@ def cover_page_points(
     confirming document is looked for at spread positions, then the stretch's first and
     last confirming documents are found by halving. None if no document confirms it.
     """
+
     # The cover table is in a filing's main document, not in its exhibits.
-    mains = [
-        h
-        for h in sh.cover_page_hits(client, ticker, first, last, cik)
-        if not h.file_type or h.file_type.upper() == h.form.upper()
-    ]
+    def main_documents(phrase: bool):
+        return [
+            h
+            for h in sh.cover_page_hits(client, ticker, first, last, cik, phrase=phrase)
+            if not h.file_type or h.file_type.upper() == h.form.upper()
+        ]
+
+    # When SEC's index finds none with the heading, the company's filings naming the ticker
+    # are read instead; each must still show the ticker in its cover table.
+    mains = main_documents(True) or main_documents(False)
     hits = sorted({(h.filed, h.adsh): h for h in mains}.values(), key=lambda h: (h.filed, h.adsh))
     n = len(hits)
     if not n:
