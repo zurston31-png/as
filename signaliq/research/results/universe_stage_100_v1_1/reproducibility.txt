@@ -1,0 +1,64 @@
+Stage 1.1 reproducibility
+
+Two full runs of scripts/universe_validation_batch.py --stage 100, one after the other, on the
+same database (data/universe_stage.db), each rebuilding every derived table:
+
+  run A8: commit c280338
+  run B:  commit befedec (differs from c280338 only in README.md)
+
+1. REPORTS
+  run A8 report sha256 24741a6c81144f23f364a5a57e5b82bb974e40701f02158da19569d085e96e96
+  run B  report sha256 24741a6c81144f23f364a5a57e5b82bb974e40701f02158da19569d085e96e96
+  -> byte-identical (cmp). validation_report.txt in this folder is that report.
+
+2. TABLES (sha256 over every column of every row, in primary-key order; only the fetch
+   timestamps *_at are left out)
+  after run A8 against after run B: all 21 tables identical
+    batch_symbols: 1101 rows, sha256 46d0f9038d473f4a (columns left out: none)
+    candidates: 18490 rows, sha256 fa6d31eca65e926e (columns left out: none)
+    corporate_actions: 889 rows, sha256 67730ac904cf2127 (columns left out: ['fetched_at'])
+    deal_values: 11 rows, sha256 4e5b4c67f7fe092b (columns left out: none)
+    exit_evidence: 399 rows, sha256 6624f859e7dabe04 (columns left out: none)
+    external_responses: 59007 rows, sha256 dd083732acf86453 (columns left out: ['fetched_at'])
+    issuer_evidence: 71720 rows, sha256 0164d15727635eb0 (columns left out: none)
+    issuer_sic: 4107 rows, sha256 68ed0468c1226145 (columns left out: none)
+    membership: 61124 rows, sha256 78d11433877415bc (columns left out: none)
+    monthly_bars: 691046 rows, sha256 c60804f7133b7b6f (columns left out: none)
+    securities: 1036 rows, sha256 81fc4b128c23f35a (columns left out: none)
+    security_bars: 1928996 rows, sha256 ab82b29ee18a82d8 (columns left out: none)
+    security_issuers: 948 rows, sha256 304c24ce5daebc80 (columns left out: none)
+    security_registry: 1088 rows, sha256 c98d619b15b1e0c9 (columns left out: none)
+    segment_links: 74 rows, sha256 ba5b3e94201fd78b (columns left out: none)
+    sip_research_alembic_version: 1 rows, sha256 2f70064bcd5be351 (columns left out: none)
+    spin_offs: 27 rows, sha256 d6821e18388940d5 (columns left out: none)
+    split_checks: 384 rows, sha256 1de319621b65bd50 (columns left out: none)
+    ticker_bars: 1960141 rows, sha256 9b693ad36675d068 (columns left out: none)
+    ticker_history: 1171 rows, sha256 75b0cb7cce4dfcbd (columns left out: none)
+    type_evidence: 3134 rows, sha256 bdd23c51163f1707 (columns left out: none)
+
+  Run A7 (commit 9e09330, the same code except for report wording) gave the same 21 table
+  fingerprints as A8.
+
+3. SEC REQUESTS AND THE CACHE
+  run A8: 0 HTTP responses, 0 answers stored, 0 failed; cache 38120 at start and at the end
+  run B:  0 HTTP responses, 0 answers stored, 0 failed; cache 38120 at start and at the end
+  Every step (curated documents, evidence, issuers) is counted, retries included, and the
+  run checks that the cache grew by exactly the answers stored.
+  The last new SEC answers came in run A5 (2026-11-25 13:26-13:28 UTC): 6 cover pages, the
+  CCO Holdings 8-Ks (CIKs 1271833 and 1271834, July-August 2020), the CHTR 10-Q of
+  2020-07-10 under CIK 1271834 and the Biohaven Ltd 8-K of 2022-11-09. Those are the 6
+  newest SEC rows in the cache. A5's report printed 0 requests because the issuer step was
+  not counted then; that was fixed (commit e1fbab6, with a test) before runs A6-A8 and B.
+
+4. ISSUER AUDIT (scripts/audit_issuers.py, separate code)
+  Run on the state after A8 (identical to the state after B): PASS
+  issuer step replayed from the cache alone, with StrictCache: 0 requests to SEC; replayed
+  evidence identical to the stored evidence for every security
+  issuer_evidence: 71720 rows, audit fingerprint 7a037ec50c449f21
+  (Before the Form 25 fix, run A6: 71755 rows, 5951a6310a3241b8. The 35 rows removed are
+  Form 25 matches whose notice was not read; see README section 7.)
+
+5. MEMBERSHIP
+  59 of 59 decisions recompute identically from data cut off at each decision (in each run).
+  Rule fingerprint 57433ff596a5b47f in both runs; membership table (61124 rows) sha256
+  78d11433877415bc after both runs.

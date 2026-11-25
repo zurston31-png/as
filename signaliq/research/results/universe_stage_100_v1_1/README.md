@@ -17,7 +17,151 @@ The selection rule, the membership logic and the exit-value treatment are unchan
 
 What changed is the evidence behind identity, issuer and type, as listed below.
 
-RESULTS_PLACEHOLDER
+## Results (final run A8, commit c280338; reproduced byte for byte by run B)
+
+Files in this folder:
+
+| File | What it is |
+| --- | --- |
+| `validation_report.txt` | the full Stage 1.1 report (run A8) |
+| `reproducibility.txt` | run A8 against run B: reports and every table compared |
+| `comparison_v1_0_to_v1_1.txt` | every difference from Stage 1.0, security by security |
+| `merge_audit.txt` | trading-gap merges, YNDX/NBIS and the five handovers, re-derived from raw data |
+| `outcome_audit.txt` | every exit outcome and value against its evidence |
+| `deal_audit.txt` | the 11 deal-term values recomputed from the quotes and the acquirer's close |
+| `issuer_audit.txt` | the issuer evidence, independently re-read (`scripts/audit_issuers.py`) |
+| `issuer_gap_check.txt` | common stocks without an issuer, and the issuer behind every member decision |
+| `excluded_type_impact.txt` | members if conflicting or unknown types were counted as common |
+| `protected_data_check.txt` | the IEX database and the Strategy A archive, verified unchanged |
+
+**Every audit passes:**
+
+- **Merges:**
+  - 33 of 33 merges pass every check.
+  - 35 of 35 rejections are independently supported.
+  - 6 of 6 rename decisions pass.
+  - YNDX→NBIS (1 of 1 identity exception) is one security: one registrant (CIK 1513845), no Form 25 or Form 15 in between, neither ticker
+    trading during the suspension, close 18.94 → 20.00.
+  - All 5 handovers pass every check.
+- **Outcomes:** 0 problems.
+- **Deals:** 11 of 11 values recompute from the quotes.
+- **Issuers:** PASS.
+  - Replayed from the cache with 0 requests to SEC: identical to what was stored.
+  - 2,023 cover-page run ends re-read, each listing the ticker.
+  - 38 of 38 own-filing documents and 97 of 97 delisting notices re-read and confirmed.
+  - Evidence fingerprint `7a037ec50c449f21`.
+- **Issuer gaps:** 0 common stocks without an issuer and without a documented reason.
+
+**Membership:**
+
+- 59 decisions (2020-01-31 to 2024-11-29), 100 members each, 208 distinct members, all
+  common stock (confirmed).
+- Recomputed from data cut off at each decision: 59 of 59 identical.
+- Prices after 2022-06-30 multiplied by 10: earlier decisions unchanged.
+- Members chosen after their last trade: 0.
+- Latest date of every input: before 2025.
+
+**Against Stage 1.0** (`comparison_v1_0_to_v1_1.txt`): 9 of 59 decisions differ, and
+distinct members go from 207 to 208.
+
+| Decision | In | Out | Why |
+| --- | --- | --- | --- |
+| 2020-06-30 | SPG | TMUS (rank 101) | SPG is a REIT: no longer read as a fund |
+| 2020-09-30 | GOLD (Barrick, id 1088) | GOLD (joined Randgold/Barrick series) | handover cut: Barrick is its own security |
+| 2021-01-29 | CVS | AZN | AZN is an ADR on its own 20-F cover page |
+| 2021-02-26 to 2021-07-30 (6) | PARA | AZN, DHR, TDOC, AMC, NVAX, SPGI (rank 101) | v1.0 took PARA's issuer from today's ticker list: Parabolic Technologies, a SPAC (SIC 6770). ViacomCBS's own cover pages give Paramount Global (CIK 813828, SIC 4833) |
+
+Other changes:
+
+- Types: conflicts fall from 73 to 4 and unknowns from 30 to 17.
+- Exit values: deal terms from 7 to 11 (AGN, WORK, RTN, Randgold).
+- Issuer at the last trade:
+  - 9 found only now (CBS, SQ, COHR, TD, Barrick and others);
+  - 13 lost, mostly ETF trusts whose issuer came from today's ticker list, plus DD;
+  - 16 with a different CIK (AXON, BLK, both CZRs and others).
+
+**Exit values of the members that later ended** (all 7 have a value, and none is assumed):
+
+| Member | Last trade | Terms | Acquirer close on the effective date | Value | Target's last close |
+| --- | --- | --- | --- | --- | --- |
+| AGN | 2020-05-08 | $120.30 + 0.8660 ABBV | ABBV 83.96 (2020-05-08) | 193.0094 | 193.02 |
+| WORK | 2021-07-20 | $26.79 + 0.0776 CRM | CRM 242.11 (2021-07-21) | 45.5777 | 45.20 |
+| RTN | 2020-04-02 | 2.3348 RTX | RTX 49.93 (2020-04-03) | 116.5766 | 116.96 |
+| PXD | 2024-05-02 | 2.3234 XOM | XOM 116.00 (2024-05-03) | 269.5144 | 269.62 |
+| DISCA | 2022-04-08 | 1 WBD | WBD 24.78 (2022-04-11) | 24.78 | 24.43 |
+| ATVI | 2023-10-12 | $95.00 cash | — | 95.00 | — |
+| TWTR | 2022-10-27 | $54.20 cash | — | 54.20 | — |
+
+- Each effective date is quoted from the target's own 8-K on completion. The deal audit
+  re-reads the quote and the acquirer's raw SIP close on that day.
+- RTN and DISCA are single-source outcomes (lower confidence). The other five are
+  confirmed by two sources.
+
+**Outcomes of all 153 ended securities:**
+
+| Confidence | Count |
+| --- | --- |
+| two sources | 87 |
+| one source (lower confidence) | 38 |
+| unresolved (no value) | 28 |
+
+| Value basis | Count |
+| --- | --- |
+| stated cash | 52 |
+| deal terms | 11 |
+| assumed zero (event confirmed, recovery not) | 19 |
+| none | 71 |
+
+Every one of the 82 values is traced to its evidence.
+
+**Duplicates:**
+
+- 0 ticker-days held by two securities.
+- 35 same-ticker successions, each with a recorded decision.
+- 7 same-issuer pairs kept separate, each with its reason.
+- 1 documented identity exception (YNDX/NBIS).
+- 5 handovers.
+
+**SEC requests:** run A8 made 0 requests; the cache stood at 38,120 answers at the start
+and at the end. Run A5 made the last new requests: 6 cover pages, all stored and counted
+(see `reproducibility.txt`).
+
+**Reproducibility:**
+
+- Two full runs, A8 and B, produced byte-identical reports (sha256 `24741a6c…`) and
+  identical fingerprints for all 21 tables.
+- The issuer step replayed from the cache alone reproduces the stored evidence exactly.
+
+### Open items (documented, not hidden)
+
+- **Form 25 conservatism.** CBS→VIAC, PSAC→FFIE and SGAM→RDBX stay two securities each.
+  Their registrant filed a Form 25 at the switch, for an exchange transfer or for a SPAC's
+  units. None of the three earlier securities was ever a member.
+- **Co-registrant choice.** Where a parent and a subsidiary file the same documents, the
+  issuer can be the subsidiary (PCG, URI, QSR, HTZ, CHTR/CCO Holdings). Same filings and
+  same industry, so no decision changes.
+- **CRH** stays in conflict: ADR on its 20-F until 2023, ordinary shares on its 8-K of
+  December 2024. AABA, SOF→SOFR and INFO are the other three conflicts. 17 types are
+  unknown.
+  - Counted as common, only TVIX (an ETN) would have been a member, for 4 decisions; it
+    would have displaced FI, ACN and EBAY (`excluded_type_impact.txt`).
+- **Handover earlier holders without a value.** Caesars Entertainment Corp (CZR), Healthcare
+  Realty (HR) and Physicians Realty (DOC) have confirmed acquisitions but no exit value.
+  Their terms were not hand-read, and none was a member.
+- **GOLD (Barrick).** Its issuer rests on a full-text filing dated after the cut ("later
+  document"). Before a security's first evidence the earliest evidence is used, and the
+  report counts every decision where that happens.
+- **DD** (E. I. du Pont, CIK 30554, last trade 2017-08-31) has no issuer now. Its only
+  evidence was a Form 25 match whose notice was not read. Its single-source "acquired"
+  outcome rests on that company's 8-K of 2017-09-01, and it traded before the first
+  decision.
+- **One-source and unresolved outcomes:**
+  - 38 one-source outcomes stay lower confidence;
+  - 19 assumed zeros stay apart from payouts;
+  - 28 unresolved outcomes have no value.
+- **The security type applies to the whole history.** It comes from sources of the period
+  where available (cover pages from 2020), but a type is not dated, so a later
+  reclassification would apply retroactively. This is unchanged from Stage 1.0.
 
 ## 1. YNDX / NBIS: one security, by a documented exception
 
