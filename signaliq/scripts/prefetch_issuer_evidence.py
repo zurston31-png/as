@@ -30,10 +30,10 @@ import httpx
 from sqlalchemy import select
 
 from app.database import create_session_factory, session_scope
-from app.universe import evidence, sec
+from app.universe import evidence, sec, sec_cache
 from app.universe import sec_history as sh
 from app.universe.database import open_research_database
-from app.universe.models import ExternalResponse, Security
+from app.universe.models import Security
 
 
 class Pacer:
@@ -61,6 +61,10 @@ class SharedFetcher:
         self.requests = 0
 
     def fetch(self, key: str, url: str, params: dict | None, transform=None) -> str:
+        if sec_cache.offline():
+            raise sec.SecUnavailable(
+                f"SEC offline ({sec_cache.OFFLINE_VARIABLE}=1), not cached: {key}"
+            )
         response = None
         for attempt in range(sec.MAX_ATTEMPTS):
             self.pacer.wait()
@@ -99,9 +103,9 @@ class PrefetchSec(sec.CachedSec):
 
     def get(self, url, params=None):
         key = sec.cache_key(url, params)
-        row = self.session.get(ExternalResponse, ("sec", key))
-        if row is not None:
-            return row.response
+        cached = sec_cache.lookup(self.session, key)
+        if cached is not None:
+            return cached
         with self.fetcher.lock:
             if key in self.fetcher.pending:
                 return self.fetcher.pending[key]
@@ -109,12 +113,12 @@ class PrefetchSec(sec.CachedSec):
 
     def cover_text(self, url):
         key = sec.COVER_PREFIX + sec.cache_key(url)
-        row = self.session.get(ExternalResponse, ("sec", key))
-        if row is not None:
-            return row.response
-        whole = self.session.get(ExternalResponse, ("sec", sec.cache_key(url)))
+        cached = sec_cache.lookup(self.session, key)
+        if cached is not None:
+            return cached
+        whole = sec_cache.lookup(self.session, sec.cache_key(url))
         if whole is not None:
-            return sec.cover_snippet(whole.response)
+            return sec.cover_snippet(whole)
         with self.fetcher.lock:
             if key in self.fetcher.pending:
                 return self.fetcher.pending[key]
@@ -162,7 +166,7 @@ def main() -> int:
                 key, text = fetcher.sink.get_nowait()
             except queue.Empty:
                 break
-            writer.merge(ExternalResponse(source="sec", request_key=key, response=text))
+            sec_cache.store(writer, key, text)
             stored += 1
         writer.commit()
 

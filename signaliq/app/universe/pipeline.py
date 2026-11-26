@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, is_valid_symbol
 from app.data.alpaca_client import AlpacaClient
 from app.data.validation import NEW_YORK, trading_days
+from app.universe import rules
 from app.universe import segments as seg
 from app.universe.batch import KNOWN_CASES, PLAIN_TICKER, draw_random
 from app.universe.membership import DailyRow, MembershipRule, decide, month_end_sessions
@@ -674,8 +675,33 @@ def attach_alpaca_adjusted(
 # =============================================================================
 
 
-def decide_membership(session: Session, rule: MembershipRule) -> list[date]:
-    session.execute(delete(Membership))
+def _dated_type_changes(session: Session) -> dict:
+    """The dated-type rule's input when that rule is switched on; otherwise empty."""
+    if not rules.dated_types_enabled():
+        return {}
+    from app.universe.evidence import StrictCache, stored_issuer_points
+    from app.universe.sec import SecUnavailable
+
+    client = StrictCache(session)
+    changes = rules.type_changes(rules.cover_classes(client, stored_issuer_points(session)))
+    # Cover pages not in the cache are recorded as not read (the rule then answers
+    # "unknown"); any other missing answer (a filing list) would change the reading.
+    other = sorted(k for k in client.missing if not k.startswith("cover:"))
+    if other:
+        raise SecUnavailable(
+            f"{len(other)} SEC answers the dated-type rule needs are not cached (first: {other[0]})"
+        )
+    return changes
+
+
+def membership_decisions(
+    session: Session, rule: MembershipRule, type_changes: dict | None = None
+) -> tuple[list[date], list]:
+    """Every membership decision (``membership.Decision``), computed without storing anything.
+
+    ``type_changes`` (the dated-type rule's input, ``rules.type_changes``) is used only when
+    given; ``decide_membership`` passes it only when that rule is switched on.
+    """
     history: dict[int, list[DailyRow]] = defaultdict(list)
     for bar in session.execute(
         select(SecurityBar).order_by(SecurityBar.security_id, SecurityBar.session)
@@ -700,23 +726,40 @@ def decide_membership(session: Session, rule: MembershipRule) -> list[date]:
     from app.universe.evidence import blank_check_exclusions  # evidence imports pipeline
 
     dated = blank_check_exclusions(session)
-    fingerprint = rule.fingerprint()
+    out = []
     for when in decisions:
-        for d in decide(
-            when, history, types, rule, [s for s in calendar if s <= when], held_out, dated
-        ):
-            session.add(
-                Membership(
-                    decision_session=d.session,
-                    security_id=d.security_id,
-                    rule_fingerprint=fingerprint,
-                    eligible=d.eligible,
-                    reason=d.reason,
-                    raw_close=d.raw_close,
-                    median_dollar_volume=d.median_dollar_volume,
-                    rank=d.rank,
-                    member=d.member,
-                )
+        types_when = types
+        if type_changes:
+            # Proposed rule, off by default (app.universe.rules): a security whose own cover
+            # pages changed class takes the class of its latest cover page by the decision.
+            types_when = dict(types)
+            for sid, pages in type_changes.items():
+                kind = rules.type_on(pages, when)
+                if kind:
+                    types_when[sid] = kind
+        out += decide(
+            when, history, types_when, rule, [s for s in calendar if s <= when], held_out, dated
+        )
+    return decisions, out
+
+
+def decide_membership(session: Session, rule: MembershipRule) -> list[date]:
+    session.execute(delete(Membership))
+    decisions, result = membership_decisions(session, rule, _dated_type_changes(session))
+    fingerprint = rule.fingerprint()
+    for d in result:
+        session.add(
+            Membership(
+                decision_session=d.session,
+                security_id=d.security_id,
+                rule_fingerprint=fingerprint,
+                eligible=d.eligible,
+                reason=d.reason,
+                raw_close=d.raw_close,
+                median_dollar_volume=d.median_dollar_volume,
+                rank=d.rank,
+                member=d.member,
             )
+        )
     session.flush()
     return decisions

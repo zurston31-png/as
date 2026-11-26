@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.config import is_valid_symbol
 from app.data.alpaca_client import AlpacaClient
-from app.universe import adjustments, outcomes, sec, sectypes
+from app.universe import adjustments, outcomes, rules, sec, sectypes
 from app.universe import sec_history as sh
 from app.universe import segments as seg
 from app.universe.batch import PLAIN_TICKER
@@ -1286,6 +1286,7 @@ def issuer_points(
     own ("full_text"). The delisting notice at the last trade is evidence too ("form25").
     """
     today = _ticker_today(client)
+    coregistrant_rule = rules.coregistrant_enabled()
     history = defaultdict(list)
     for h in session.execute(select(TickerHistory).order_by(TickerHistory.valid_from)).scalars():
         history[h.security_id].append(h)
@@ -1383,6 +1384,14 @@ def issuer_points(
                 if clash is None:
                     kept.append(span)
                     continue
+                if coregistrant_rule:
+                    # Proposed rule, off by default (app.universe.rules): the shared cover
+                    # page decides between co-registrants.
+                    replace, choice = rules.choose(client, h.symbol, clash, span)
+                    rules.CHOICES[sid].append(choice)
+                    if replace:
+                        kept[kept.index(clash)] = span
+                        clash, span = span, clash
                 # A ticker passing from one company to another can show both companies'
                 # cover pages around the closing (HTA's and the old Healthcare Realty's on
                 # 2022-07-19..21, before HTA took the ticker HR). What lies more than
@@ -1417,6 +1426,7 @@ def issuer_points(
                     f"{h.symbol}: CIK {span[0].cik} ({len(span)} cover pages "
                     f"{span[0].filed}..{span[-1].filed}) overlaps CIK {clash[0].cik} "
                     f"({len(clash)}); kept {clash[0].cik}{note}"
+                    + (f"; co-registrant rule: {choice.reason}" if coregistrant_rule else "")
                 )
                 kept += handed
             found_text = None

@@ -32,7 +32,7 @@ from sqlalchemy import delete, func, select
 from app.config import configure_logging, get_settings
 from app.data.validation import trading_days
 from app.database import create_session_factory, session_scope
-from app.universe import checks, curated, evidence, sectypes
+from app.universe import checks, curated, evidence, rules, sec_cache, sectypes
 from app.universe import pipeline as p
 from app.universe import segments as seg
 from app.universe import stage as universe_stage
@@ -110,9 +110,8 @@ SEC_STEPS = (("curated", "curated documents"), ("sec", "evidence"), ("issuer", "
 
 
 def _sec_cached(session) -> int:
-    return session.scalar(
-        select(func.count()).select_from(ExternalResponse).where(ExternalResponse.source == "sec")
-    )
+    """Distinct cached SEC answers, including a read-only parent cache's (``sec_cache``)."""
+    return sec_cache.count(session)
 
 
 def _count_sec(facts: dict, step: str, result: tuple[int, int, list[str]]) -> None:
@@ -121,6 +120,24 @@ def _count_sec(facts: dict, step: str, result: tuple[int, int, list[str]]) -> No
     facts[f"{step}_requests"] = facts.get(f"{step}_requests", 0) + made
     facts[f"{step}_stored"] = facts.get(f"{step}_stored", 0) + stored
     facts[f"{step}_failures"] = facts.get(f"{step}_failures", []) + failed
+
+
+def _print_dated_types(s) -> None:
+    """The dated-type rule's changes (measurement runs only)."""
+    client = evidence.StrictCache(s)
+    changes = rules.type_changes(rules.cover_classes(client, evidence.stored_issuer_points(s)))
+    print(f"  Dated-type rule: securities whose own cover pages changed class: {len(changes)}")
+    for sid, pages in sorted(changes.items()):
+        security = s.get(Security, sid)
+        print(
+            f"    id {sid} {security.last_symbol}: undated type {security.security_type} "
+            f"({security.type_status})"
+        )
+        for kind, first, last, count in rules.type_runs(pages):
+            print(
+                f"      {kind} {first.filed}..{last.filed} ({count} cover pages): "
+                f"first {first.form} '{first.title}' [{first.url}]"
+            )
 
 
 def run(settings, refresh: bool, stage: int | None = None) -> dict:
@@ -305,6 +322,13 @@ def report(facts: dict) -> str:
                 "WORK and RTN. Selection rule, membership logic and exit-value treatment unchanged."
             )
         print(f"Research database: {facts['database']}")
+        if rules.enabled_rules():
+            # Only measurement runs print this: with no rule switched on, the report is
+            # unchanged.
+            print(
+                f"MEASUREMENT RUN, NOT ADOPTED: proposed rules switched on: "
+                f"{', '.join(rules.enabled_rules())}"
+            )
         print(
             "Bars and corporate actions: SIP daily, 2016-01-01 to 2024-12-31. Evidence dated 2025 or later is ignored."
         )
@@ -829,6 +853,8 @@ def report(facts: dict) -> str:
             "of the batch)"
         )
         print(f"  Rule: {RULE.to_dict()}  fingerprint {RULE.fingerprint()[:16]}")
+        if rules.dated_types_enabled():
+            _print_dated_types(s)
         decisions = facts["decisions"]
         members = checks.stored_members(s)
         sizes = [len(v) for v in members.values()]

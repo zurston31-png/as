@@ -47,7 +47,7 @@ from datetime import date, timedelta
 import httpx
 from sqlalchemy.orm import Session
 
-from app.universe.models import ExternalResponse
+from app.universe import sec_cache
 
 USER_AGENT = "SignalIQ-Research universe-validation/0.3 signaliq.research@gmail.com"
 BROWSE_URL = "https://www.sec.gov/cgi-bin/browse-edgar"
@@ -475,9 +475,10 @@ class CachedSec:
 
     def get(self, url: str, params: dict | None = None) -> str | None:
         key = cache_key(url, params)
-        row = self.session.get(ExternalResponse, ("sec", key))
-        if row is not None and not self.refresh:
-            return row.response
+        if not self.refresh:
+            cached = sec_cache.lookup(self.session, key)
+            if cached is not None:
+                return cached
         if not self.network:
             return None
         text = self._fetch(key, url, params)
@@ -485,7 +486,7 @@ class CachedSec:
         return text
 
     def _store(self, key: str, text: str) -> None:
-        self.session.merge(ExternalResponse(source="sec", request_key=key, response=text))
+        sec_cache.store(self.session, key, text)
         self.stored += 1
         if self.stored % COMMIT_EVERY == 0:
             self.session.commit()
@@ -498,12 +499,13 @@ class CachedSec:
         neither is cached and the client is cache-only.
         """
         key = COVER_PREFIX + cache_key(url)
-        row = self.session.get(ExternalResponse, ("sec", key))
-        if row is not None and not self.refresh:
-            return row.response
-        whole = self.session.get(ExternalResponse, ("sec", cache_key(url)))
-        if whole is not None and not self.refresh:
-            return cover_snippet(whole.response)
+        if not self.refresh:
+            cached = sec_cache.lookup(self.session, key)
+            if cached is not None:
+                return cached
+            whole = sec_cache.lookup(self.session, cache_key(url))
+            if whole is not None:
+                return cover_snippet(whole)
         if not self.network:
             return None
         snippet = cover_snippet(self._fetch(key, url, None))
@@ -512,6 +514,10 @@ class CachedSec:
 
     def _fetch(self, key: str, url: str, params: dict | None) -> str:
         """SEC's answer (``""`` for 404), retried; ``SecUnavailable`` if it never answers."""
+        if sec_cache.offline():
+            # Offline runs must fetch nothing: an answer not in the cache stops the run.
+            self.failures.append(key)
+            raise SecUnavailable(f"SEC offline ({sec_cache.OFFLINE_VARIABLE}=1), not cached: {key}")
         for attempt in range(MAX_ATTEMPTS):
             self.sleep(PAUSE_SECONDS)
             try:
