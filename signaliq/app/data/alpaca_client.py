@@ -34,8 +34,13 @@ from app.config import (
     is_valid_symbol,
     is_valid_timeframe,
 )
+from app.data import response_store
+from app.data.response_store import ResponseNotStored, ResponseStore
 
 logger = logging.getLogger(__name__)
+
+#: Default for ``AlpacaClient(store=...)``: use the store named by the environment, if any.
+_FROM_ENVIRONMENT = object()
 
 #: Server-side failures that are worth retrying.
 _RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
@@ -157,8 +162,16 @@ class AlpacaClient:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
         backoff_jitter: float = 0.1,
+        store: ResponseStore | object | None = _FROM_ENVIRONMENT,
     ) -> None:
-        auth_headers = settings.alpaca_auth_headers()
+        # Raw response storage (off unless the environment or the caller turns it on).
+        # In replay nothing may come from the network: no credentials, no connection.
+        self._store = response_store.from_environment() if store is _FROM_ENVIRONMENT else store
+        if self._store is not None and self._store.replaying:
+            auth_headers: dict[str, str] = {}
+            transport = response_store.NoNetworkTransport()
+        else:
+            auth_headers = settings.alpaca_auth_headers()
         self._secret_from_proxy = "APCA-API-SECRET-KEY" not in auth_headers
 
         self._feed = settings.alpaca_feed
@@ -346,6 +359,25 @@ class AlpacaClient:
         return self._request(ALPACA_BARS_PATH, params, described)
 
     def _request(self, path: str, params: dict[str, str | int], described: str) -> httpx.Response:
+        """One request: from the response store when it holds it, else from the provider."""
+        if self._store is not None:
+            stored = self._store.get(path, params)
+            if stored is not None:
+                logger.info("Alpaca response from the store: %s", described)
+                return stored
+            if self._store.replaying:
+                raise ResponseNotStored(
+                    f"replay: no stored response for {described} "
+                    f"(key {response_store.request_key(path, params)})"
+                )
+        response = self._request_live(path, params, described)
+        if self._store is not None:
+            self._store.put(path, params, response)
+        return response
+
+    def _request_live(
+        self, path: str, params: dict[str, str | int], described: str
+    ) -> httpx.Response:
         """Send one request, retrying transient failures. ``described`` is logged."""
         max_attempts = self._max_retries + 1
         for attempt in range(1, max_attempts + 1):

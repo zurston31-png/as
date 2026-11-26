@@ -24,6 +24,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import PROJECT_ROOT, Settings
+from app.data import response_store
 from app.data.alpaca_client import AlpacaClient
 from app.data.ingestion import IngestionService
 from app.database import create_db_engine, create_session_factory, init_db, session_scope
@@ -38,6 +39,16 @@ FIXTURE_SYMBOLS = ("TESTA", "TESTB")
 #: Fake credentials. They only ever reach a mocked transport.
 FIXTURE_KEY_ID = "FIXTURE-KEY-ID-NOT-REAL"
 FIXTURE_SECRET = "FIXTURE-SECRET-NOT-REAL"
+
+
+@pytest.fixture(autouse=True)
+def _no_response_store_from_environment(monkeypatch) -> Iterator[None]:
+    """Tests never pick up a raw response store from the developer's environment."""
+    monkeypatch.delenv(response_store.PATH_VARIABLE, raising=False)
+    monkeypatch.delenv(response_store.MODE_VARIABLE, raising=False)
+    response_store.reset_shared()
+    yield
+    response_store.reset_shared()
 
 
 @pytest.fixture

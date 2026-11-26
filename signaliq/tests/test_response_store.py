@@ -1,0 +1,211 @@
+"""Raw provider response storage: record, replay, integrity, and that replay never uses the network.
+
+Every response here is a mocked TEST FIXTURE in the shape of Alpaca's bars payload. Nothing
+touches the network and no value is real market data.
+"""
+
+import hashlib
+import sqlite3
+from datetime import UTC, date, datetime
+
+import httpx
+import pytest
+
+from app.data import response_store
+from app.data.alpaca_client import AlpacaClient
+from app.data.response_store import (
+    ResponseNotStored,
+    ResponseStore,
+    ResponseStoreError,
+    request_key,
+)
+
+START = datetime(2024, 1, 2, 5, 0, tzinfo=UTC)
+END = datetime(2024, 1, 13, 4, 59, 59, tzinfo=UTC)
+
+
+def _client(settings, store, transport=None, sleeps=None):
+    return AlpacaClient(
+        settings,
+        transport=transport,
+        sleep=(sleeps.append if sleeps is not None else (lambda _s: None)),
+        clock=lambda: 1_700_000_000.0,
+        backoff_jitter=0.0,
+        store=store,
+    )
+
+
+def _fetch(client, symbols=("TESTA",)):
+    return client.fetch_bars(list(symbols), timeframe="1Day", start=START, end=END)
+
+
+def _sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture
+def two_pages(alpaca_mock, make_bar):
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2))]}, next_page_token="tok-1")
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 3), c=101.25)]})
+    return alpaca_mock
+
+
+def test_replay_reproduces_the_recorded_data_without_the_network(settings, tmp_path, two_pages):
+    path = tmp_path / "responses.db"
+    recorder = ResponseStore(path, "record")
+    with _client(settings, recorder, two_pages.transport) as client:
+        recorded = _fetch(client)
+    assert recorder.fetched_live == 2
+    assert len(two_pages.requests) == 2
+    before = recorder.summary()
+    recorder.close()
+    file_hash = _sha(path)
+
+    player = ResponseStore(path, "replay")
+    with _client(settings, player) as client:  # no transport given: NoNetworkTransport
+        replayed = _fetch(client)
+    assert replayed == recorded
+    assert player.served_from_store == 2
+    assert player.fetched_live == 0
+    assert len(two_pages.requests) == 2  # nothing more reached the provider
+    assert player.summary() == before
+    player.close()
+    assert _sha(path) == file_hash  # replay opened the store read-only
+
+
+def test_replay_client_has_no_credentials_and_refuses_the_network(settings, tmp_path):
+    path = tmp_path / "responses.db"
+    ResponseStore(path, "record").close()
+    player = ResponseStore(path, "replay")
+    client = _client(settings, player)
+    assert "APCA-API-KEY-ID" not in client._http.headers
+    assert "APCA-API-SECRET-KEY" not in client._http.headers
+    with pytest.raises(ResponseStoreError, match="network request was attempted"):
+        client._http.get("/v2/stocks/bars")
+    client.close()
+
+
+def test_replay_of_a_request_not_stored_stops(settings, tmp_path, two_pages):
+    path = tmp_path / "responses.db"
+    recorder = ResponseStore(path, "record")
+    with _client(settings, recorder, two_pages.transport) as client:
+        _fetch(client)
+    recorder.close()
+    with (
+        _client(settings, ResponseStore(path, "replay")) as client,
+        pytest.raises(ResponseNotStored),
+    ):
+        _fetch(client, symbols=("TESTB",))
+
+
+def test_a_later_provider_revision_does_not_change_the_replay(
+    settings, tmp_path, alpaca_mock, make_bar
+):
+    """The NEE case: the provider revises history after the run was recorded."""
+    path = tmp_path / "responses.db"
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2), c=25.89)]})
+    recorder = ResponseStore(path, "record")
+    with _client(settings, recorder, alpaca_mock.transport) as client:
+        original = _fetch(client)
+    recorder.close()
+
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2), c=103.57)]})  # revised
+    with _client(settings, None, alpaca_mock.transport) as client:
+        assert _fetch(client)["TESTA"][0]["c"] == 103.57  # live: the revised value
+
+    with _client(settings, ResponseStore(path, "replay")) as client:
+        assert _fetch(client) == original  # replay: the value as originally received
+        assert original["TESTA"][0]["c"] == 25.89
+
+
+def test_record_resumes_from_what_is_stored(settings, tmp_path, two_pages):
+    path = tmp_path / "responses.db"
+    first = ResponseStore(path, "record")
+    with _client(settings, first, two_pages.transport) as client:
+        expected = _fetch(client)
+    first.close()
+    again = ResponseStore(path, "record")
+    with _client(settings, again, two_pages.transport) as client:
+        assert _fetch(client) == expected
+    assert again.fetched_live == 0
+    assert again.served_from_store == 2
+    assert two_pages.pending == 0
+    assert len(two_pages.requests) == 2
+
+
+def test_errors_are_retried_and_never_stored(settings, tmp_path, alpaca_mock, make_bar):
+    path = tmp_path / "responses.db"
+    alpaca_mock.add_error(500)
+    alpaca_mock.add_error(429, headers={"Retry-After": "1"})
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2))]})
+    store = ResponseStore(path, "record")
+    with _client(settings, store, alpaca_mock.transport, sleeps=[]) as client:
+        _fetch(client)
+    rows = sqlite3.connect(path).execute("select status, count(*) from responses").fetchall()
+    assert rows == [(200, 1)]
+
+
+def test_a_damaged_body_is_detected(settings, tmp_path, two_pages):
+    path = tmp_path / "responses.db"
+    recorder = ResponseStore(path, "record")
+    with _client(settings, recorder, two_pages.transport) as client:
+        _fetch(client)
+    recorder.close()
+    import zlib
+
+    db = sqlite3.connect(path)
+    key, packed = db.execute("select key, body from responses order by key limit 1").fetchone()
+    tampered = zlib.decompress(packed).replace(b"100", b"999")
+    db.execute("update responses set body = ? where key = ?", (zlib.compress(tampered), key))
+    db.commit()
+    db.close()
+
+    player = ResponseStore(path, "replay")
+    assert len(player.verify()) == 1
+    with _client(settings, player) as client, pytest.raises(ResponseStoreError, match="damaged"):
+        _fetch(client)
+
+
+def test_refuses_a_file_that_is_not_a_response_store(tmp_path):
+    other = tmp_path / "research.db"
+    db = sqlite3.connect(other)
+    db.execute("create table membership (x)")
+    db.commit()
+    db.close()
+    before = _sha(other)
+    for mode in ("record", "replay"):
+        with pytest.raises(ResponseStoreError, match="not a response store"):
+            ResponseStore(other, mode)
+    assert _sha(other) == before
+
+
+def test_replay_needs_an_existing_store(tmp_path):
+    with pytest.raises(ResponseStoreError, match="existing response store"):
+        ResponseStore(tmp_path / "missing.db", "replay")
+    assert not (tmp_path / "missing.db").exists()
+
+
+def test_key_ignores_parameter_order_and_never_holds_credentials():
+    a = request_key("/v2/stocks/bars", {"symbols": "A", "limit": 10})
+    b = request_key("/v2/stocks/bars", {"limit": 10, "symbols": "A"})
+    assert a == b == "/v2/stocks/bars?limit=10&symbols=A"
+
+
+def test_off_by_default_and_configured_by_environment(settings, tmp_path, monkeypatch):
+    monkeypatch.delenv(response_store.PATH_VARIABLE, raising=False)
+    monkeypatch.delenv(response_store.MODE_VARIABLE, raising=False)
+    response_store.reset_shared()
+    assert response_store.from_environment() is None
+    client = AlpacaClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    assert client._store is None
+    client.close()
+
+    monkeypatch.setenv(response_store.PATH_VARIABLE, str(tmp_path / "r.db"))
+    with pytest.raises(ResponseStoreError, match="set both"):
+        response_store.from_environment()
+    monkeypatch.setenv(response_store.MODE_VARIABLE, "record")
+    store = response_store.from_environment()
+    assert store is not None
+    assert store.mode == "record"
+    assert response_store.from_environment() is store  # one store per process
+    response_store.reset_shared()
