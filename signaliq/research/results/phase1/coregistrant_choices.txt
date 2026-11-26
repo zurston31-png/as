@@ -1,0 +1,240 @@
+CO-REGISTRANT CHOICE (proposed rule, measured, not adopted)
+Overlapping ticker periods examined: 78; the proposed rule keeps the other company in 2; the cover page decides as the current rule in 41; undecided (current rule stands) in 35; answers not in the cache: 0
+
+WOULD CHANGE: 2
+  id 571 URI (URI): keep CIK 0001067701 UNITED RENTALS, INC., not CIK 0001047166 UNITED RENTALS NORTH AMERICA INC
+    why: the other company: row 'Common Stock, $.01 par value, of United Rentals, Inc.' names it (97 shared filings, 2 read (95 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1047166/000106770124000039/uri-20241023.htm
+  id 864 HTZ (HTZ): keep CIK 0001657853 HERTZ GLOBAL HOLDINGS, INC, not CIK 0000047129 HERTZ CORP
+    why: the other company: row 'Hertz Global Holdings, Inc. Common Stock Par value $0.01 per share' names it (71 shared filings, 10 read (61 not in the cache), 9 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/47129/000095010324017766/dp222085_8k.htm
+
+UNDECIDED (current rule stands): 35
+  id 10 ACC (ACC): keep CIK 0001283630 AMERICAN CAMPUS COMMUNITIES INC, not CIK 0001357369 
+    why: undecided: shared cover pages disagree (24 shared filings, 2 read (22 not in the cache), 2 decided; kept 1, other 1): current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1283630/000119312521257544/d169567d8k.htm
+  id 67 BDX (BDX): keep CIK 0000010795 BECTON DICKINSON & CO, not CIK 0001776167 
+    why: undecided: 1 shared filings, 1 read (0 not in the cache), 0 decided; last read: row 'Common stock, par value $1.00' names neither; registrant names found: True, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/10795/000114036119009991/nc10002034x3_8k.htm
+  id 92 CCL (CCL): keep CIK 0000815097 CARNIVAL CORP, not CIK 0001125259 
+    why: undecided: 119 shared filings, 5 read (114 not in the cache), 0 decided; last read: row 'Common Stock ($0.01 par value' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/815097/000081509724000078/ccl-20241220.htm
+  id 111 CMCSA (CMCSA): keep CIK 0001166691 COMCAST CORP, not CIK 0000902739 
+    why: undecided: 5 shared filings, 2 read (3 not in the cache), 0 decided; last read: row 'Class A Common Stock, $0.01 par value' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1166691/000119312520025499/d884623d8k.htm
+  id 145 D (D): keep CIK 0000715957 DOMINION ENERGY, INC, not CIK 0000732717 
+    why: no shared filing (not co-registrants of one document): current rule
+  id 161 DLR (DLR): keep CIK 0001297996 DIGITAL REALTY TRUST, INC., not CIK 0001494877 
+    why: undecided: 106 shared filings, 2 read (104 not in the cache), 0 decided; last read: row 'Common Stock' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1297996/000119312524284301/d905387d8k.htm
+  id 166 DRE (DRE): keep CIK 0000783280 DUKE REALTY CORP, not CIK 0001003410 
+    why: undecided: 61 shared filings, 2 read (59 not in the cache), 0 decided; last read: row 'Common Stock, par value $0.01 per share' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/783280/000119312522254310/d374125d8k.htm
+  id 168 DTE (DTE): keep CIK 0000936340 DTE ENERGY CO, not CIK 0000028385 
+    why: undecided: 115 shared filings, 3 read (112 not in the cache), 0 decided; last read: row 'Common stock, without par value' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/936340/000093634024000206/dte-20241216.htm
+  id 179 EIX (EIX): keep CIK 0000827052 EDISON INTERNATIONAL, not CIK 0000092103 
+    why: undecided: 87 shared filings, 2 read (85 not in the cache), 0 decided; last read: row 'Common Stock, no par value' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/827052/000082705224000078/eix-20241029x8k.htm
+  id 194 ETR (ETR): keep CIK 0000065984 ENTERGY CORP /DE/, not CIK 0000071508 
+    why: undecided: 58 shared filings, 15 read (43 not in the cache), 0 decided; last read: row 'None' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/65984/000006598424000131/etr-20241220.htm
+  id 194 ETR (ETR): keep CIK 0000065984 ENTERGY CORP /DE/, not CIK 0001348952 
+    why: undecided: 61 shared filings, 17 read (44 not in the cache), 0 decided; last read: row 'None' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/65984/000006598424000131/etr-20241220.htm
+  id 194 ETR (ETR): keep CIK 0000065984 ENTERGY CORP /DE/, not CIK 0000007323 
+    why: undecided: 59 shared filings, 13 read (46 not in the cache), 0 decided; last read: row 'None' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/65984/000006598424000131/etr-20241220.htm
+  id 194 ETR (ETR): keep CIK 0000065984 ENTERGY CORP /DE/, not CIK 0000202584 
+    why: undecided: 53 shared filings, 17 read (36 not in the cache), 0 decided; last read: row 'None' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/65984/000006598424000131/etr-20241220.htm
+  id 261 HR (HTA): keep CIK 0001360604 Healthcare Realty Trust Inc, not CIK 0001495491 
+    why: undecided: shared cover pages disagree (67 shared filings, 12 read (55 not in the cache), 11 decided; kept 9, other 2): current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1360604/000119312522196837/d346195d8k.htm
+  id 261 HR (HR): keep CIK 0001360604 Healthcare Realty Trust Inc, not CIK 0000899749 
+    why: no shared filing (not co-registrants of one document): current rule
+  id 304 KHC (KHC): keep CIK 0001637459 Kraft Heinz Co, not CIK 0000046640 
+    why: undecided: 2 shared filings, 2 read (0 not in the cache), 0 decided; last read: row 'Common stock, $0.01 par value' names neither; registrant names found: True, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1637459/000119312524055957/d794730d8k.htm
+  id 367 MTCH (MTCH): keep CIK 0000891103 Match Group, Inc., not CIK 0001575189 Match Group, Inc.
+    why: no shared filing (not co-registrants of one document): current rule
+  id 418 PCG (PCG): keep CIK 0000075488 PACIFIC GAS & ELECTRIC Co, not CIK 0001004980 
+    why: undecided: 231 shared filings, 29 read (202 not in the cache), 0 decided; last read: row 'Common stock, no par value' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/75488/000183988224045364/pcg-8k_121224.htm
+  id 418 PCG (PCG): keep CIK 0000075488 PACIFIC GAS & ELECTRIC Co, not CIK 0001866514 
+    why: undecided: 5 shared filings, 5 read (0 not in the cache), 0 decided; last read: row 'Common stock, no par value' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/75488/000119312524191548/d878716d8k.htm
+  id 428 PLD (PLD): keep CIK 0001045609 Prologis, Inc., not CIK 0001045610 
+    why: undecided: 115 shared filings, 2 read (113 not in the cache), 0 decided; last read: row 'Prologis, Inc. Common Stock, $0.01 par value' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1045609/000095017024117407/pld-20240930.htm
+  id 449 QSR (QSR): keep CIK 0001618755 Restaurant Brands International Limited Partnership, not CIK 0001618756 
+    why: undecided: 14 shared filings, 4 read (10 not in the cache), 0 decided; last read: row 'Common Shares, without par value' names neither; registrant names found: False, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1618755/000095014224000110/eh240438262_8k.htm
+  id 526 SYY (SYY): keep CIK 0000096021 SYSCO CORP, not CIK 0000096793 
+    why: no shared filing (not co-registrants of one document): current rule
+  id 561 UAL (UAL): keep CIK 0000100517 United Airlines Holdings, Inc., not CIK 0000319687 
+    why: undecided: shared cover pages disagree (129 shared filings, 5 read (124 not in the cache), 5 decided; kept 4, other 1): current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/100517/000010051724000136/ual-20240930.htm
+  id 610 XEL (XEL): keep CIK 0000072903 XCEL ENERGY INC, not CIK 0000081018 
+    why: undecided: 52 shared filings, 2 read (50 not in the cache), 0 decided; last read: row 'Common Stock' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/72903/000007290324000196/xel-20241031.htm
+  id 610 XEL (XEL): keep CIK 0000072903 XCEL ENERGY INC, not CIK 0001123852 
+    why: undecided: 44 shared filings, 2 read (42 not in the cache), 0 decided; last read: row 'Common Stock, $2.50 par value per share' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/72903/000007290324000203/xel-20241202.htm
+  id 640 LSI (LSI): keep CIK 0000944314 LIFE STORAGE, INC., not CIK 0001060224 
+    why: undecided: 73 shared filings, 11 read (62 not in the cache), 0 decided; last read: row 'Common Stock, par value $0.01 per share' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/944314/000119312523188927/d534535d8k.htm
+  id 666 BHVN (BHVN): keep CIK 0001689813 Biohaven Pharmaceutical Holding Co Ltd., not CIK 0001935979 Biohaven Ltd.
+    why: no shared filing (not co-registrants of one document): current rule
+  id 674 BHGE (BHGE): keep CIK 0000808362 BAKER HUGHES a GE Co LLC, not CIK 0001701605 
+    why: undecided: 5 shared filings, 3 read (2 not in the cache), 0 decided; last read: row 'Class A Common Stock, par value $0.0001 per share' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/808362/000119312519246065/d806100d8k.htm
+  id 695 VICI (VICI): keep CIK 0001705696 VICI PROPERTIES INC., not CIK 0001920791 
+    why: undecided: 37 shared filings, 2 read (35 not in the cache), 0 decided; last read: row 'Common stock, $0.01 par value' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1705696/000110465924130170/tm2431539d1_8k.htm
+  id 760 CTVA (CTVA): keep CIK 0001755672 Corteva, Inc., not CIK 0000030554 
+    why: undecided: 14 shared filings, 7 read (7 not in the cache), 0 decided; last read: row 'Common Stock, par value $0.01 per share' names neither; registrant names found: True, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1755672/000175567224000019/ctva-20240630.htm
+  id 900 AEE (AEE): keep CIK 0001002910 AMEREN CORP, not CIK 0000100826 
+    why: undecided: 49 shared filings, 8 read (41 not in the cache), 0 decided; last read: row 'Common Stock, $0.01 par value per share' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1002910/000110465924106570/tm2425084d5_8k.htm
+  id 900 AEE (AEE): keep CIK 0001002910 AMEREN CORP, not CIK 0000018654 
+    why: undecided: 44 shared filings, 2 read (42 not in the cache), 0 decided; last read: row 'Common Stock, $0.01 par value per share' names neither; registrant names found: False, False: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1002910/000110465924130545/tm2431686d1_8k.htm
+  id 904 AIV (AIV): keep CIK 0000922864 APARTMENT INVESTMENT & MANAGEMENT CO, not CIK 0000926660 
+    why: undecided: shared cover pages disagree (16 shared filings, 4 read (12 not in the cache), 4 decided; kept 2, other 2): current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/922864/000119312520308376/d98032d8k.htm
+  id 917 CAH (CAH): keep CIK 0000721371 CARDINAL HEALTH INC, not CIK 0001832352 
+    why: no shared filing (not co-registrants of one document): current rule
+  id 951 HST (HST): keep CIK 0001070750 HOST HOTELS & RESORTS, INC., not CIK 0001061937 
+    why: undecided: 55 shared filings, 2 read (53 not in the cache), 0 decided; last read: row 'Host Hotels & Resorts, Inc. Common Stock, $0.01 par value' names neither; registrant names found: True, True: current rule
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1070750/000107075024000184/hst-20240930.htm
+
+SAME AS NOW: 41
+  id 3 AAL (AAL): keep CIK 0000006201 American Airlines Group Inc., not CIK 0000004515 
+    why: the kept company: named first among the registrants (163 shared filings, 2 read (161 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/6201/000119312524284304/d714079d8k.htm
+  id 18 AEP (AEP): keep CIK 0000004904 AMERICAN ELECTRIC POWER CO INC, not CIK 0001702494 
+    why: the kept company: row 'American Electric Power Company, Inc. Common Stock, $6.50 par value' names it (1 shared filings, 1 read (0 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/4904/000000490423000081/aep-20230526_d2.htm
+  id 18 AEP (AEP): keep CIK 0000004904 AMERICAN ELECTRIC POWER CO INC, not CIK 0001721781 
+    why: the kept company: row 'American Electric Power Company, Inc. Common Stock, $6.50 par value' names it (1 shared filings, 1 read (0 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/4904/000000490423000081/aep-20230526_d2.htm
+  id 19 AGN (AGN): keep CIK 0001578845 Allergan plc, not CIK 0001620602 
+    why: the kept company: row 'Allergan plc Ordinary Shares, $0.0001 par value' names it (6 shared filings, 2 read (4 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1578845/000156459020022386/agn-10q_20200331.htm
+  id 102 CHTR (CHTR): keep CIK 0001091667 CHARTER COMMUNICATIONS, INC. /MO/, not CIK 0001271833 
+    why: the kept company: named first among the registrants (60 shared filings, 4 read (56 not in the cache), 4 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1091667/000114036124049316/ny20038391x6_8k.htm
+  id 102 CHTR (CHTR): keep CIK 0001091667 CHARTER COMMUNICATIONS, INC. /MO/, not CIK 0001271834 CCO HOLDINGS CAPITAL CORP
+    why: the kept company: named first among the registrants (49 shared filings, 4 read (45 not in the cache), 4 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1091667/000109166724000121/chtr-20241101.htm
+  id 136 LUMN (CTL): keep CIK 0000018926 Lumen Technologies, Inc., not CIK 0000794323 
+    why: the kept company: row 'CenturyLink, Inc. Common Stock, par value $1.00 per share' names it (11 shared filings, 2 read (9 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/18926/000119312520244126/d945480d8k.htm
+  id 136 LUMN (CTL): keep CIK 0000018926 Lumen Technologies, Inc., not CIK 0000068622 
+    why: the kept company: row 'CenturyLink, Inc. Common Stock, par value $1.00 per share' names it (5 shared filings, 2 read (3 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/18926/000119312520247184/d47952d8k.htm
+  id 136 LUMN (LUMN): keep CIK 0000018926 Lumen Technologies, Inc., not CIK 0000068622 
+    why: the kept company: row 'Lumen Technologies, Inc. Common Stock, par value $1.00 per share' names it (27 shared filings, 2 read (25 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/18926/000119312524266181/d896171d8k.htm
+  id 136 LUMN (LUMN): keep CIK 0000018926 Lumen Technologies, Inc., not CIK 0000794323 
+    why: the kept company: row 'Lumen Technologies, Inc. Common Stock, par value $1.00 per share' names it (33 shared filings, 2 read (31 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/18926/000119312524266181/d896171d8k.htm
+  id 169 DUK (DUK): keep CIK 0001326160 Duke Energy CORP, not CIK 0000030371 
+    why: the kept company: row 'Duke Energy Common Stock, $0.001 par value' names it (21 shared filings, 2 read (19 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1326160/000110465924078218/tm2419006d1_8k.htm
+  id 169 DUK (DUK): keep CIK 0001326160 Duke Energy CORP, not CIK 0000017797 
+    why: the kept company: row 'Duke Energy Common stock, $0.001 par value' names it (19 shared filings, 2 read (17 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1326160/000110465923093663/tm2324190d1_8k.htm
+  id 176 ED (ED): keep CIK 0001047862 CONSOLIDATED EDISON INC, not CIK 0000023632 
+    why: the kept company: row 'Consolidated Edison, Inc., Common Shares ($.10 par value' names it (83 shared filings, 10 read (73 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1047862/000119312524264743/d920901d8k.htm
+  id 200 EXC (EXC): keep CIK 0001109357 EXELON CORP, not CIK 0000022606 
+    why: the kept company: row 'EXELON CORPORATION: Common Stock, without par value' names it (54 shared filings, 17 read (37 not in the cache), 8 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1109357/000110935724000154/exc-20240801.htm
+  id 200 EXC (EXC): keep CIK 0001109357 EXELON CORP, not CIK 0000079732 
+    why: the kept company: row 'EXELON CORPORATION: Common Stock, without par value' names it (39 shared filings, 16 read (23 not in the cache), 9 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1109357/000110935724000183/exc-20241030.htm
+  id 200 EXC (EXC): keep CIK 0001109357 EXELON CORP, not CIK 0001168165 
+    why: the kept company: row 'EXELON CORPORATION: Common Stock, without par value' names it (40 shared filings, 10 read (30 not in the cache), 4 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1109357/000110935722000013/exc-20220110.htm
+  id 252 HDS (HDS): keep CIK 0001573097 HD Supply Holdings, Inc., not CIK 0001465264 
+    why: the kept company: row 'HD Supply Holdings, Inc. common stock, par value $0.01 per share' names it (27 shared filings, 8 read (19 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1573097/000141057819000404/a19-8114_110q.htm
+  id 261 HR (HR): keep CIK 0001360604 Healthcare Realty Trust Inc, not CIK 0001495491 
+    why: the kept company: named first among the registrants (7 shared filings, 3 read (4 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1360604/000119312522202185/d384978d8k.htm
+  id 262 HTZ (HTZ): keep CIK 0001657853 HERTZ GLOBAL HOLDINGS, INC, not CIK 0000047129 
+    why: the kept company: row 'Hertz Global Holdings, Inc. Common Stock par value $0.01 per share' names it (35 shared filings, 7 read (28 not in the cache), 6 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1657853/000165785320000097/htz-20201013.htm
+  id 354 MPW (MPW): keep CIK 0001287865 MEDICAL PROPERTIES TRUST INC, not CIK 0001524607 
+    why: the kept company: row 'Common stock, par value $0.001 per share, of Medical Properties Trust, Inc.' names it (54 shared filings, 2 read (52 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1287865/000095017024126476/mpw-20240930.htm
+  id 374 NEE (NEE): keep CIK 0000753308 NEXTERA ENERGY INC, not CIK 0000037634 
+    why: the kept company: row 'NextEra Energy, Inc. Common Stock, $0.01 Par Value' names it (72 shared filings, 2 read (70 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/753308/000075330824000063/nee-20241230.htm
+  id 419 PEG (PEG): keep CIK 0000788784 PUBLIC SERVICE ENTERPRISE GROUP INC, not CIK 0000081033 
+    why: the kept company: row 'Public Service Enterprise Group Incorporated Common Stock without par value' names it (58 shared filings, 8 read (50 not in the cache), 4 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/788784/000119312524254222/d905174d8k.htm
+  id 419 PEG (PEG): keep CIK 0000788784 PUBLIC SERVICE ENTERPRISE GROUP INC, not CIK 0001158659 
+    why: the kept company: row 'Public Service Enterprise Group Incorporated Common Stock without par value' names it (30 shared filings, 11 read (19 not in the cache), 6 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/788784/000119312521316411/d234896d8k.htm
+  id 435 PPL (PPL): keep CIK 0000922224 PPL Corp, not CIK 0000060549 
+    why: the kept company: row 'Common Stock of PPL Corporation' names it (34 shared filings, 6 read (28 not in the cache), 5 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/922224/000092222423000056/ppl-20231205.htm
+  id 435 PPL (PPL): keep CIK 0000922224 PPL Corp, not CIK 0000317187 
+    why: the kept company: row 'Common Stock of PPL Corporation' names it (32 shared filings, 6 read (26 not in the cache), 5 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/922224/000092222424000002/ppl-20240102.htm
+  id 450 QTS (QTS): keep CIK 0001577368 QTS Realty Trust, Inc., not CIK 0001561164 
+    why: the kept company: named first among the registrants (16 shared filings, 2 read (14 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1577368/000155837019004863/qts-20190331x10q.htm
+  id 508 SRE (SRE): keep CIK 0001032208 SEMPRA, not CIK 0000092108 
+    why: the kept company: row 'SEMPRA: Sempra Common Stock, without par value' names it (47 shared filings, 2 read (45 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1032208/000103220824000048/sempra-20241219.htm
+  id 508 SRE (SRE): keep CIK 0001032208 SEMPRA, not CIK 0000086521 
+    why: the kept company: row 'SEMPRA: Sempra Common Stock, without par value' names it (45 shared filings, 2 read (43 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1032208/000103220824000048/sempra-20241219.htm
+  id 713 EVRG (EVRG): keep CIK 0001711269 Evergy, Inc., not CIK 0000054507 
+    why: the kept company: row 'Evergy, Inc. common stock' names it (68 shared filings, 2 read (66 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1711269/000119312524253709/d897459d8k.htm
+  id 713 EVRG (EVRG): keep CIK 0001711269 Evergy, Inc., not CIK 0000054476 
+    why: the kept company: row 'Evergy, Inc. common stock' names it (67 shared filings, 2 read (65 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1711269/000119312524253709/d897459d8k.htm
+  id 749 DOW (DOW): keep CIK 0001751788 DOW INC., not CIK 0000029915 
+    why: the kept company: row 'Dow Inc. Common Stock, par value $0.01 per share' names it (49 shared filings, 2 read (47 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1751788/000119312524272816/d845834d8k.htm
+  id 789 BKR (BKR): keep CIK 0001701605 Baker Hughes Co, not CIK 0000808362 
+    why: the kept company: named first among the registrants (49 shared filings, 3 read (46 not in the cache), 3 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1701605/000119312524003365/d10294d8k.htm
+  id 867 CEG (CEG): keep CIK 0001868275 Constellation Energy Corp, not CIK 0001168165 
+    why: the kept company: row 'CONSTELLATION ENERGY CORPORATION: Common Stock, without par value' names it (25 shared filings, 11 read (14 not in the cache), 5 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1868275/000186827524000010/ceg-20240227.htm
+  id 904 AIV (AIV): keep CIK 0000922864 APARTMENT INVESTMENT & MANAGEMENT CO, not CIK 0001820878 
+    why: the kept company: row 'Apartment Investment and Management Company Class A Common Stock' names it (50 shared filings, 2 read (48 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/922864/000095017024141161/aiv-20241230.htm
+  id 915 BXP (BXP): keep CIK 0001037540 BXP, Inc., not CIK 0001043121 
+    why: the kept company: row 'BXP, Inc. Common Stock, par value $0.01 per share' names it (72 shared filings, 2 read (70 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1037540/000165642324000059/bxp-20240930.htm
+  id 922 CNP (CNP): keep CIK 0001130310 CENTERPOINT ENERGY INC, not CIK 0000048732 
+    why: the kept company: row 'CenterPoint Energy, Inc. Common Stock, $0.01 par value' names it (52 shared filings, 9 read (43 not in the cache), 9 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1130310/000113031024000119/cnp-20241108.htm
+  id 922 CNP (CNP): keep CIK 0001130310 CENTERPOINT ENERGY INC, not CIK 0001042773 
+    why: the kept company: row 'CenterPoint Energy, Inc. Common Stock, $0.01 par value' names it (55 shared filings, 8 read (47 not in the cache), 8 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1130310/000113031024000115/cnp-20240930.htm
+  id 927 DOC (DOC): keep CIK 0001574540 DOC DR Holdco, LLC, not CIK 0001583994 
+    why: the kept company: named first among the registrants (17 shared filings, 2 read (15 not in the cache), 1 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/1574540/000157454019000080/a8-kinvestorpresentationsl.htm
+  id 935 EQR (EQR): keep CIK 0000906107 EQUITY RESIDENTIAL, not CIK 0000931182 
+    why: the kept company: row 'Common Shares of Beneficial Interest, $0.01 Par Value (Equity Residential' names it (39 shared filings, 2 read (37 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/906107/000119312524281281/d865931d8k.htm
+  id 1001 WEC (WEC): keep CIK 0000783325 WEC ENERGY GROUP, INC., not CIK 0000107815 
+    why: the kept company: row 'WEC Energy Group, Inc. Common Stock, $.01 Par Value' names it (8 shared filings, 2 read (6 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/783325/000010781524000255/wec-20241107.htm
+  id 1001 WEC (WEC): keep CIK 0000783325 WEC ENERGY GROUP, INC., not CIK 0000107833 
+    why: the kept company: row 'WEC Energy Group, Inc. Common Stock, $.01 Par Value' names it (8 shared filings, 2 read (6 not in the cache), 2 decided, unanimous)
+    shared cover page: https://www.sec.gov/Archives/edgar/data/783325/000010781524000255/wec-20241107.htm
+
+Securities whose dated issuer evidence would differ: 2
+  id 571 URI: issuer at the last trade CIK 0001047166 UNITED RENTALS NORTH AMERICA INC -> CIK 0001067701 UNITED RENTALS, INC.
+  id 864 HTZ: issuer at the last trade CIK 0000047129 HERTZ CORP -> CIK 0001657853 HERTZ GLOBAL HOLDINGS, INC

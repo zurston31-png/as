@@ -1,0 +1,12 @@
+1. The stage run pointed at the Stage 1.1 database (as Stage 1.1 itself was run):
+    raise ProtectedDatabase(
+app.universe.database.ProtectedDatabase: /home/user/as/signaliq/data/universe_stage.db is the Stage 1.1 research database, archived and protected: it can be opened read-only only (SIGNALIQ_SIP_RESEARCH_READ_ONLY=1). Work on a new database instead.
+   exit code: 1; report written: no
+
+2. The same with the Stage 1.0 tables and the IEX database:
+app.universe.database.ProtectedDatabase: /home/user/as/signaliq/data/universe_stage_v1_0_tables.db is the Stage 1.0 tables, archived and protected: it can be opened read-only only (SIGNALIQ_SIP_RESEAR
+app.universe.database.ProtectedDatabase: /home/user/as/signaliq/data/signaliq.db is the IEX market data database, archived and protected: it can be opened read-only only (SIGNALIQ_SIP_RESEARCH_READ_ON
+
+3. Read-only mode on Stage 1.1: a write is refused by SQLite itself:
+   read: securities = 1036
+   write refused: OperationalError (sqlite3.OperationalError) attempt to write a readonly database
