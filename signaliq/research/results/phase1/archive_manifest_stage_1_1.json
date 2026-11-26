@@ -1,0 +1,1064 @@
+{
+ "format": "signaliq-research-archive/1",
+ "source": "universe_stage.db",
+ "schema": [
+  "CREATE TABLE batch_symbols (\n\tsymbol VARCHAR(16) NOT NULL, \n\tcategory VARCHAR(32) NOT NULL, \n\tselection VARCHAR(64) NOT NULL, \n\treason TEXT NOT NULL, \n\tdeclared_type VARCHAR(16) NOT NULL, \n\tdiscovered_from VARCHAR(16), \n\tPRIMARY KEY (symbol)\n)",
+  "CREATE TABLE candidates (\n\tsymbol VARCHAR(16) NOT NULL, \n\tsources VARCHAR(160) NOT NULL, \n\tmonths_with_trades INTEGER NOT NULL, \n\tbest_rank INTEGER, \n\tbest_month DATE, \n\tselection VARCHAR(16) NOT NULL, \n\treason TEXT NOT NULL, \n\tPRIMARY KEY (symbol)\n)",
+  "CREATE TABLE corporate_actions (\n\tid VARCHAR(64) NOT NULL, \n\taction_type VARCHAR(32) NOT NULL, \n\tprocess_date DATE, \n\tex_date DATE, \n\teffective_date DATE, \n\tsymbol VARCHAR(32), \n\told_symbol VARCHAR(32), \n\tnew_symbol VARCHAR(32), \n\tacquiree_symbol VARCHAR(32), \n\tacquirer_symbol VARCHAR(32), \n\told_rate FLOAT, \n\tnew_rate FLOAT, \n\trate FLOAT, \n\tcash_rate FLOAT, \n\traw JSON NOT NULL, \n\tfetched_at VARCHAR(27) NOT NULL, \n\tPRIMARY KEY (id)\n)",
+  "CREATE TABLE deal_values (\n\tsecurity_id INTEGER NOT NULL, \n\tacquirer_symbol VARCHAR(16) NOT NULL, \n\teffective_date DATE NOT NULL, \n\tcash_per_share FLOAT NOT NULL, \n\tshares_per_share FLOAT NOT NULL, \n\tacquirer_session DATE, \n\tacquirer_close FLOAT, \n\tvalue FLOAT, \n\ttarget_last_close FLOAT, \n\tstatus VARCHAR(32) NOT NULL, \n\tsource_url TEXT NOT NULL, \n\tnote TEXT NOT NULL, \n\tPRIMARY KEY (security_id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE exit_evidence (\n\tid INTEGER NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\tsource VARCHAR(32) NOT NULL, \n\tcategory VARCHAR(32) NOT NULL, \n\tevent_date DATE, \n\tdetail TEXT NOT NULL, \n\treference VARCHAR(128), \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE external_responses (\n\tsource VARCHAR(32) NOT NULL, \n\trequest_key VARCHAR(128) NOT NULL, \n\tresponse JSON NOT NULL, \n\tfetched_at VARCHAR(27) NOT NULL, \n\tPRIMARY KEY (source, request_key)\n)",
+  "CREATE TABLE issuer_evidence (\n\tid INTEGER NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\tsymbol VARCHAR(16) NOT NULL, \n\tfiled DATE NOT NULL, \n\tcik VARCHAR(10) NOT NULL, \n\tname VARCHAR(160) NOT NULL, \n\thow VARCHAR(32) NOT NULL, \n\turl VARCHAR(300) NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE issuer_sic (\n\tid INTEGER NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\tcik VARCHAR(10) NOT NULL, \n\tas_of DATE NOT NULL, \n\tsic VARCHAR(4), \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE membership (\n\tdecision_session DATE NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\trule_fingerprint VARCHAR(64) NOT NULL, \n\teligible INTEGER NOT NULL, \n\treason VARCHAR(48), \n\traw_close FLOAT, \n\tmedian_dollar_volume FLOAT, \n\trank INTEGER, \n\tmember INTEGER NOT NULL, \n\tPRIMARY KEY (decision_session, security_id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE monthly_bars (\n\tsymbol VARCHAR(16) NOT NULL, \n\tmonth DATE NOT NULL, \n\thigh FLOAT NOT NULL, \n\tclose FLOAT NOT NULL, \n\tvolume BIGINT NOT NULL, \n\tvwap FLOAT NOT NULL, \n\ttrade_count BIGINT NOT NULL, \n\tPRIMARY KEY (symbol, month)\n)",
+  "CREATE TABLE securities (\n\tsecurity_id INTEGER NOT NULL, \n\tfirst_session DATE NOT NULL, \n\tlast_trade_session DATE NOT NULL, \n\tlast_symbol VARCHAR(16) NOT NULL, \n\tstatus VARCHAR(16) NOT NULL, \n\texit_type VARCHAR(32) NOT NULL, \n\texit_event_id VARCHAR(64), \n\texit_cash_rate FLOAT, \n\tacquirer_symbol VARCHAR(16), \n\tassumed_exit_value FLOAT, \n\texit_assumption TEXT, \n\tdeclared_type VARCHAR(16) NOT NULL, \n\treal_trade_sessions INTEGER NOT NULL, security_type VARCHAR(16) DEFAULT 'unknown' NOT NULL, type_status VARCHAR(16) DEFAULT 'unknown' NOT NULL, outcome VARCHAR(32), outcome_status VARCHAR(16), value_basis VARCHAR(16), \n\tPRIMARY KEY (security_id)\n)",
+  "CREATE TABLE security_bars (\n\tsecurity_id INTEGER NOT NULL, \n\tsession DATE NOT NULL, \n\tsymbol VARCHAR(16) NOT NULL, \n\topen FLOAT NOT NULL, \n\thigh FLOAT NOT NULL, \n\tlow FLOAT NOT NULL, \n\tclose FLOAT NOT NULL, \n\tvolume BIGINT NOT NULL, \n\tvwap FLOAT NOT NULL, \n\ttrade_count BIGINT NOT NULL, \n\tsplit_factor FLOAT NOT NULL, \n\talpaca_adjusted_close FLOAT, distribution_factor FLOAT DEFAULT '1.0' NOT NULL, \n\tPRIMARY KEY (security_id, session), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE security_issuers (\n\tsecurity_id INTEGER NOT NULL, \n\tcik VARCHAR(10) NOT NULL, \n\tname VARCHAR(160) NOT NULL, \n\thow VARCHAR(32) NOT NULL, \n\tPRIMARY KEY (security_id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE security_registry (\n\tsecurity_key VARCHAR(48) NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\tfirst_symbol VARCHAR(16) NOT NULL, \n\tfirst_session DATE NOT NULL, \n\tstatus VARCHAR(16) NOT NULL, \n\tmerged_into INTEGER, \n\tPRIMARY KEY (security_key), \n\tUNIQUE (security_id)\n)",
+  "CREATE TABLE segment_links (\n\tlink_id VARCHAR(64) NOT NULL, \n\tsymbol VARCHAR(16) NOT NULL, \n\tearlier_last DATE NOT NULL, \n\tlater_first DATE NOT NULL, \n\tgap_sessions INTEGER NOT NULL, \n\tclose_before FLOAT, \n\tclose_after FLOAT, \n\tsplit_ratio FLOAT NOT NULL, \n\tissuer_before VARCHAR(10), \n\tissuer_after VARCHAR(10), \n\tdecision VARCHAR(16) NOT NULL, \n\treason TEXT NOT NULL, \n\tPRIMARY KEY (link_id)\n)",
+  "CREATE TABLE sip_research_alembic_version (\n\tversion_num VARCHAR(32) NOT NULL, \n\tCONSTRAINT sip_research_alembic_version_pkc PRIMARY KEY (version_num)\n)",
+  "CREATE TABLE spin_offs (\n\tid INTEGER NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\tsource VARCHAR(32) NOT NULL, \n\treference TEXT NOT NULL, \n\tparent_symbol VARCHAR(16) NOT NULL, \n\tex_date DATE NOT NULL, \n\tchildren JSON NOT NULL, \n\tparent_close_before FLOAT, \n\tparent_close_on FLOAT, \n\tdistribution_value FLOAT, \n\tfactor FLOAT, \n\tholder_return FLOAT, \n\tstatus VARCHAR(24) NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE split_checks (\n\tevent_id VARCHAR(64) NOT NULL, \n\tsecurity_id INTEGER, \n\tsymbol VARCHAR(16) NOT NULL, \n\tex_date DATE NOT NULL, \n\tratio FLOAT NOT NULL, \n\tclose_before FLOAT, \n\tclose_on FLOAT, \n\tverdict VARCHAR(16) NOT NULL, \n\tPRIMARY KEY (event_id)\n)",
+  "CREATE TABLE ticker_bars (\n\tsymbol VARCHAR(16) NOT NULL, \n\tsession DATE NOT NULL, \n\topen FLOAT NOT NULL, \n\thigh FLOAT NOT NULL, \n\tlow FLOAT NOT NULL, \n\tclose FLOAT NOT NULL, \n\tvolume BIGINT NOT NULL, \n\tvwap FLOAT NOT NULL, \n\ttrade_count BIGINT NOT NULL, \n\tis_filler INTEGER NOT NULL, \n\tPRIMARY KEY (symbol, session)\n)",
+  "CREATE TABLE ticker_history (\n\tsecurity_id INTEGER NOT NULL, \n\tsymbol VARCHAR(16) NOT NULL, \n\tvalid_from DATE NOT NULL, \n\tvalid_to DATE NOT NULL, \n\tlinked_by VARCHAR(64) NOT NULL, \n\tPRIMARY KEY (security_id, symbol, valid_from), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE TABLE type_evidence (\n\tid INTEGER NOT NULL, \n\tsecurity_id INTEGER NOT NULL, \n\tsource VARCHAR(32) NOT NULL, \n\tsymbol VARCHAR(16) NOT NULL, \n\tsecurity_type VARCHAR(16) NOT NULL, \n\tdetail TEXT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(security_id) REFERENCES securities (security_id)\n)",
+  "CREATE INDEX ix_corporate_actions_acquiree_symbol ON corporate_actions (acquiree_symbol)",
+  "CREATE INDEX ix_corporate_actions_action_type ON corporate_actions (action_type)",
+  "CREATE INDEX ix_corporate_actions_new_symbol ON corporate_actions (new_symbol)",
+  "CREATE INDEX ix_corporate_actions_old_symbol ON corporate_actions (old_symbol)",
+  "CREATE INDEX ix_corporate_actions_symbol ON corporate_actions (symbol)",
+  "CREATE INDEX ix_exit_evidence_security_id ON exit_evidence (security_id)",
+  "CREATE INDEX ix_issuer_evidence_security_id ON issuer_evidence (security_id)",
+  "CREATE INDEX ix_issuer_sic_security_id ON issuer_sic (security_id)",
+  "CREATE INDEX ix_type_evidence_security_id ON type_evidence (security_id)"
+ ],
+ "tables": {
+  "batch_symbols": {
+   "columns": [
+    "symbol",
+    "category",
+    "selection",
+    "reason",
+    "declared_type",
+    "discovered_from"
+   ],
+   "rows": 1101,
+   "fingerprint": "46d0f9038d473f4a",
+   "fingerprint_all_columns": "46d0f9038d473f4a"
+  },
+  "candidates": {
+   "columns": [
+    "symbol",
+    "sources",
+    "months_with_trades",
+    "best_rank",
+    "best_month",
+    "selection",
+    "reason"
+   ],
+   "rows": 18490,
+   "fingerprint": "fa6d31eca65e926e",
+   "fingerprint_all_columns": "fa6d31eca65e926e"
+  },
+  "corporate_actions": {
+   "columns": [
+    "id",
+    "action_type",
+    "process_date",
+    "ex_date",
+    "effective_date",
+    "symbol",
+    "old_symbol",
+    "new_symbol",
+    "acquiree_symbol",
+    "acquirer_symbol",
+    "old_rate",
+    "new_rate",
+    "rate",
+    "cash_rate",
+    "raw",
+    "fetched_at"
+   ],
+   "rows": 889,
+   "fingerprint": "67730ac904cf2127",
+   "fingerprint_all_columns": "52985335b2f3e329"
+  },
+  "deal_values": {
+   "columns": [
+    "security_id",
+    "acquirer_symbol",
+    "effective_date",
+    "cash_per_share",
+    "shares_per_share",
+    "acquirer_session",
+    "acquirer_close",
+    "value",
+    "target_last_close",
+    "status",
+    "source_url",
+    "note"
+   ],
+   "rows": 11,
+   "fingerprint": "4e5b4c67f7fe092b",
+   "fingerprint_all_columns": "4e5b4c67f7fe092b"
+  },
+  "exit_evidence": {
+   "columns": [
+    "id",
+    "security_id",
+    "source",
+    "category",
+    "event_date",
+    "detail",
+    "reference"
+   ],
+   "rows": 399,
+   "fingerprint": "6624f859e7dabe04",
+   "fingerprint_all_columns": "6624f859e7dabe04"
+  },
+  "external_responses": {
+   "columns": [
+    "source",
+    "request_key",
+    "response",
+    "fetched_at"
+   ],
+   "rows": 59007,
+   "fingerprint": "dd083732acf86453",
+   "fingerprint_all_columns": "ddc30ff2e37141a9"
+  },
+  "issuer_evidence": {
+   "columns": [
+    "id",
+    "security_id",
+    "symbol",
+    "filed",
+    "cik",
+    "name",
+    "how",
+    "url"
+   ],
+   "rows": 71720,
+   "fingerprint": "0164d15727635eb0",
+   "fingerprint_all_columns": "0164d15727635eb0"
+  },
+  "issuer_sic": {
+   "columns": [
+    "id",
+    "security_id",
+    "cik",
+    "as_of",
+    "sic"
+   ],
+   "rows": 4107,
+   "fingerprint": "68ed0468c1226145",
+   "fingerprint_all_columns": "68ed0468c1226145"
+  },
+  "membership": {
+   "columns": [
+    "decision_session",
+    "security_id",
+    "rule_fingerprint",
+    "eligible",
+    "reason",
+    "raw_close",
+    "median_dollar_volume",
+    "rank",
+    "member"
+   ],
+   "rows": 61124,
+   "fingerprint": "78d11433877415bc",
+   "fingerprint_all_columns": "78d11433877415bc"
+  },
+  "monthly_bars": {
+   "columns": [
+    "symbol",
+    "month",
+    "high",
+    "close",
+    "volume",
+    "vwap",
+    "trade_count"
+   ],
+   "rows": 691046,
+   "fingerprint": "c60804f7133b7b6f",
+   "fingerprint_all_columns": "c60804f7133b7b6f"
+  },
+  "securities": {
+   "columns": [
+    "security_id",
+    "first_session",
+    "last_trade_session",
+    "last_symbol",
+    "status",
+    "exit_type",
+    "exit_event_id",
+    "exit_cash_rate",
+    "acquirer_symbol",
+    "assumed_exit_value",
+    "exit_assumption",
+    "declared_type",
+    "real_trade_sessions",
+    "security_type",
+    "type_status",
+    "outcome",
+    "outcome_status",
+    "value_basis"
+   ],
+   "rows": 1036,
+   "fingerprint": "81fc4b128c23f35a",
+   "fingerprint_all_columns": "81fc4b128c23f35a"
+  },
+  "security_bars": {
+   "columns": [
+    "security_id",
+    "session",
+    "symbol",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "vwap",
+    "trade_count",
+    "split_factor",
+    "alpaca_adjusted_close",
+    "distribution_factor"
+   ],
+   "rows": 1928996,
+   "fingerprint": "ab82b29ee18a82d8",
+   "fingerprint_all_columns": "ab82b29ee18a82d8"
+  },
+  "security_issuers": {
+   "columns": [
+    "security_id",
+    "cik",
+    "name",
+    "how"
+   ],
+   "rows": 948,
+   "fingerprint": "304c24ce5daebc80",
+   "fingerprint_all_columns": "304c24ce5daebc80"
+  },
+  "security_registry": {
+   "columns": [
+    "security_key",
+    "security_id",
+    "first_symbol",
+    "first_session",
+    "status",
+    "merged_into"
+   ],
+   "rows": 1088,
+   "fingerprint": "c98d619b15b1e0c9",
+   "fingerprint_all_columns": "c98d619b15b1e0c9"
+  },
+  "segment_links": {
+   "columns": [
+    "link_id",
+    "symbol",
+    "earlier_last",
+    "later_first",
+    "gap_sessions",
+    "close_before",
+    "close_after",
+    "split_ratio",
+    "issuer_before",
+    "issuer_after",
+    "decision",
+    "reason"
+   ],
+   "rows": 74,
+   "fingerprint": "ba5b3e94201fd78b",
+   "fingerprint_all_columns": "ba5b3e94201fd78b"
+  },
+  "sip_research_alembic_version": {
+   "columns": [
+    "version_num"
+   ],
+   "rows": 1,
+   "fingerprint": "2f70064bcd5be351",
+   "fingerprint_all_columns": "2f70064bcd5be351"
+  },
+  "spin_offs": {
+   "columns": [
+    "id",
+    "security_id",
+    "source",
+    "reference",
+    "parent_symbol",
+    "ex_date",
+    "children",
+    "parent_close_before",
+    "parent_close_on",
+    "distribution_value",
+    "factor",
+    "holder_return",
+    "status"
+   ],
+   "rows": 27,
+   "fingerprint": "d6821e18388940d5",
+   "fingerprint_all_columns": "d6821e18388940d5"
+  },
+  "split_checks": {
+   "columns": [
+    "event_id",
+    "security_id",
+    "symbol",
+    "ex_date",
+    "ratio",
+    "close_before",
+    "close_on",
+    "verdict"
+   ],
+   "rows": 384,
+   "fingerprint": "1de319621b65bd50",
+   "fingerprint_all_columns": "1de319621b65bd50"
+  },
+  "ticker_bars": {
+   "columns": [
+    "symbol",
+    "session",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "vwap",
+    "trade_count",
+    "is_filler"
+   ],
+   "rows": 1960141,
+   "fingerprint": "9b693ad36675d068",
+   "fingerprint_all_columns": "9b693ad36675d068"
+  },
+  "ticker_history": {
+   "columns": [
+    "security_id",
+    "symbol",
+    "valid_from",
+    "valid_to",
+    "linked_by"
+   ],
+   "rows": 1171,
+   "fingerprint": "75b0cb7cce4dfcbd",
+   "fingerprint_all_columns": "75b0cb7cce4dfcbd"
+  },
+  "type_evidence": {
+   "columns": [
+    "id",
+    "security_id",
+    "source",
+    "symbol",
+    "security_type",
+    "detail"
+   ],
+   "rows": 3134,
+   "fingerprint": "bdd23c51163f1707",
+   "fingerprint_all_columns": "bdd23c51163f1707"
+  }
+ },
+ "files": [
+  {
+   "file": "0001-batch_symbols.jsonl.gz",
+   "table": "batch_symbols",
+   "rows": 1101,
+   "bytes": 13091,
+   "sha256": "a092d3f6d05720ba2b879d1262726b1cee65c17a89692f2205f3389d0c20feda"
+  },
+  {
+   "file": "0002-candidates.jsonl.gz",
+   "table": "candidates",
+   "rows": 18490,
+   "bytes": 207044,
+   "sha256": "928b4b2763cb90cc74e56f0d95708a575ce4bde55d9b71b1cffafc345891bfc2"
+  },
+  {
+   "file": "0003-corporate_actions.jsonl.gz",
+   "table": "corporate_actions",
+   "rows": 889,
+   "bytes": 79266,
+   "sha256": "e565dbc8da1026ec98fcd5c59607bcf71c5d20734d57f32da19fa252d86ac17b"
+  },
+  {
+   "file": "0004-deal_values.jsonl.gz",
+   "table": "deal_values",
+   "rows": 11,
+   "bytes": 1647,
+   "sha256": "d1ec0ae3fbdcb420336aaf537ebcb242bb01658e831cb502c34ae55c7705b783"
+  },
+  {
+   "file": "0005-exit_evidence.jsonl.gz",
+   "table": "exit_evidence",
+   "rows": 399,
+   "bytes": 19356,
+   "sha256": "e5d2b1a078363b876c59ab2bccab8f594f51d2d62bab0ee2df07d4e527eea0f6"
+  },
+  {
+   "file": "0006-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 27423,
+   "bytes": 32461016,
+   "sha256": "197da40168bae99c10b083c39b103e270862b1116725b42ba32caa44b5b0692c"
+  },
+  {
+   "file": "0007-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 727,
+   "bytes": 27748313,
+   "sha256": "792b50c65af0d844ea84d39774fbbd841681872b87b60141726349740121602a"
+  },
+  {
+   "file": "0008-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 1075,
+   "bytes": 29972588,
+   "sha256": "0de6f5374744944ac02612d99f85d620dd102db42a8d44854a13b4ac7ad1b308"
+  },
+  {
+   "file": "0009-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 9263,
+   "bytes": 21870234,
+   "sha256": "8f9ffcd531bea4beb1988722be7e76dc8c424265f8147a6f38b4ab3530802b3d"
+  },
+  {
+   "file": "0010-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 1406,
+   "bytes": 17500758,
+   "sha256": "bb97c3faf3b4384dfa6f8a87ae14ed482a941b5d409bf97cef124f41a234c2d2"
+  },
+  {
+   "file": "0011-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 143,
+   "bytes": 17134926,
+   "sha256": "fee6f975bc362ca2db8c17cdebced89e9115b2e28e772e0a16296137bf545b37"
+  },
+  {
+   "file": "0012-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 260,
+   "bytes": 17767780,
+   "sha256": "06dffd5939fed119289756747434b2c68128187d93644d8ffed07c977e223219"
+  },
+  {
+   "file": "0013-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 164,
+   "bytes": 35400554,
+   "sha256": "441e72c42ce7d1e2b53fab5a08127cdc82213634f7c4ff4e1b0740c3c74837ab"
+  },
+  {
+   "file": "0014-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 60,
+   "bytes": 22858977,
+   "sha256": "dbded0406d6f4757f0ec684f7e2b22067d701b256be76f110b0cf3ed38b0e344"
+  },
+  {
+   "file": "0015-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 239,
+   "bytes": 14562427,
+   "sha256": "63cd062abf5d49594b9360873fbf38c37b7c519575caf1ed11ce2342286bd625"
+  },
+  {
+   "file": "0016-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 170,
+   "bytes": 15515486,
+   "sha256": "59394a70b3831e30557bbe54036a200b976973405c2f4f2c3cce7cabeb72c7e1"
+  },
+  {
+   "file": "0017-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 298,
+   "bytes": 18184258,
+   "sha256": "a5d923de7a10ecddb3f8a35fb1efce2a0b76448d27cb11d6c9e3e7c93b08f76b"
+  },
+  {
+   "file": "0018-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 231,
+   "bytes": 19883269,
+   "sha256": "66009291c781fcfb33160394befe243615da2378243cc120c18d5561dc565a3f"
+  },
+  {
+   "file": "0019-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 122,
+   "bytes": 19268341,
+   "sha256": "9d8d303e38c84bbb57ccc133005705a5d958e42281f6c676292a20a6bafc2602"
+  },
+  {
+   "file": "0020-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 128,
+   "bytes": 17078655,
+   "sha256": "9ab8d8537ed720b9311a49a3923519715390faa7dbb622a2576f10f6ce12a8b9"
+  },
+  {
+   "file": "0021-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 170,
+   "bytes": 13960344,
+   "sha256": "864a3ce684a118b1fc17008af97039c1ef607fdb8fca0e66b3535b873142f63f"
+  },
+  {
+   "file": "0022-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 279,
+   "bytes": 16639536,
+   "sha256": "81497b189a3a4168b9d3a0e0bd7d19cfbc49c2682910a73b5138076b4fc58a39"
+  },
+  {
+   "file": "0023-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 235,
+   "bytes": 17353287,
+   "sha256": "55dceda42e8b627f6f4917388a5ddd96e81f4256f74eab61c238448ec4b5bf78"
+  },
+  {
+   "file": "0024-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 220,
+   "bytes": 13822008,
+   "sha256": "a26c8e7d1eb5fb97b5f54c85f41c8dec7790b165add4fc7ef4078111592a279a"
+  },
+  {
+   "file": "0025-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 227,
+   "bytes": 16287016,
+   "sha256": "32ebe296e0f5896ff6303eedc23ebd9abff1275c19511b71772b73fb41c571c8"
+  },
+  {
+   "file": "0026-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 330,
+   "bytes": 19724132,
+   "sha256": "00bdc9f16ec1c3b076196cd1f35ad66546c3ee570c8c3e0b9d4db58357350c1c"
+  },
+  {
+   "file": "0027-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 249,
+   "bytes": 18069054,
+   "sha256": "e10ac83e0ae3265adaafc35f59d22990e2516aa5643b4c7dd91519470a5c5b85"
+  },
+  {
+   "file": "0028-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 185,
+   "bytes": 15755056,
+   "sha256": "dd167333a31e4bb2c422fc9b40c14e7916b6c1d3e2b26090a833521a3d0c144b"
+  },
+  {
+   "file": "0029-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 179,
+   "bytes": 18671862,
+   "sha256": "56b0c41fcddd56dc8df350b649a7bd81ed80b1963e94bd9fcc2a6856efb380e0"
+  },
+  {
+   "file": "0030-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 188,
+   "bytes": 21669529,
+   "sha256": "841c3d93454e17c67b2415fd726b0b0ac4102897bb10b5ff5b1a46a1b219ad57"
+  },
+  {
+   "file": "0031-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 327,
+   "bytes": 19841695,
+   "sha256": "db3e5905c85705e77331cd8dce0db98ac4d2615f5a4cd8df4e6a4c62dca1e830"
+  },
+  {
+   "file": "0032-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 296,
+   "bytes": 15663838,
+   "sha256": "18522c81e827488821ef7f58989b728be098cf5d8e3a8cbfc88e5b9d4e3cf575"
+  },
+  {
+   "file": "0033-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 209,
+   "bytes": 16258976,
+   "sha256": "debe6a049df9128fdcfc3e90a16c9ede4d75f018f777c8684786853d63e7658a"
+  },
+  {
+   "file": "0034-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 296,
+   "bytes": 17875105,
+   "sha256": "ede373917239b4a2c0b4626f65a74e276f4ffab911db8b938debb354973c81a5"
+  },
+  {
+   "file": "0035-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 141,
+   "bytes": 17233501,
+   "sha256": "93759194325fac932f1ceb114d2dc8a124aa1aff2cdd112081d8661198201ed9"
+  },
+  {
+   "file": "0036-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 144,
+   "bytes": 18204940,
+   "sha256": "322957df71f21d2af14f8f68232e4d6e688bd0c63986df1f852eee9e0d96f561"
+  },
+  {
+   "file": "0037-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 273,
+   "bytes": 26062499,
+   "sha256": "d468f893bb5092afbad011f079b59b1ab135927643deb854b8234b2c402b6b32"
+  },
+  {
+   "file": "0038-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 191,
+   "bytes": 21581219,
+   "sha256": "898ff4add3344283cc9ec8fc3c821e2a35db557fe6e8c244a69d01eecdb250ad"
+  },
+  {
+   "file": "0039-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 286,
+   "bytes": 17406236,
+   "sha256": "cbca4122c68cae4acc4b0dc6632898686bca22da78b39fc1183237fb2e580a52"
+  },
+  {
+   "file": "0040-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 94,
+   "bytes": 13323244,
+   "sha256": "2b80716c5fa1e56bb564320acbcc16f716d1e7ad4675cbb587d73c98f3f6fdd9"
+  },
+  {
+   "file": "0041-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 241,
+   "bytes": 17750160,
+   "sha256": "7f4c72520b5098ec50ee79edf343b9feddae446fbfc9940b5c38b11f039c25f7"
+  },
+  {
+   "file": "0042-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 287,
+   "bytes": 19818991,
+   "sha256": "b51353accef20f7754af8b8411482c0ea7fd35d52fd1c4b97736c7554211e74e"
+  },
+  {
+   "file": "0043-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 448,
+   "bytes": 22988121,
+   "sha256": "663fd6cd0176dbee273b268b28aefd22d3a7e8acf414645bc9823d12aef1fd9f"
+  },
+  {
+   "file": "0044-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 297,
+   "bytes": 19628473,
+   "sha256": "2489d6ac73bd5d4acc2a5278cb883dff5612c89f87c3160000482a5e97c6f6f9"
+  },
+  {
+   "file": "0045-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 241,
+   "bytes": 28511396,
+   "sha256": "5be46c02817e59efc06bc32238d79667a978bbfbeb2c727a6104dc91edf64f68"
+  },
+  {
+   "file": "0046-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 292,
+   "bytes": 19754670,
+   "sha256": "9295376fefa840bc10365856e7f3771bd5b40975d6c2129f2c4bb9cfe7b30391"
+  },
+  {
+   "file": "0047-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 183,
+   "bytes": 18188928,
+   "sha256": "80cfcd913b34644b7572bfc0853b3d9c790d04c21266b08fdfc8b9e49d65f238"
+  },
+  {
+   "file": "0048-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 238,
+   "bytes": 20853956,
+   "sha256": "70e256f8d038625881ab200c9589c2c67e2e33a510c9612096e681fc149b7ff3"
+  },
+  {
+   "file": "0049-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 190,
+   "bytes": 28987227,
+   "sha256": "8c1cd23437d23808d34a87a1b402d078df3e7c5bb6c046eb6f92738eae1c6943"
+  },
+  {
+   "file": "0050-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 289,
+   "bytes": 18190980,
+   "sha256": "eab080849022f79ac46560d41b32573aaf7fb9f248f45f4290307964d740af73"
+  },
+  {
+   "file": "0051-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 198,
+   "bytes": 21195506,
+   "sha256": "cb90202a23b8c6023e21626e5f4134d502d444c014e290e2708ca5a73d15582b"
+  },
+  {
+   "file": "0052-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 402,
+   "bytes": 24935098,
+   "sha256": "b2d611e198fc76ab9896321b664c8d5a97818f0e5ba0c56f19858a3b70c71bde"
+  },
+  {
+   "file": "0053-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 263,
+   "bytes": 20760222,
+   "sha256": "be00acaa443e18caef319f94a9be113f4fea04b946cb49b2639d63e1ee30d562"
+  },
+  {
+   "file": "0054-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 178,
+   "bytes": 21925152,
+   "sha256": "02d641df2b617c95c84df16b11454c52601ffb016788f0f9679ad69c6c789889"
+  },
+  {
+   "file": "0055-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 235,
+   "bytes": 28636430,
+   "sha256": "5798c7357ccf384701dfb794bbfe633d07f816369441a051b3000a1e1bd00481"
+  },
+  {
+   "file": "0056-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 332,
+   "bytes": 23684288,
+   "sha256": "14ba74778e0fec4305f0e01dd4a0556eae15e7d20a675f8adf9bf6d20eeb22fe"
+  },
+  {
+   "file": "0057-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 226,
+   "bytes": 24013320,
+   "sha256": "aba2e6da0fa25a15b87524b5cde4aa4d6135abaf5ec452505eec329b47926ef7"
+  },
+  {
+   "file": "0058-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 215,
+   "bytes": 28609964,
+   "sha256": "3ed12d12aab66bfd64f8289763d61f8597357adad194f8c9ebf9733315f5c0ef"
+  },
+  {
+   "file": "0059-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 150,
+   "bytes": 20644406,
+   "sha256": "04e9af66ec22d27e3eee375d1e7250e2dbfe269d15e4ea8e1edd32a70bded548"
+  },
+  {
+   "file": "0060-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 167,
+   "bytes": 25540923,
+   "sha256": "ecdf6bfc02f049713efb217d0b0a1ffea157f453bfb902c9e0b1d5a776457b5c"
+  },
+  {
+   "file": "0061-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 211,
+   "bytes": 23851841,
+   "sha256": "e565d3ccbbc3a500446ffd4c839a6236072e2813cece2f42c04102cf032ea27d"
+  },
+  {
+   "file": "0062-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 230,
+   "bytes": 24299253,
+   "sha256": "fda4e7b379a76ae49dbc8a216c05a11fbed8c009c98312f9327f3c4324ffd62f"
+  },
+  {
+   "file": "0063-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 238,
+   "bytes": 22533596,
+   "sha256": "b10deeceb1aca8f97119c6eceb8efaa6553d60b30443ddc32f454fdde5f22f7c"
+  },
+  {
+   "file": "0064-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 218,
+   "bytes": 20073433,
+   "sha256": "cc5045644763fb3caefa0584e8eea8b94e9c4cfdaeb2b3efe9bc1a5f6a7c132c"
+  },
+  {
+   "file": "0065-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 203,
+   "bytes": 19848298,
+   "sha256": "0d015d3663a0be84b42693cc6f8b5fd1022fd558986636e0c07a69b3645b56ca"
+  },
+  {
+   "file": "0066-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 217,
+   "bytes": 15676065,
+   "sha256": "22553aed640c8d8e547bb6b57e72bf173f62de46c5d01fbd1c2e6f93ca8f0ef5"
+  },
+  {
+   "file": "0067-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 168,
+   "bytes": 28199096,
+   "sha256": "ff356d8a1eda364c4ebb71e4c13b9df7bd2fdf53d9c06de84a56782bf7248c63"
+  },
+  {
+   "file": "0068-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 222,
+   "bytes": 15225627,
+   "sha256": "44d6336492158384a3a558d4e113caa87d96763174b41eb92bb44209b8ed9605"
+  },
+  {
+   "file": "0069-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 196,
+   "bytes": 13278819,
+   "sha256": "684f8a63538d68c0995ba234309b7562af364079bbf5b4e2126bd640a6020d9d"
+  },
+  {
+   "file": "0070-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 136,
+   "bytes": 15443226,
+   "sha256": "331671ea4dfae84edb702bfaede11ce1eba8a50a7512f75399783ac7bd6e065c"
+  },
+  {
+   "file": "0071-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 193,
+   "bytes": 15703811,
+   "sha256": "5a20eab564571d16f53bbaa1a31e123597f4e0817f6cc8293ffbacfe25d1fc73"
+  },
+  {
+   "file": "0072-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 372,
+   "bytes": 19398726,
+   "sha256": "6b4ee4d6cbe17c4e3fcaf706d72f848bc716901fbcb45b29b80bb2ec84320a83"
+  },
+  {
+   "file": "0073-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 199,
+   "bytes": 20136907,
+   "sha256": "e5a93f9054902091855256b6206ce0bd13dd132d9c3dee5194a36e7d7068d3b1"
+  },
+  {
+   "file": "0074-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 238,
+   "bytes": 15216409,
+   "sha256": "2b9886a80fbe099d378d05d955b038363a18e30eac777bef2063424015db7241"
+  },
+  {
+   "file": "0075-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 320,
+   "bytes": 20492039,
+   "sha256": "313d6e231fb9714234222b12f81db4886566789a2d5d37b64b965c115d33d9cf"
+  },
+  {
+   "file": "0076-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 208,
+   "bytes": 16694856,
+   "sha256": "2b40098ac019f062425bc484589eac4ce73cdbc1d64cdf89e6955c51c44cdf36"
+  },
+  {
+   "file": "0077-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 258,
+   "bytes": 18129270,
+   "sha256": "7d88d27362b094ac65008cb83d707a57259457e61a7433c65f4c36e03b6ac20c"
+  },
+  {
+   "file": "0078-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 212,
+   "bytes": 19362183,
+   "sha256": "b0be8afc1359c653151091954a40fcdbe93d52fc0bbc3715ddf88de113dec8b0"
+  },
+  {
+   "file": "0079-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 244,
+   "bytes": 16848565,
+   "sha256": "635d3def2b923b2c1b821598b7d07bfcbb2ac963e7559bbeb4f2cbd8f753466a"
+  },
+  {
+   "file": "0080-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 97,
+   "bytes": 16417651,
+   "sha256": "c81512541642f5e8ee511592c98a52e526927830ebac84156b165e21818e94f0"
+  },
+  {
+   "file": "0081-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 53,
+   "bytes": 12857436,
+   "sha256": "74468adb6278fde2b94cecd814291b0b3a9d23cf5fa13f975c5650c0bdd9faf1"
+  },
+  {
+   "file": "0082-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 152,
+   "bytes": 29560655,
+   "sha256": "a5385044e0dca34fc2e6a63bbf48fe04d87ca507ef0ddb4efe02f43a507563cd"
+  },
+  {
+   "file": "0083-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 94,
+   "bytes": 14322196,
+   "sha256": "8a5298aa2765674eae19672e0c5707dd420a08e25534ca84d240084894c2d27d"
+  },
+  {
+   "file": "0084-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 640,
+   "bytes": 22298702,
+   "sha256": "942ff043ff61c4cbddf74018f75d41bb41245d59e5325f0a67fcfaf93cc78c4b"
+  },
+  {
+   "file": "0085-external_responses.jsonl.gz",
+   "table": "external_responses",
+   "rows": 2388,
+   "bytes": 3047170,
+   "sha256": "f1c4a6fb991b484a54afe4270542fe234a62e9e2075b5067115e579afb369146"
+  },
+  {
+   "file": "0086-issuer_evidence.jsonl.gz",
+   "table": "issuer_evidence",
+   "rows": 71720,
+   "bytes": 1198148,
+   "sha256": "1b1443eb0d3e4149fb6240bca2967cdff8a2c0413dd938ba6efc3e7f9f6443ff"
+  },
+  {
+   "file": "0087-issuer_sic.jsonl.gz",
+   "table": "issuer_sic",
+   "rows": 4107,
+   "bytes": 35474,
+   "sha256": "9c5d942231719f52b3b12f78b76fc6cc0a8745a68a898844910a0c57e5f6218a"
+  },
+  {
+   "file": "0088-membership.jsonl.gz",
+   "table": "membership",
+   "rows": 61124,
+   "bytes": 900011,
+   "sha256": "d297c680aacbdc615deea738ac4a41e861bf2aa3eade217c9e770e254ec66c96"
+  },
+  {
+   "file": "0089-monthly_bars.jsonl.gz",
+   "table": "monthly_bars",
+   "rows": 691046,
+   "bytes": 14770885,
+   "sha256": "296e73d6345ca43639953500ccbc83ef3f32d49a6972bcf4977377ad25a42506"
+  },
+  {
+   "file": "0090-securities.jsonl.gz",
+   "table": "securities",
+   "rows": 1036,
+   "bytes": 18430,
+   "sha256": "3d7de7c057cdda8e41930c1f85144d1aa0a93ec17fe31bb45bf1809fe6782e0f"
+  },
+  {
+   "file": "0091-security_bars.jsonl.gz",
+   "table": "security_bars",
+   "rows": 1928996,
+   "bytes": 57178742,
+   "sha256": "1924bf583065be1c183393ba2b9dbedfda6164f4e79411ee5eae74cc7a2275cb"
+  },
+  {
+   "file": "0092-security_issuers.jsonl.gz",
+   "table": "security_issuers",
+   "rows": 948,
+   "bytes": 16861,
+   "sha256": "4ad35fd70eff7063c4591cfbeeeefb061bbf708fe7256917069dc6b8265a63f7"
+  },
+  {
+   "file": "0093-security_registry.jsonl.gz",
+   "table": "security_registry",
+   "rows": 1088,
+   "bytes": 12363,
+   "sha256": "40607a615de744fa5c67544b4015a095357d3811bc4274b5055c1b7bdc97ab0a"
+  },
+  {
+   "file": "0094-segment_links.jsonl.gz",
+   "table": "segment_links",
+   "rows": 74,
+   "bytes": 4414,
+   "sha256": "07d255df0f361650e39124dd7ef116963471bf78fe5231b1c8bfb606c6badc2c"
+  },
+  {
+   "file": "0095-sip_research_alembic_version.jsonl.gz",
+   "table": "sip_research_alembic_version",
+   "rows": 1,
+   "bytes": 76,
+   "sha256": "5df7a569d2234cf2886a9c85d37697898e58c189b076598b7d0fe22f4d14ba61"
+  },
+  {
+   "file": "0096-spin_offs.jsonl.gz",
+   "table": "spin_offs",
+   "rows": 27,
+   "bytes": 2741,
+   "sha256": "b0997e610663f26769da37a67028d5ea85536d6f13b5ee1a93d587485bbe76c9"
+  },
+  {
+   "file": "0097-split_checks.jsonl.gz",
+   "table": "split_checks",
+   "rows": 384,
+   "bytes": 16241,
+   "sha256": "1087e313a7dcf510ac3aac8d08766430b8bbde5cf7eed8b81e05ae7b10aba656"
+  },
+  {
+   "file": "0098-ticker_bars.jsonl.gz",
+   "table": "ticker_bars",
+   "rows": 1960141,
+   "bytes": 50507461,
+   "sha256": "601e5315f6aca2f9d6082c6cdc80371ddb898829b2821c7443e0c0a171caf417"
+  },
+  {
+   "file": "0099-ticker_history.jsonl.gz",
+   "table": "ticker_history",
+   "rows": 1171,
+   "bytes": 13332,
+   "sha256": "049cab99e7829582659325e9e64b096a406c1c262c603d30928970d151be90cc"
+  },
+  {
+   "file": "0100-type_evidence.jsonl.gz",
+   "table": "type_evidence",
+   "rows": 3134,
+   "bytes": 106246,
+   "sha256": "56b419e619c775979502a9adaa4e56af0ad54e33b274bbc8ab226df0862191e8"
+  }
+ ]
+}
