@@ -24,11 +24,46 @@ def table(db, sql):
     return db.execute(sql).fetchall()
 
 
+def why(rows: dict, sid: int, day) -> str:
+    """How a run treated a security at a decision: its rank, or why it was not eligible."""
+    r = rows.get((day, sid))
+    if r is None:
+        return "not in that run"
+    return f"rank {r[4]}" if r[2] else f"not eligible: {r[3]}"
+
+
+def nesting(old_rows: dict, new_rows: dict, k: int) -> dict:
+    """Per decision of the old run: (old members, the new run's top ``k``) where they differ.
+
+    Rows are membership rows keyed (decision, security_id) with (..., eligible, reason, rank,
+    member). The top ``k`` of the new run are its eligible securities ranked 1..k. With the
+    same ranking rule, a larger run's top ``k`` must equal the smaller run's members unless
+    the evidence about a security in both runs changed; every difference must be explained.
+    """
+    differences = {}
+    for day in sorted({key[0] for key in old_rows}):
+        was = {key[1] for key, r in old_rows.items() if key[0] == day and r[5]}
+        top = {
+            key[1]
+            for key, r in new_rows.items()
+            if key[0] == day and r[2] and r[4] is not None and r[4] <= k
+        }
+        if was != top:
+            differences[day] = (was, top)
+    return differences
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("old", type=Path)
     parser.add_argument("new", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--nesting",
+        type=int,
+        metavar="K",
+        help="also check that the new run's top K equal the old run's members at every decision",
+    )
     args = parser.parse_args()
     lines: list[str] = []
 
@@ -84,17 +119,11 @@ def main() -> int:
         entering.update(ins)
         leaving.update(outs)
 
-        def why(rows, sid, day=day):
-            r = rows.get((day, sid))
-            if r is None:
-                return "not in that run"
-            return f"rank {r[4]}" if r[2] else f"not eligible: {r[3]}"
-
         say(
             f"  {day}: +{len(ins)} -{len(outs)}; in: "
-            + ", ".join(f"{name.get(s)} (old: {why(ma, s)})" for s in ins)
+            + ", ".join(f"{name.get(s)} (old: {why(ma, s, day)})" for s in ins)
             + "; out: "
-            + ", ".join(f"{name.get(s)} (new: {why(mb, s)})" for s in outs)
+            + ", ".join(f"{name.get(s)} (new: {why(mb, s, day)})" for s in outs)
         )
     say(f"Decisions with a different member list: {changed_days} of {len(days)}")
     say(
@@ -114,6 +143,27 @@ def main() -> int:
 
     say(f"Not-eligible reasons, old: {dict(sorted(reasons(ma).items()))}")
     say(f"Not-eligible reasons, new: {dict(sorted(reasons(mb).items()))}")
+
+    if args.nesting:
+        say(f"\nNESTING (the new run's top {args.nesting} against the old run's members)")
+        differences = nesting(ma, mb, args.nesting)
+        for day, (was, top) in differences.items():
+            say(
+                f"  {day}: only in the old members: "
+                + ", ".join(f"{name.get(s)} (new: {why(mb, s, day)})" for s in sorted(was - top))
+                + "; only in the new top: "
+                + ", ".join(f"{name.get(s)} (old: {why(ma, s, day)})" for s in sorted(top - was))
+            )
+        days_old = sorted({key[0] for key in ma})
+        say(
+            "  RESULT: "
+            + (
+                f"nested at every decision ({len(days_old)})"
+                if not differences
+                else f"{len(differences)} of {len(days_old)} decisions differ; "
+                "each must be explained"
+            )
+        )
 
     say("\nTYPES (security_type, type_status)")
     grid = Counter()

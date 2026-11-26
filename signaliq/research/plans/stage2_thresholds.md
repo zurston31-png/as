@@ -1,0 +1,95 @@
+# Stage 2 thresholds, for review
+
+This lists every exact numerical threshold in `research/plans/stage2_plan.md`. For each one:
+what it measures, and what happens when it fails.
+
+**None of these is approved.** They take effect only once you approve them one by one.
+Numbers that are estimates (section D) are not thresholds and are listed only so that none
+is mistaken for one.
+
+## A. Selection rule
+
+These parameters define the universe; they are not pass/fail checks. The ones marked
+"(Stage 1)" are carried over unchanged. Changing any of them changes the rule fingerprint
+and makes a new version.
+
+| # | Threshold | What it measures | If it is not met |
+| --- | --- | --- | --- |
+| A1 | **N = 250** members per decision | universe size: the 250 eligible common stocks with the highest 63-session median dollar volume | not a check; fewer than 250 eligible means fewer members, and the report says so |
+| A2 | **$5.00** minimum raw close on the decision day (Stage 1) | excludes low-priced stocks, using the price as traded (raw, so no later split leaks in) | the security is not eligible that month (`raw_price_below_minimum`) |
+| A3 | **126** real trading sessions of history (Stage 1) | about six months of trading before a security can enter | not eligible (`history_too_short`) |
+| A4 | **63**-session window (Stage 1) | the window for the median dollar volume, and for activity | not a check; defines the ranking |
+| A5 | **50** of the last 63 sessions with a trade (Stage 1) | excludes thinly traded securities | not eligible (`too_few_active_sessions`) |
+| A6 | Screen margin **3 × N = 750** | a ticker gets daily data if its monthly traded value ranks within 750 in any month that feeds a decision | a ticker outside 750 every month is left out, unless the completeness proof (B1) adds it |
+| A7 | Completeness bound **2 × Σ(monthly high × volume over 4 months) / 63** (Stage 1 formula) | an upper limit on a left-out ticker's 63-session median, from monthly bars only | not a check; B1 uses it |
+
+## B. Gates
+
+A failure stops Stage 2 at the gate. Nothing is relaxed to pass.
+
+| # | Threshold | What it measures | If it fails |
+| --- | --- | --- | --- |
+| B1 | **0** left-out tickers whose bound (A7) reaches the 250th member at any decision | completeness within the candidate pool | the stage adds them, fetches their data and runs again (automatic, rounds repeat); if any remains after the rounds, the gate fails and is reported ticker by ticker |
+| B2 | **59 of 59** decisions identical when recomputed from data cut off at each decision | no look-ahead through later data | gate fails; the differing decisions are investigated, and no result is used until fixed |
+| B3 | Every price after **2022-06-30** multiplied by **10**: **0** earlier decisions change | no look-ahead through later prices | gate fails; investigated as B2 |
+| B4 | **0** members chosen after their last trade | survivorship and look-ahead | gate fails; each case is investigated |
+| B5 | Latest date of every input **before 2025-01-01** | no 2025+ data | gate fails; the offending input is removed and the run repeated |
+| B6 | **0** blank-check exclusions not supported by a SIC on file by the decision date; **0** members that were blank-check companies then | point-in-time SPAC exclusion | gate fails; investigated |
+| B7 | Nesting: the top **100** of each Stage 2 decision equal the Stage 1.1 members, at **59 of 59** decisions; **0** unexplained differences | consistency with Stage 1.1 (same rule, larger batch) | each difference is listed with its cause; any unexplained one fails the gate. **There is no numeric tolerance.** "Explained" means a named evidence change, so this needs your judgement at the gate. |
+| B8 | **0** would-be members with an unknown or conflicting type without a documented decision | that no plausible member is excluded silently for its type | each one needs one of: resolved from the issuer's SEC text, confirmed as not common, or listed as unresolved with the decisions and members it would displace. Any without a decision fails the gate |
+| B9 | **0** members that later ended with neither a traced value nor an "unresolved" listing | exit values of members | gate fails until each has a value (stated cash, or deal terms re-verified against the acquirer's close) or an explicit unresolved entry |
+| B10 | **0** common stocks without an issuer and without a documented reason | issuer coverage | gate fails; each one is investigated |
+| B11 | **0** ticker-days held by two securities; same-ticker successions with a recorded decision **=** all same-ticker successions | duplicate identities | gate fails; investigated |
+| B12 | SEC cache growth **=** answers stored (difference **0**), counted per step with retries included | that every request is accounted for | the run reports MISMATCH; the gate fails until explained |
+| B13 | **0** SEC answers missing from the cache when the issuer step reads it | that a failed lookup never becomes "no issuer" | the run stops (`SecUnavailable`) instead of continuing; the fetch is repeated |
+| B14 | Two full runs: byte-identical reports, **0** differing table fingerprints (all tables) | reproducibility | gate fails; the difference is investigated |
+| B15 | Protected data unchanged: the **21** Stage 1.1 table fingerprints; IEX **15,861** bars with fingerprint `e66890e79788fc78`; Strategy A **13 of 13** files in `SHA256SUMS`; **0** commits touching the Stage 1.0, Stage 1.1 or Strategy A archives | that nothing protected was modified | **stop all work** and report: a protected-data failure is never worked around |
+
+## C. Operational limits
+
+| # | Threshold | What it measures | If it is crossed |
+| --- | --- | --- | --- |
+| C1 | **2 GB** minimum free disk before each new cache write | room to finish safely | the run stops cleanly (`DiskLow`); answers already stored are kept, and a rerun resumes without duplicates |
+| C2 | SEC request rate: at most **10** per second (SEC's limit); the prefetch paces at one request every **0.15 s** (about **6.7** per second) | fair access to SEC | not crossed by design; an SEC refusal (HTTP 403/429) is retried with waits, and a request that never succeeds stops the run |
+| C3 | New SEC answers longer than **64 KB** are stored compressed (implementation detail behind "stored compressed" in the plan) | disk use | not a check |
+
+## D. Estimates (not thresholds)
+
+These are projections in the plan, to be replaced by measurements at the gates. **No pass or
+fail depends on them**:
+
+- 300–600 tickers added by the completeness proof;
+- 2,300–2,600 tickers with daily data;
+- 2,500–2,900 securities;
+- 1,400–1,800 new securities needing SEC evidence;
+- 450–550 distinct members;
+- 20–40 members that later end;
+- 50,000–65,000 SEC requests;
+- 2–8 hours of fetching;
+- under 6 GB of disk;
+- about 3 hours per run and 30 minutes of audits;
+- 37 cached answers per security in Stage 1.1;
+- 4,500 whole documents to fill the disk.
+
+If a measured figure falls far outside its estimate (for example, distinct members outside
+450–550), that is not a failure, but it will be reported and explained before the gate.
+
+## E. Missing from the plan, for your decision
+
+1. **The pool cross-check (plan section 4.2) has no pass threshold.** The plan says only
+   that its result "is reported whatever it shows". Proposed: **0** delisted companies
+   whose tickers are known but missing from the pool (`gap`); each `unresolved` filer
+   (no ticker known from SEC's record) is listed and reviewed, and never counted as
+   covered. Not adopted until you decide.
+2. **The nesting test (B7) has no numeric tolerance,** by design: every difference must
+   have a named cause.
+3. **Thresholds inherited from Stage 1 that the plan relies on without restating:**
+   - the 250-session trading-gap rule;
+   - the 45-day-before / 90-day-after window for a delisting notice;
+   - 0.5–2× price continuity for renames;
+   - 10 sessions between consecutive securities for an issuer-confirmed rename;
+   - 120 days of cover-page evidence around a switch;
+   - the 10% tolerance between a deal-terms value and the target's last close.
+
+   They are unchanged from Stage 1.1 and are listed here only so the list is complete. A
+   change to any of them would be a new rule needing approval.

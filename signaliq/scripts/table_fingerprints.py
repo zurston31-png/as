@@ -9,13 +9,20 @@ two are merged in key order, which for this table (primary key source, request_k
 same order as sorting by all columns, so a database whose own cache is empty and whose
 parent is X gives X's fingerprint exactly.
 
-    python scripts/table_fingerprints.py DB [--parent PARENT_DB]
+With ``--logical``, SEC answers stored compressed (``app.universe.sec_cache``, as a
+restored archive stores them) are hashed as the JSON they encode, so a restored database
+gives the original's fingerprints.
+
+    python scripts/table_fingerprints.py DB [--parent PARENT_DB] [--logical]
 """
 
 import argparse
+import base64
 import hashlib
+import json
 import sqlite3
 import sys
+import zlib
 
 
 def _connect(path: str) -> sqlite3.Connection:
@@ -49,7 +56,21 @@ def _merged(own, parent, key_width):
             a, b = next(own, None), next(parent, None)
 
 
-def fingerprints(path: str, parent: str | None = None) -> list[tuple[str, int, str, list[str]]]:
+def _logical(rows, response_index):
+    """Rows with compressed SEC answers (``sec_cache``) replaced by the JSON they encode."""
+    for row in rows:
+        value = row[response_index]
+        if isinstance(value, str) and value.startswith('{"zlib_b64"'):
+            decoded = json.loads(value)
+            if set(decoded) == {"zlib_b64"}:
+                text = zlib.decompress(base64.b64decode(decoded["zlib_b64"])).decode("utf-8")
+                row = (*row[:response_index], json.dumps(text), *row[response_index + 1 :])
+        yield row
+
+
+def fingerprints(
+    path: str, parent: str | None = None, logical: bool = False
+) -> list[tuple[str, int, str, list[str]]]:
     connection = _connect(path)
     parent_connection = _connect(parent) if parent else None
     result = []
@@ -66,6 +87,8 @@ def fingerprints(path: str, parent: str | None = None) -> list[tuple[str, int, s
             if columns[:2] != ["source", "request_key"]:
                 raise RuntimeError(f"unexpected external_responses columns: {columns}")
             rows = _merged(iter(rows), iter(_rows(parent_connection, table, columns)), 2)
+        if table == "external_responses" and logical:
+            rows = _logical(rows, columns.index("response"))
         digest, count = hashlib.sha256(), 0
         for row in rows:
             digest.update(repr(tuple(row)).encode())
@@ -78,8 +101,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("database")
     parser.add_argument("--parent")
+    parser.add_argument(
+        "--logical", action="store_true", help="decode compressed SEC answers before hashing"
+    )
     args = parser.parse_args()
-    for table, count, digest, left_out in fingerprints(args.database, args.parent):
+    for table, count, digest, left_out in fingerprints(args.database, args.parent, args.logical):
         print(f"{table}: {count} rows, sha256 {digest} (columns left out: {left_out or 'none'})")
     return 0
 
