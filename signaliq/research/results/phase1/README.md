@@ -11,9 +11,9 @@ has been adopted. Both are off by default and were only switched on to measure t
 | Stage 1.1 data cannot be modified by the new workflow | **PASS** |
 | The unchanged 100-stock setup reproduces Stage 1.1 byte for byte | **FAIL**: 3 diagnostic report lines and 1 diagnostic column differ, because Alpaca revised its split-adjusted prices for NEE and FTV. All 59 decisions, the membership table and 20 of 21 tables are identical. See section 2. |
 | The completeness audit independently reproduces its result | **PASS** |
-| All protected-data fingerprints unchanged | see section 8 (`protected_data_check.txt`) |
+| All protected-data fingerprints unchanged | **PASS** (section 8) |
 | Dated security types: measured at 100, every changed classification shown | done, not adopted (section 4) |
-| Co-registrant issuer rule: measured at 100, every affected security shown | see section 5, not adopted |
+| Co-registrant issuer rule: measured at 100, every affected security shown | cache-only listing done: 2 of 78 change. **Full run NOT COMPLETED**: it needs 1 or more SEC pages never fetched. Not adopted (section 5). |
 | Durable storage: recovered and verified | **local demonstration PASS; off-machine storage NOT done**, because it needs your action (section 6) |
 | Every exact threshold, what it measures, what happens on failure | `research/plans/stage2_thresholds.md`; nothing in it is approved |
 | Tests | 966 passed; ruff: 12 findings, all in `tests/test_validation.py`, which no commit since Stage 1.0 has touched (section 9) |
@@ -150,7 +150,21 @@ stands. Pages are read only from the cache.
 The first version of the rule was wrong on CHTR, CMCSA and UAL. It used the earliest company
 name and read the hidden XBRL header. Both were fixed before this listing.
 
-**Full run with the rule on:** RESULTS TO BE ADDED.
+**Full run with the rule on: NOT COMPLETED** (`coregistrant_full_run.txt`).
+
+The run stopped at the issuer step with `SecUnavailable`. That is the designed behaviour: a
+missing SEC answer stops the run instead of becoming "no issuer".
+
+- **Cause:** under the rule, URI's issuer becomes United Rentals, Inc. (CIK 0001067701). Its SIC
+  history needs the overflow page `CIK0001067701-submissions-001.json`. Stage 1.1 never
+  fetched that page, because Stage 1.1 used the subsidiary.
+- **Not fetched:** fetching it is new data, which Phase 1 does not do.
+- **Unknown:** whether later steps need more uncached answers. That can only be learned by
+  fetching.
+- **Downstream effects** on membership and outcomes are therefore not measured.
+
+To finish the measurement, one approved SEC request (the page above) is needed, plus any
+further pages the run then reports. Each would be fetched read-only and counted.
 
 ## 6. Durable storage (`archive_recovery_demo.txt`, `archive_manifest_stage_1_1.json`)
 
@@ -203,7 +217,15 @@ That is the demonstration required before Phase 2.
 
 ## 8. Protected data (`protected_data_check.txt`)
 
-TO BE ADDED after all runs.
+**RESULT: PASS** (2026-11-26, after all Phase 1 runs).
+
+- **Protected database files:** the sha256 of the Stage 1.1 database, the Stage 1.0 tables and
+  the IEX database are identical to the hashes taken before Phase 1.
+- **IEX:** 15,861 bars, fingerprint `e66890e79788fc78`.
+- **Strategy A:** 13 of 13 files OK.
+- **Stage 1.1 tables:** 21 of 21 fingerprints identical.
+- **Git:** 0 commits and 0 uncommitted changes touching the Stage 1.0, Stage 1.1 or Strategy A
+  archives since Phase 1 began (base b4190ef).
 
 ## 9. Tests and lint (`test_results.txt`)
 
@@ -217,7 +239,8 @@ TO BE ADDED after all runs.
 
 - **SEC:** 0 requests in the runs, which were offline.
 - **Alpaca:**
-  - the neutral and co-registrant runs re-requested the same historical bars Stage 1.1 used;
+  - the neutral run and the co-registrant run (until it stopped) re-requested the same
+    historical bars Stage 1.1 used;
   - 8 small direct requests confirmed the NEE and FTV change.
 
   No new symbols, no new period, and nothing dated 2025 or later. No trading or paper-API
@@ -228,12 +251,14 @@ TO BE ADDED after all runs.
 1. **Byte-for-byte reproduction: FAIL.** The cause is an Alpaca revision of its split-adjusted
    close for NEE and FTV (section 2). Decisions are unaffected. A decision on storing raw
    provider responses is needed.
-2. **Off-machine durable storage: not done.** It needs a private repository or bucket from you
+2. **Co-registrant full run: NOT COMPLETED.** It stopped by design on an uncached SEC page
+   (URI's new issuer). Finishing it needs your approval to fetch it (section 5).
+3. **Off-machine durable storage: not done.** It needs a private repository or bucket from you
    (section 6).
-3. **Form 25 pool cross-check: NOT RUN**, because it needs new data.
-4. **Dated types rule:** limited by 67,511 unread cover pages; not adopted.
-5. **Co-registrant rule:** not adopted; 35 cases undecided.
-6. **PRU issuer evidence** contains Hawaiian Electric cover pages: an evidence error to
+4. **Form 25 pool cross-check: NOT RUN**, because it needs new data.
+5. **Dated types rule:** limited by 67,511 unread cover pages; not adopted.
+6. **Co-registrant rule:** not adopted; 35 cases undecided.
+7. **PRU issuer evidence** contains Hawaiian Electric cover pages: an evidence error to
    investigate.
-7. **Thresholds:** none approved. The Form 25 cross-check has no threshold yet.
-8. **Lint:** 12 findings in an untouched test file.
+8. **Thresholds:** none approved. The Form 25 cross-check has no threshold yet.
+9. **Lint:** 12 findings in an untouched test file.

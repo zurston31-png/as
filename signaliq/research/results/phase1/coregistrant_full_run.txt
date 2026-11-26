@@ -1,0 +1,38 @@
+Co-registrant full run at N=100 (SIGNALIQ_RULE_COREGISTRANT=1, SEC offline, new database data/phase1_coregistrant)
+RESULT: NOT COMPLETED. The run stopped at the issuer step with SecUnavailable (exit 1), as designed:
+a missing SEC answer stops the run instead of becoming 'no issuer'. No report was written.
+
+Cause: under the rule URI's issuer becomes CIK 0001067701 (United Rentals, Inc.). Its SIC history needs the
+overflow submissions page https://data.sec.gov/submissions/CIK0001067701-submissions-001.json, which Stage 1.1
+never fetched (it used the subsidiary, CIK 0001047166). Fetching it is new data, not allowed in Phase 1.
+Hertz Global (CIK 0001657853, HTZ under the rule) has no overflow page. Whether later steps need further
+uncached answers can only be known by fetching; this is the first one met.
+
+Error (from the run log):
+                     ^^^^^^
+  File "/home/user/as/signaliq/scripts/universe_validation_batch.py", line 1359, in main
+    text = report(run(get_settings(), args.refresh, args.stage))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/as/signaliq/scripts/universe_validation_batch.py", line 244, in run
+    _count_sec(facts, step, fetch(session, refresh=refresh))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/as/signaliq/app/universe/evidence.py", line 1523, in fetch_issuers
+    issuer_records(session, client, found, commit_each=True)
+  File "/home/user/as/signaliq/app/universe/evidence.py", line 1499, in issuer_records
+    cik: sh.sic_history(
+         ^^^^^^^^^^^^^^^
+  File "/home/user/as/signaliq/app/universe/sec_history.py", line 386, in sic_history
+    company = submissions(sec, cik)
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/as/signaliq/app/universe/sec_history.py", line 362, in submissions
+    page = sec.get(SUBMISSIONS_PAGE_URL.format(name=name))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/as/signaliq/app/universe/sec.py", line 484, in get
+    text = self._fetch(key, url, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/as/signaliq/app/universe/sec.py", line 520, in _fetch
+    raise SecUnavailable(f"SEC offline ({sec_cache.OFFLINE_VARIABLE}=1), not cached: {key}")
+app.universe.sec.SecUnavailable: SEC offline (SIGNALIQ_SEC_OFFLINE=1), not cached: https://data.sec.gov/submissions/CIK0001067701-submissions-001.json
+
+Every affected security, from the cache-only listing, is in coregistrant_choices.txt.
+The partial database is a scratch measurement database; its tables are incomplete and were not compared.
