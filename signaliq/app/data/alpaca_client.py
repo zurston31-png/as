@@ -366,6 +366,9 @@ class AlpacaClient:
                 logger.info("Alpaca response from the store: %s", described)
                 return stored
             if self._store.replaying:
+                failure = self._store.recorded_failure(path, params)
+                if failure is not None:
+                    raise self._replayed_failure(failure, described)
                 raise ResponseNotStored(
                     f"replay: no stored response for {described} "
                     f"(key {response_store.request_key(path, params)})"
@@ -386,7 +389,7 @@ class AlpacaClient:
             started = time.monotonic()
             failure: AlpacaAPIError
             try:
-                response = self._http.get(path, params=params)
+                response = self._get_logged(path, params, attempt)
             except httpx.TimeoutException as exc:
                 failure = AlpacaNetworkError(
                     f"The request to Alpaca timed out after {self._timeout_seconds:g} seconds "
@@ -454,6 +457,30 @@ class AlpacaClient:
             self._sleep(delay)
 
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _get_logged(self, path: str, params: dict[str, str | int], attempt: int) -> httpx.Response:
+        """One HTTP attempt, logged in the response store (when recording) whatever happens."""
+        try:
+            response = self._http.get(path, params=params)
+        except httpx.HTTPError as exc:
+            if self._store is not None:
+                self._store.put_attempt(path, params, attempt, error=f"{type(exc).__name__}: {exc}")
+            raise
+        if self._store is not None:
+            self._store.put_attempt(path, params, attempt, response=response)
+        return response
+
+    def _replayed_failure(self, failure: httpx.Response | str, described: str) -> AlpacaAPIError:
+        """The error the recorded run ended with for this request, raised again in replay."""
+        if isinstance(failure, str):
+            return AlpacaNetworkError(f"replay of a recorded failure ({described}): {failure}")
+        status = failure.status_code
+        detail = f"replay of a recorded failure ({described}): HTTP {status}"
+        if status == 429:
+            return AlpacaRateLimitError(detail, status_code=429)
+        if status in _RETRYABLE_STATUS_CODES:
+            return AlpacaServerError(detail, status_code=status)
+        return self._client_error(failure)
 
     def _client_error(self, response: httpx.Response) -> AlpacaAPIError:
         """Translate a non-retryable HTTP error into a clear exception."""

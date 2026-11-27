@@ -18,12 +18,19 @@ Off by default. Switched on with two environment variables::
 
 Each body is stored zlib-compressed together with the sha256 of the uncompressed bytes. The
 hash is checked on every read, so a damaged store fails loudly instead of returning altered
-data. Only status-200 responses are stored; errors are retried as before and never stored.
-Credentials are sent in headers and are never part of a key or of anything stored.
+data. Credentials are sent in headers and are never part of a key or of anything stored.
+
+Every HTTP attempt is also logged in ``attempts``, in order: its status (or, without a response,
+the network error), headers needed to audit it, and the body of every non-200 response (a 200
+body is kept once, in ``responses``; the attempt keeps its sha256). Replay answers a request
+from ``responses``; a request the recorded run never got a 200 for is replayed as the same
+failure its last attempt was (429, 5xx, a client error or a network error). Stores made before
+``attempts`` existed still replay.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -59,8 +66,22 @@ _SCHEMA = (
     " request_id TEXT,"
     " fetched_at TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS store_meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS attempts ("
+    " id INTEGER PRIMARY KEY,"
+    " key TEXT NOT NULL,"
+    " attempt INTEGER NOT NULL,"
+    " status INTEGER,"
+    " error TEXT,"
+    " content_type TEXT,"
+    " retry_after TEXT,"
+    " body BLOB,"
+    " body_sha256 TEXT,"
+    " body_bytes INTEGER,"
+    " request_id TEXT,"
+    " fetched_at TEXT NOT NULL)",
 )
-_OWN_TABLES = {"responses", "store_meta"}
+_OWN_TABLES = {"responses", "store_meta", "attempts"}
+_REQUIRED_TABLES = {"responses", "store_meta"}
 
 
 class ResponseStoreError(RuntimeError):
@@ -133,7 +154,7 @@ class ResponseStore:
                 f"{self.path} is not a response store (it has tables {sorted(foreign)}); "
                 "refusing to use it"
             )
-        if require and names != _OWN_TABLES:
+        if require and not names >= _REQUIRED_TABLES:
             raise ResponseStoreError(f"{self.path} is not a complete response store")
 
     @property
@@ -166,17 +187,94 @@ class ResponseStore:
             request=httpx.Request("GET", "https://replay.invalid" + key),
         )
 
-    def put(self, path: str, params: dict, response: httpx.Response) -> None:
-        """Store a status-200 response body exactly as received."""
+    def _check_writable(self) -> None:
         if self.replaying:
             raise ResponseStoreError("a replay store is read-only")
-        if response.status_code != 200:
-            return
         free = shutil.disk_usage(self.path.parent).free
         if free < MIN_FREE_BYTES:
             raise StoreDiskLow(
                 f"only {free / 1024**3:.1f} GB free; stopping before writing to {self.path}"
             )
+
+    def put_attempt(
+        self,
+        path: str,
+        params: dict,
+        attempt: int,
+        response: httpx.Response | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Log one HTTP attempt: the response (any status) or, without one, the error."""
+        self._check_writable()
+        status = body = sha = size = None
+        if response is not None:
+            status, content = response.status_code, response.content
+            sha, size = hashlib.sha256(content).hexdigest(), len(content)
+            if status != 200:  # a 200 body is kept once, in responses
+                body = zlib.compress(content, 6)
+        headers = response.headers if response is not None else {}
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO attempts (key, attempt, status, error, content_type, retry_after,"
+                " body, body_sha256, body_bytes, request_id, fetched_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    request_key(path, params),
+                    attempt,
+                    status,
+                    error,
+                    headers.get("content-type"),
+                    headers.get("retry-after"),
+                    body,
+                    sha,
+                    size,
+                    headers.get("x-request-id"),
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                ),
+            )
+            self._db.commit()
+
+    def recorded_failure(self, path: str, params: dict) -> httpx.Response | str | None:
+        """The last attempt of a request the recorded run never got a 200 for.
+
+        A stored response (status and body, checked against its sha256), the network error
+        text when there was no response, or None when no failed attempt is recorded.
+        """
+        key = request_key(path, params)
+        with self._lock:
+            try:
+                row = self._db.execute(
+                    "select status, error, content_type, retry_after, body, body_sha256,"
+                    " request_id from attempts where key = ? order by id desc limit 1",
+                    (key,),
+                ).fetchone()
+            except sqlite3.OperationalError:  # a store made before attempts were logged
+                return None
+        if row is None or row[0] == 200:
+            return None
+        status, error, content_type, retry_after, packed, digest, request_id = row
+        if status is None:
+            return error or "network error"
+        content = zlib.decompress(packed)
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise ResponseStoreError(f"stored failed attempt is damaged (sha256 mismatch): {key}")
+        headers = {"content-type": content_type or "application/json"}
+        if retry_after:
+            headers["retry-after"] = retry_after
+        if request_id:
+            headers["x-request-id"] = request_id
+        return httpx.Response(
+            status,
+            headers=headers,
+            content=content,
+            request=httpx.Request("GET", "https://replay.invalid" + key),
+        )
+
+    def put(self, path: str, params: dict, response: httpx.Response) -> None:
+        """Store a status-200 response body exactly as received."""
+        self._check_writable()
+        if response.status_code != 200:
+            return
         body = response.content
         key = request_key(path, params)
         with self._lock:
@@ -217,6 +315,12 @@ class ResponseStore:
         with self._lock:
             rows = self._db.execute(
                 "select key, body, body_sha256, body_bytes from responses order by key"
+            ).fetchall()
+        # a store made before attempts were logged has no attempts table
+        with self._lock, contextlib.suppress(sqlite3.OperationalError):
+            rows += self._db.execute(
+                "select 'attempt ' || id || ' ' || key, body, body_sha256, body_bytes"
+                " from attempts where body is not null order by id"
             ).fetchall()
         for key, packed, sha, size in rows:
             try:

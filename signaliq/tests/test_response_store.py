@@ -133,7 +133,7 @@ def test_record_resumes_from_what_is_stored(settings, tmp_path, two_pages):
     assert len(two_pages.requests) == 2
 
 
-def test_errors_are_retried_and_never_stored(settings, tmp_path, alpaca_mock, make_bar):
+def test_errors_are_retried_and_kept_out_of_responses(settings, tmp_path, alpaca_mock, make_bar):
     path = tmp_path / "responses.db"
     alpaca_mock.add_error(500)
     alpaca_mock.add_error(429, headers={"Retry-After": "1"})
@@ -220,3 +220,88 @@ def test_off_by_default_and_configured_by_environment(settings, tmp_path, monkey
     assert store.mode == "record"
     assert response_store.from_environment() is store  # one store per process
     response_store.reset_shared()
+
+
+def _attempts(path):
+    return (
+        sqlite3.connect(path)
+        .execute(
+            "select attempt, status, error, body is not null, body_sha256 from attempts order by id"
+        )
+        .fetchall()
+    )
+
+
+def test_every_attempt_is_logged_with_failed_bodies(settings, tmp_path, alpaca_mock, make_bar):
+    path = tmp_path / "responses.db"
+    alpaca_mock.add_error(500, "fixture server error")
+    alpaca_mock.add_error(429, headers={"Retry-After": "1"})
+    alpaca_mock.add_exception(httpx.ReadTimeout("fixture timeout"))
+    alpaca_mock.add_bars({"TESTA": [make_bar(date(2024, 1, 2))]})
+    store = ResponseStore(path, "record")
+    with _client(settings, store, alpaca_mock.transport, sleeps=[]) as client:
+        recorded = _fetch(client)
+    store.close()
+    rows = _attempts(path)
+    assert [(a, s) for a, s, *_ in rows] == [(1, 500), (2, 429), (3, None), (4, 200)]
+    assert rows[2][2] == "ReadTimeout: fixture timeout"
+    assert [has_body for *_, has_body, _ in rows] == [True, True, False, False]  # 200 body once
+    stored_sha = sqlite3.connect(path).execute("select body_sha256 from responses").fetchone()[0]
+    assert rows[3][4] == stored_sha
+    db = sqlite3.connect(path)
+    body = db.execute("select body from attempts where status = 500").fetchone()[0]
+    assert b"fixture server error" in __import__("zlib").decompress(body)
+    assert db.execute("select retry_after from attempts where status = 429").fetchone() == ("1",)
+    assert ResponseStore(path, "replay").verify() == []
+    with _client(settings, ResponseStore(path, "replay")) as client:
+        assert _fetch(client) == recorded  # replay serves the 200 directly
+
+
+@pytest.mark.parametrize(
+    ("queue", "error"),
+    [
+        ([500] * 4, "AlpacaServerError"),
+        ([429] * 4, "AlpacaRateLimitError"),
+        ([422], "AlpacaRequestError"),
+        (["timeout"] * 4, "AlpacaNetworkError"),
+    ],
+)
+def test_a_recorded_failure_is_replayed_as_the_same_failure(
+    settings, tmp_path, alpaca_mock, queue, error
+):
+    from app.data import alpaca_client as ac
+
+    path = tmp_path / "responses.db"
+    for item in queue:
+        if item == "timeout":
+            alpaca_mock.add_exception(httpx.ReadTimeout("fixture timeout"))
+        else:
+            alpaca_mock.add_error(item, headers={"Retry-After": "1"} if item == 429 else None)
+    with (
+        _client(settings, ResponseStore(path, "record"), alpaca_mock.transport, sleeps=[]) as c,
+        pytest.raises(getattr(ac, error)),
+    ):
+        _fetch(c)
+    assert len(_attempts(path)) == len(queue)
+    sent = len(alpaca_mock.requests)
+    with (
+        _client(settings, ResponseStore(path, "replay")) as c,
+        pytest.raises(getattr(ac, error), match="replay|422|Unprocessable|invalid") as raised,
+    ):
+        _fetch(c)
+    assert len(alpaca_mock.requests) == sent  # nothing reached the provider
+    assert not isinstance(raised.value, ResponseNotStored)
+
+
+def test_a_store_made_before_attempts_were_logged_still_replays(settings, tmp_path, two_pages):
+    path = tmp_path / "responses.db"
+    with _client(settings, ResponseStore(path, "record"), two_pages.transport) as client:
+        recorded = _fetch(client)
+    db = sqlite3.connect(path)
+    db.execute("drop table attempts")
+    db.commit()
+    db.close()
+    player = ResponseStore(path, "replay")
+    assert player.verify() == []
+    with _client(settings, player) as client:
+        assert _fetch(client) == recorded

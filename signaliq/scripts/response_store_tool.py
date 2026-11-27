@@ -43,6 +43,14 @@ def main() -> int:
         "select min(fetched_at), max(fetched_at) from responses"
     ).fetchone()
     print(f"  recorded between {first} and {last}")
+    try:
+        total, failed, errors = connection.execute(
+            "select count(*), sum(status is not null and status <> 200), sum(status is null)"
+            " from attempts"
+        ).fetchone()
+        print(f"  HTTP attempts: {total}; non-200: {failed or 0}; no response: {errors or 0}")
+    except sqlite3.OperationalError:
+        print("  HTTP attempts: not logged (store made before attempt logging)")
     connection.close()
     if args.command == "verify":
         problems = store.verify()
