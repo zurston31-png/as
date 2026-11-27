@@ -32,7 +32,7 @@ Sign up at https://www.pexels.com/api/ and copy your key.
 Repo → **Settings → Secrets and variables → Actions → New repository secret**. Add:
 `ANTHROPIC_API_KEY`, `PEXELS_API_KEY`, `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN`.
 
-Optional: under **Variables**, set `SHORTS_PER_DAY` (default 1).
+Optional: under **Variables**, set `SHORTS_PER_DAY` (default 5, about the most the default YouTube quota allows).
 
 ### 5. Test it
 Repo → **Actions → Daily Shorts → Run workflow**, with privacy `none`. The finished video appears under the run's **Artifacts** without being uploaded. When you like it, run with `public`. After that it runs by itself every day.
