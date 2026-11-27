@@ -18,7 +18,7 @@ import requests
 from pydantic import BaseModel
 
 STATE = Path(__file__).with_name("posted.json")
-VOICE = "en-US-GuyNeural"
+VOICE = "en-US-AndrewMultilingualNeural"  # warmer, more expressive than GuyNeural
 YT = "https://www.googleapis.com/youtube/v3"
 
 
@@ -139,7 +139,7 @@ def speak(lines, out_dir):
         paths = []
         for i, line in enumerate(lines):
             p = out_dir / f"line{i}.mp3"
-            await edge_tts.Communicate(line, VOICE).save(str(p))
+            await edge_tts.Communicate(line, VOICE, rate="+12%").save(str(p))
             paths.append(p)
         return paths
     return asyncio.run(run())
@@ -203,7 +203,7 @@ def render(segments, out_path, work):
     ff("-f", "concat", "-safe", "0", "-i", str(work / "v.txt"), "-c", "copy", str(work / "video.mp4"))
     ff("-f", "concat", "-safe", "0", "-i", str(work / "a.txt"), "-c:a", "aac", str(work / "audio.m4a"))
     (work / "subs.srt").write_text(captions([t for _, _, t in segments], durs))
-    style = "FontName=DejaVu Sans,FontSize=16,Bold=1,Outline=3,Shadow=0,Alignment=2,MarginV=110"
+    style = "FontName=DejaVu Sans,FontSize=16,Bold=1,Outline=3,Shadow=0,Alignment=2,MarginV=40"
     ff("-i", str(work / "video.mp4"), "-i", str(work / "audio.m4a"),
        "-vf", f"subtitles={work / 'subs.srt'}:force_style='{style}'",
        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac",
