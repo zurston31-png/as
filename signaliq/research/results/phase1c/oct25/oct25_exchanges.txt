@@ -1,0 +1,34 @@
+Listing exchange (from cached SEC submissions JSON: the CURRENT listing, not point-in-time) of liquid tickers on each anomalous day
+
+2021-04-19: liquid 892, suspect 499
+  exchange    suspect   normal  share suspect
+  NYSE            423       23  95%
+  Nasdaq           20      243  8%
+  unknown          54      120  31%
+  OTC               0        4  0%
+  CBOE              0        2  0%
+  None              1        1  50%
+  TXSE              1        0  100%
+  suspect not NYSE by this source: [('AAIC', 'unknown (ticker not listed now)'), ('ACB', 'Nasdaq'), ('ACC', 'unknown (ticker not listed now)'), ('AVB', 'unknown (ticker not listed now)'), ('AVLR', 'unknown (ticker not listed now)'), ('AYX', 'unknown (ticker not listed now)'), ('BEKE', 'unknown (no cached SEC submissions)'), ('BKI', 'unknown (ticker not listed now)'), ('BKR', 'Nasdaq'), ('CCIV', "Nasdaq (issuer's first listing; ticker not listed now)"), ('CDAY', 'unknown (ticker not listed now)'), ('CLR', 'unknown (ticker not listed now)'), ('CMA', 'unknown (ticker not listed now)'), ('COG', 'unknown (ticker not listed now)'), ('COR', 'unknown (ticker not listed now)'), ('CTLT', 'unknown (ticker not listed now)'), ('DASH', 'Nasdaq'), ('DFS', 'unknown (ticker not listed now)'), ('DOC', 'unknown (ticker not listed now)'), ('DPZ', 'Nasdaq'), ('DRE', 'unknown (ticker not listed now)'), ('ET', 'TXSE'), ('EVRG', 'Nasdaq'), ('FI', 'unknown (ticker not listed now)'), ('FRC', 'unknown (no cached SEC submissions)')]
+
+2021-10-25: liquid 894, suspect 218
+  exchange    suspect   normal  share suspect
+  NYSE            189      260  42%
+  Nasdaq            3      266  1%
+  unknown          26      140  16%
+  OTC               0        6  0%
+  CBOE              0        2  0%
+  TXSE              0        1  0%
+  None              0        1  0%
+  suspect not NYSE by this source: [('AVB', 'unknown (ticker not listed now)'), ('AVLR', 'unknown (ticker not listed now)'), ('BKI', 'unknown (ticker not listed now)'), ('CDAY', 'unknown (ticker not listed now)'), ('CMA', 'unknown (ticker not listed now)'), ('COR', 'unknown (ticker not listed now)'), ('CTLT', 'unknown (ticker not listed now)'), ('DFS', 'unknown (ticker not listed now)'), ('DOC', 'unknown (ticker not listed now)'), ('DPZ', 'Nasdaq'), ('DRE', 'unknown (ticker not listed now)'), ('EVRG', 'Nasdaq'), ('FRC', 'unknown (no cached SEC submissions)'), ('HR', 'unknown (ticker not listed now)'), ('INFO', 'unknown (ticker not listed now)'), ('IPG', 'unknown (ticker not listed now)'), ('JNPR', 'unknown (ticker not listed now)'), ('JWN', 'unknown (ticker not listed now)'), ('KSU', 'unknown (ticker not listed now)'), ('LSI', 'unknown (ticker not listed now)'), ('NLSN', 'unknown (ticker not listed now)'), ('OSH', 'unknown (ticker not listed now)'), ('PLAN', 'unknown (ticker not listed now)'), ('ROP', 'Nasdaq'), ('SMAR', 'unknown (ticker not listed now)')]
+
+2022-03-08: liquid 902, suspect 47
+  exchange    suspect   normal  share suspect
+  NYSE             40      417  9%
+  Nasdaq            1      271  0%
+  unknown           6      157  4%
+  OTC               0        5  0%
+  CBOE              0        2  0%
+  None              0        2  0%
+  TXSE              0        1  0%
+  suspect not NYSE by this source: [('ACC', 'unknown (ticker not listed now)'), ('AVB', 'unknown (ticker not listed now)'), ('FRC', 'unknown (no cached SEC submissions)'), ('HR', 'unknown (ticker not listed now)'), ('LSI', 'unknown (ticker not listed now)'), ('ROP', 'Nasdaq'), ('XPRO', 'unknown (ticker not listed now)')]

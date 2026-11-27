@@ -1,0 +1,6 @@
+Stage 1.1 ticker_bars, 2016-2024: sessions where a liquid ticker (median >= 1,000 trades over its previous 20 sessions) has <= 5 trades
+session      suspect  liquid  share
+2021-04-19       499     892  55.9%
+2021-10-25       218     894  24.4%
+2022-03-08        47     902  5.2%
+total suspect bars: 777; sessions with any: 16; sessions with 1-2: 13

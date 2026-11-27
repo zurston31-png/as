@@ -1,0 +1,25 @@
+Decisions whose 63-session window contains an anomalous day: ['2021-04-30', '2021-05-28', '2021-06-30', '2021-10-29', '2021-11-30', '2021-12-31', '2022-03-31', '2022-04-29', '2022-05-31']
+
+Recomputed with the suspect bars left out of the median (median of the remaining sessions):
+  2021-04-30: eligible 718; stored medians reproduced 718/718; suspect bars left out 445; members changed: in ['TDOC'] out ['HON']
+  2021-05-28: eligible 723; stored medians reproduced 723/723; suspect bars left out 447; members changed: in ['AMC'] out ['NCLH']
+  2021-06-30: eligible 730; stored medians reproduced 730/730; suspect bars left out 450; members changed: in ['DAL'] out ['CHTR']
+  2021-10-29: eligible 741; stored medians reproduced 741/741; suspect bars left out 208; members changed: in [] out []
+  2021-11-30: eligible 733; stored medians reproduced 733/733; suspect bars left out 208; members changed: in [] out []
+  2021-12-31: eligible 719; stored medians reproduced 719/719; suspect bars left out 206; members changed: in ['SPGI'] out ['TMUS']
+  2022-03-31: eligible 713; stored medians reproduced 713/713; suspect bars left out 47; members changed: in [] out []
+  2022-04-29: eligible 707; stored medians reproduced 707/707; suspect bars left out 47; members changed: in [] out []
+  2022-05-31: eligible 705; stored medians reproduced 705/705; suspect bars left out 47; members changed: in [] out []
+
+Validation on 2021-04-19, where Alpaca's repaired bars are known (raw Phase 1b responses):
+  2021-04-30: with Alpaca's repaired bars: in/out ([], []); with neighbour-average bars: in/out ([], [])
+  2021-05-28: with Alpaca's repaired bars: in/out ([], []); with neighbour-average bars: in/out ([], [])
+  2021-06-30: with Alpaca's repaired bars: in/out ([], []); with neighbour-average bars: in/out (['ACN', 'DAL'], ['CHTR', 'NCLH'])
+
+Neighbour-average replacement (each suspect bar = mean of the security's previous and next session):
+  2021-10-29: members changed in/out ([], [])
+  2021-11-30: members changed in/out ([], [])
+  2021-12-31: members changed in/out (['SPGI'], ['TMUS'])
+  2022-03-31: members changed in/out ([], [])
+  2022-04-29: members changed in/out ([], [])
+  2022-05-31: members changed in/out ([], [])
