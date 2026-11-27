@@ -1,0 +1,29 @@
+== export 12:38:41
+  responses: 2095 rows
+  store_meta: 2 rows
+files: 8, 497 MB compressed
+export exit 0
+== verify against the live store 12:39:31
+files: 8, sha256 checked; problems: 0
+  ok   responses: 2095 rows, 8830a672371352e2 / e3a262f5fcb24fe7; live database (2095, '8830a672371352e2')
+  ok   store_meta: 2 rows, 4e5bf22d3a365133 / 4e5bf22d3a365133; live database (2, '4e5bf22d3a365133')
+RESULT: PASS
+verify exit 0
+== restore into a new file 12:39:58
+  responses: restored
+  store_meta: restored
+restore exit 0
+== response_store_tool verify on the restored store 12:40:07
+responses: 2095; body bytes: 1900477670; fingerprint: 61544d16fc7e61e4
+  /v1/corporate-actions: 106
+  /v2/stocks/bars: 1989
+  recorded between 2026-11-27T08:38:02+00:00 and 2026-11-27T10:01:59+00:00
+bodies checked: 2095; damaged: 0
+RESULT: PASS
+store verify exit 0
+== original store: sha256 still
+108d2a177926916376e9199fc86e5477401f66d806f552bc0d4a7123bc4cb6dc  data/phase1b_record/alpaca_responses.db
+498M	store_export
+9
+/dev/vda        252G   35G  4.5G  89% /
+12:40:16

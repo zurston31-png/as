@@ -1,0 +1,44 @@
+Archive recovery test (Phase 1b), 2026-11-27
+
+THIS WAS A LOCAL TEST ONLY. The bare git repository, the clone, the exports and the restored
+databases were all on this container's disk and disappear with it. It proves the archive format
+and the verification workflow. It does NOT prove durability. No research data is stored off this
+container.
+
+A. Stage 1.1 database, through git (evidence: archive/stage_1_1_git_roundtrip_part1.txt, part2.txt)
+  1. Committed the Stage 1.1 export (100 files + manifest, 1.59 GiB pack) in a source repository.
+  2. Pushed to a local bare repository standing in for a private remote; source and remote heads
+     equal (8e39c5ab3172d67e3c923a9967748a57e50ab139); remote fsck ok.
+  3. Fresh clone over file:// (no hard links). The first clone failed (the bare repository's HEAD
+     pointed at master, the branch was main); fixed by pointing HEAD at main and cloning afresh.
+     Heads equal; clone fsck ok; 101 files checked out.
+  4. Verify the clone: manifest identical to research/results/phase1/archive_manifest_stage_1_1.json;
+     100 files, sha256 checked, 0 problems; 21 of 21 table fingerprints equal to the manifest and to
+     the live database. RESULT: PASS.
+  5. Restore from the clone (--compress-sec), 12:19-12:30 UTC, exit 0; 2.98 GB
+     (sha256 2f2b691027e249ba…; then deleted to free disk).
+  6. Restored database vs Stage 1.1:
+     - logical fingerprints (SEC answers decoded): 21 of 21 identical
+       (archive/stage_1_1_restored_logical.txt vs archive/stage_1_1_live_logical.txt);
+     - standard fingerprints: 20 of 21 identical; external_responses differs (dd083732acf86453 ->
+       7ff5e0280aefaa40) because the restore stores SEC answers over 64 KB zlib-compressed where
+       the live database holds many uncompressed. This is by design (archive_database.py
+       docstring); the logical fingerprint is the defined comparison, as in the Phase 1 demo.
+     - completeness audit: PASS, output identical to the Stage 1.1 audit.
+
+B. Raw Alpaca response store (evidence: archive/response_store_roundtrip.txt,
+   archive/response_store_manifest.json)
+  1. Export of data/phase1b_record/alpaca_responses.db (sha256 108d2a177926916376e9199fc86e5477401f66d806f552bc0d4a7123bc4cb6dc):
+     8 files, 497 MB, largest 79.6 MB (under the 95 MB limit); manifest sha256 6ce1ca69d03c0c54….
+  2. verify against the live store: 8 files sha256 checked, 0 problems; responses 2,095 rows and
+     store_meta 2 rows equal to the live store. PASS.
+  3. restore into a new file, then response_store_tool verify: 2,095 responses, 1,900,477,670
+     body bytes, fingerprint 61544d16fc7e61e4 (identical to the original), every body's sha256
+     checked, 0 damaged. PASS. Table fingerprints identical to the original store.
+  4. Original store sha256 unchanged afterwards.
+  Not done: a full replay run from the restored store (about 1 h 40 min); its content is
+  identical to the store the replay above used, checked body by body.
+
+What is still required (threshold F4): upload to a real off-machine destination (a private object
+storage bucket, see research/plans/durable_archive_plan.md), download into an empty directory, and
+repeat these checks on the downloaded copy.

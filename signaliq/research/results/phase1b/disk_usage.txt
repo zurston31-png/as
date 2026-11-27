@@ -1,0 +1,13 @@
+Disk usage at the end of Phase 1b (2026-11-27T12:41Z)
+/dev/vda        252G   34G  5.0G  88% /
+500M	data/phase1_neutral
+497M	data/phase1b_record
+4.0K	data/phase1b_replay
+4.4M	data/signaliq.db
+1.4G	data/sip_research.db
+20G	data/universe_stage.db
+32K	data/universe_stage.db-shm
+0	data/universe_stage.db-wal
+11M	data/universe_stage_v1_0_tables.db
+1.7G	scratchpad/rt
+498M	scratchpad/store_export

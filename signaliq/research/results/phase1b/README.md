@@ -63,8 +63,16 @@ unchanged.
 
 ## 4. Archive recovery (local test only)
 
-Pending: the Stage 1.1 restore from the fresh local clone is still running. This section will be
-filled in when it finishes.
+Details: `archive_roundtrip.txt`; evidence in `archive/`. **Local test only: nothing is stored off
+this container.**
+
+- Stage 1.1 through a local bare git repository and a fresh clone: 100 of 100 sha256, 21 of 21
+  table fingerprints, PASS. Restored from the clone: logical fingerprints 21 of 21 identical,
+  completeness audit PASS with output identical to Stage 1.1's. The standard fingerprint of
+  `external_responses` differs by design (the restore compresses SEC answers).
+- Response store: export (8 files, largest 79.6 MB), verify PASS, restore, store verify PASS with
+  the same fingerprint 61544d16fc7e61e4 and 0 damaged bodies.
+- Still required: the same checks on a copy downloaded from real off-machine storage (F4).
 
 ## 5. Protected data
 
