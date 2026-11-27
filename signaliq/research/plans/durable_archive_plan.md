@@ -1,8 +1,8 @@
 # Durable research archive: plan
 
-Status: **plan only. No research data is stored off this container.** No bucket or private
-repository is assumed to exist or to be reachable from this session. The research archive must never go to
-`zurston31-png/as`, which is public.
+Status: **plan complete, waiting for your bucket. No research data is stored off this
+container.** No bucket or private repository is assumed to exist or to be reachable from this
+session. The research archive must never go to `zurston31-png/as`, which is public.
 
 ## Why
 
@@ -18,8 +18,8 @@ preserved, not only the code and the reports.
 | Stage 1.1 research database | `data/universe_stage.db` | 21.0 GB on disk; 1.6 GB as an archive (100 files) | the reference for every later version; includes the SEC cache |
 | Stage 1.0 tables | `data/universe_stage_v1_0_tables.db` | 11 MB | archived Stage 1.0 |
 | IEX market data | `data/signaliq.db` | 4.5 MB | Strategy A's input |
-| Validation batch v2 database | `data/sip_research.db` | 1.4 GB | earlier research; **not on the protected list**, and it is the default database when no URL is set (see Risks) |
-| Raw Alpaca responses of the Phase 1b record run | `data/phase1b_record/alpaca_responses.db` | measured at export | needed for byte-for-byte replay |
+| Validation batch v2 database | `data/sip_research.db` | 1.4 GB | earlier research; protected since Phase 1c |
+| Raw Alpaca responses of the Phase 1b recording (dataset version 2) | `data/phase1b_record/alpaca_responses.db` | 497 MB; 498 MB as an archive (8 files) | rebuilds version 2 exactly by replay |
 | Reports, audits, manifests, Strategy A results | in git (`research/`) | small | already in the public repository; no raw data |
 
 **Stage 1.1 has no raw Alpaca responses.** They were never stored, and Alpaca has since
@@ -31,8 +31,7 @@ Stage 1.1 database is the item that matters most.
 
 1. **Private.** Visibility is checked by the tool before every push; a push to a public
    destination is refused.
-2. **Off this machine**, in at least one copy. Two independent copies are recommended: for
-   example, a private repository plus a copy on your own computer or drive.
+2. **Off this machine**, in two independent copies (below).
 3. **Verified after storage, from a fresh copy, never from the local files:**
    - every file's sha256 matches the manifest;
    - the restored databases match every table fingerprint;
@@ -68,8 +67,9 @@ you choose one:
 - S3, R2 and GCS's S3-compatible access sign each request with a secret key. That key would have
   to be an environment variable that commands in sessions can read, which is another reason to
   give it no delete permission.
-- Backblaze B2's own API starts with a username/password-style key exchange, which may be
-  possible to store as a network secret that this session never sees. I have not tested this.
+- Backblaze B2's own API starts with a username/password-style key exchange that a network
+  secret could hold, but it uploads to hosts that change per upload, which an exact-host
+  allowlist cannot cover. So it is not usable here (see "Concrete setup").
 
 **Second copy: independent of the first**, so that no single account, provider or mistake can
 lose both. In order of preference:
@@ -82,6 +82,42 @@ lose both. In order of preference:
 Not recommended as the primary copy: a private GitHub repository (Git is not a backup tool, and
 the size limits above apply). It remains acceptable as a small extra copy of the manifests and
 hashes, which are already in git.
+
+## Concrete setup (recommended)
+
+How this session can authenticate decides the design. Environment network secrets add a fixed
+header to requests for one exact host; they cannot sign S3 requests (every S3 request carries
+its own signature), and Backblaze's native API uploads to hosts that change per upload, which an
+exact-host allowlist cannot cover. So the session needs an **S3-compatible access key in two
+environment variables**, readable by commands in sessions of that environment. That is
+acceptable only because the key cannot delete and the bucket's object lock protects every
+version.
+
+**Primary: Backblaze B2 (or AWS S3 if you already use AWS).**
+
+1. Create a private bucket, e.g. `signaliq-research-archive`, with **Object Lock enabled at
+   creation** (it cannot be added later on B2) and a default retention, e.g. 1 year, governance
+   or compliance mode. Keep all versions (no lifecycle rule that deletes).
+2. Create an application key **restricted to that bucket** with listFiles, readFiles and
+   writeFiles, **without deleteFiles** (on AWS: an IAM user whose policy allows only
+   `s3:ListBucket`, `s3:GetObject`, `s3:PutObject` on that bucket, with Block Public Access on).
+3. Make a **personal** environment for this repository (not the Default, not an organization
+   environment) and add two environment variables yourself: `SIGNALIQ_ARCHIVE_KEY_ID` and
+   `SIGNALIQ_ARCHIVE_KEY_SECRET`. Never paste them into the chat.
+4. Tell me the bucket name and the endpoint (e.g. `s3.us-west-004.backblazeb2.com`). I will ask
+   for that one host to be allowed in the environment's network settings (you approve it).
+
+**Second copy: independent of the first, done by you, not by a session.**
+
+- Preferred: a bucket at another provider under another account (e.g. AWS S3 if the primary is
+  B2), filled from your own computer with `rclone copy` from the first bucket, then checked with
+  `scripts/archive_database.py verify`; or
+- an external drive: download the version prefix with `rclone copy` and verify it there.
+
+No session credential ever reaches the second copy.
+
+**Done means (threshold F4):** a fresh download from the bucket into an empty directory passes
+step 5 below, and the result is committed. Until then nothing is called durable.
 
 ## Procedure (once a bucket exists)
 
@@ -108,8 +144,10 @@ hashes, which are already in git.
 ## What has and has not been proved
 
 A rehearsal in this session (`research/results/phase1b/archive_roundtrip.txt`) pushed the Stage
-1.1 archive into a local bare git repository, cloned it fresh over the `file://` transport, and
-verified the clone against the live database. **That proves the archive format and the
+1.1 archive into a local bare git repository, cloned it fresh over the `file://` transport,
+verified the clone (100 sha256, 21 table fingerprints), restored it (21 of 21 logical
+fingerprints, completeness audit PASS), and exported, verified and restored the response store
+(same fingerprint 61544d16fc7e61e4). **That proves the archive format and the
 verification workflow. It does not prove durability:** the bare repository and the clone were
 on this same container's disk, and both disappear with it. **No research data is stored off this
 container yet.** It is not safe until step 5 passes on a copy downloaded from a real off-machine
@@ -117,19 +155,14 @@ destination (threshold F4).
 
 ## What I need from you
 
-1. Choose a provider and create a **private bucket** with versioning and an object lock or
-   retention policy, and public access blocked.
-2. Create a credential limited to **that bucket**, with list, read and write permissions and **no
-   delete**. Add it to this environment's settings yourself; never paste it into the chat. Tell
-   me the provider and the bucket name, and I will tell you exactly which setting it goes in.
-3. Choose the second copy: a second provider and account, or your own drive.
+Steps 1-4 of "Concrete setup": the bucket with Object Lock, the bucket-scoped key without
+delete, the two environment variables in a personal environment, and the bucket name and
+endpoint. Then choose the second copy (another provider and account, or your own drive).
 
 ## Risks found while planning
 
-1. **`data/sip_research.db` is unprotected** and is the default research database when
-   `SIGNALIQ_SIP_RESEARCH_DATABASE_URL` is not set. A script started without that variable
-   would write into the validation batch v2 data. Recommended: add it to the protected list.
-   Not done, because it is outside the approved scope.
+1. ~~`data/sip_research.db` is unprotected~~ **Fixed in Phase 1c**: it is protected, and the
+   research workflow has no default database (see `database_inventory.md`).
 2. **Read-only readers touch `data/universe_stage.db-shm`.** That is SQLite's shared-memory
    index for WAL mode. The database file itself is unchanged (sha256 checked), but the `-shm`
    file's timestamp moves. Opening the parent with `immutable=1` would avoid even that. Not
