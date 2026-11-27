@@ -1,0 +1,2 @@
+record run: 74 responses served from the store; 74 of them were the same request already fetched live earlier in this same run
+distinct live requests: 2095

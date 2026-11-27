@@ -1,0 +1,133 @@
+HEAD 2efe7b4; started 2026-11-27T08:19:04Z
+seed record: RESULT: every table equal to the parent
+seed replay: RESULT: every table equal to the parent
+note: the two seeded files are byte-identical copies
+622650 /home/user/as/signaliq/data/phase1b_record/universe_stage.db
+622646 /home/user/as/signaliq/data/phase1b_replay/universe_stage.db
+recording #3 (recordings #1 and #2 were interrupted; their stores are set aside, not used)
+store present before start: no
+== GENUINE RECORD start 08:37:40 (empty store, live Alpaca requests)
+record exit 0 10:27:47
+STORE COUNTERS mode=record served_from_store=74 fetched_live=2095 path=/home/user/as/signaliq/data/phase1b_record/alpaca_responses.db
+record log: request lines 2095; from-store lines 74
+verify exit 0
+responses: 2095; body bytes: 1900477670; fingerprint: 61544d16fc7e61e4
+  /v1/corporate-actions: 106
+  /v2/stocks/bars: 1989
+  recorded between 2026-11-27T08:38:02+00:00 and 2026-11-27T10:01:59+00:00
+bodies checked: 2095; damaged: 0
+RESULT: PASS
+108d2a177926916376e9199fc86e5477401f66d806f552bc0d4a7123bc4cb6dc  /home/user/as/signaliq/data/phase1b_record/alpaca_responses.db
+== OFFLINE REPLAY start 10:28:03 (proxy -> 127.0.0.1:9, no credentials, NoNetworkTransport)
+replay exit 0 12:08:10
+STORE COUNTERS mode=replay served_from_store=2169 fetched_live=0 path=/home/user/as/signaliq/data/phase1b_record/alpaca_responses.db
+replay log: request lines 0; from-store lines 2169
+/home/user/as/signaliq/data/phase1b_record/alpaca_responses.db: OK
+STORE CHECKSUM UNCHANGED BY REPLAY
+REPORT BYTE-IDENTICAL (record vs replay)
+ALL TABLES IDENTICAL (record vs replay)
+ALL LOGICAL FINGERPRINTS IDENTICAL (record vs replay)
+membership, decision by decision (record vs replay):
+decisions: 59 vs 59; rows 61124 vs 61124
+members per decision: min 100, max 100
+decisions differing (all columns, every row): 0 []
+MEMBERSHIP: ALL DECISIONS IDENTICAL
+membership, decision by decision (record vs Stage 1.1):
+decisions: 59 vs 59; rows 61124 vs 61124
+members per decision: min 100, max 100
+decisions differing (all columns, every row): 3 ['2021-04-30', '2021-05-28', '2021-06-30']
+MEMBERSHIP: DIFFERENCE FOUND
+completeness audit record exit 1: 
+completeness audit replay exit 1: 
+COMPLETENESS AUDITS IDENTICAL (record vs replay, apart from the database name line)
+completeness audit record vs Stage 1.1:
+1,28c1,8
+< Completeness audit of universe_stage.db (opened read-only)
+< Decisions: 59 (2020-01-31 to 2024-11-29); N = 100
+< Candidates: 18490; by selection {'completeness': 158, 'not_selected': 17492, 'screen': 840}
+< 
+< 1. POOL
+<   ok   candidates with a recorded monthly fetch: 18490 of 18490
+< 
+< 2. SCREEN
+<   ok   best monthly ranks recomputed and equal to the stored ones: 18490 of 18490
+<   ok   tickers ranked within 3 x N = 300 in some month: 840; selection consistent with the rank for every candidate
+< 
+< 3. N-TH MEMBER, RECOMPUTED FROM DAILY BARS
+<   ok   member medians recomputed and equal to the stored ones: 5900 of 5900
+<   N-th member's 63-session median dollar volume: lowest 369,461,305 (2020-01-31), highest 751,144,435 (2022-03-31)
+< 
+< 4. PREMISES OF THE BOUND (checked on the calendar)
+<   ok   every decision is the last session of its month and its 63-session window lies within the decision month and the three before it
+< 
+< 5. TICKERS WITHOUT DAILY DATA
+<   ok   tickers without daily data whose bound reaches the N-th member at some decision: 0 (of 17492 checked at 59 decisions)
+<   closest: RL on 2024-05-31, N-th member 1.001 x its bound
+< 
+< 6. TICKERS ADDED BY THE COMPLETENESS PROOF
+<   ok   added tickers whose stated bound recomputes and reached the N-th member of that round: 158 of 158
+<   ok   added tickers given daily data (in the batch): 158 of 158
+<   of these, 158 still reach the final N-th member
+< 
+< RESULT: PASS
+---
+> Traceback (most recent call last):
+>   File "/home/user/as/signaliq/scripts/audit_completeness.py", line 320, in <module>
+>     sys.exit(main())
+>              ^^^^^^
+>   File "/home/user/as/signaliq/scripts/audit_completeness.py", line 84, in main
+>     db = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+>          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> sqlite3.OperationalError: unable to open database file
+record vs Stage 1.1 tables:
+1,2c1,2
+< batch_symbols: 1101 rows, sha256 46d0f9038d473f4a (columns left out: none)
+< candidates: 18490 rows, sha256 fa6d31eca65e926e (columns left out: none)
+---
+> batch_symbols: 1101 rows, sha256 a351b4dd1fe39ea3 (columns left out: none)
+> candidates: 18490 rows, sha256 cdaf8c7cf5561557 (columns left out: none)
+9c9
+< membership: 61124 rows, sha256 78d11433877415bc (columns left out: none)
+---
+> membership: 61124 rows, sha256 6db0507e96c333b9 (columns left out: none)
+12c12
+< security_bars: 1928996 rows, sha256 ab82b29ee18a82d8 (columns left out: none)
+---
+> security_bars: 1928996 rows, sha256 3b18260dd1aa597b (columns left out: none)
+19c19
+< ticker_bars: 1960141 rows, sha256 9b693ad36675d068 (columns left out: none)
+---
+> ticker_bars: 1960141 rows, sha256 8692a477d90f5f2d (columns left out: none)
+record vs Stage 1.1 report:
+67c67
+<     added EBON: could have been a member on 2021-04-30: dollar-volume bound 641,712,940 >= N-th member 615,174,483
+---
+>     added EBON: could have been a member on 2021-04-30: dollar-volume bound 641,712,940 >= N-th member 617,327,746
+133c133
+<     added RLX: could have been a member on 2021-04-30: dollar-volume bound 697,762,110 >= N-th member 615,174,483
+---
+>     added RLX: could have been a member on 2021-04-30: dollar-volume bound 697,762,110 >= N-th member 617,327,746
+142c142
+<     added SI: could have been a member on 2021-04-30: dollar-volume bound 638,168,276 >= N-th member 615,174,483
+---
+>     added SI: could have been a member on 2021-04-30: dollar-volume bound 638,168,276 >= N-th member 617,327,746
+154c154
+<     added TKAT: could have been a member on 2021-04-30: dollar-volume bound 659,342,954 >= N-th member 615,174,483
+---
+>     added TKAT: could have been a member on 2021-04-30: dollar-volume bound 659,342,954 >= N-th member 617,327,746
+2144c2144
+<   Our split adjustment against Alpaca's split-adjusted close: 1,758,912 of 1,903,181 sessions within 0.1%
+---
+>   Our split adjustment against Alpaca's split-adjusted close: 1,758,912 of 1,903,182 sessions within 0.1%
+2178c2178
+<     id 501 (SPWR): 837 of 837 sessions off, worst 99.8% on 2024-08-15
+---
+>     id 501 (SPWR): 838 of 838 sessions off, worst 99.8% on 2024-08-15
+record vs Phase 1 neutral report:
+/tmp/claude-0/-home-user-as/be30be7d-2fbb-5fd2-a1f9-4ba855a85398/scratchpad/phase1_neutral.txt /tmp/claude-0/-home-user-as/be30be7d-2fbb-5fd2-a1f9-4ba855a85398/scratchpad/genuine_record.txt differ: char 7167, line 67
+497M	/home/user/as/signaliq/data/phase1b_record/alpaca_responses.db
+500M	/home/user/as/signaliq/data/phase1b_record/universe_stage.db
+500M	/home/user/as/signaliq/data/phase1b_replay/universe_stage.db
+/dev/vda        252G   35G  3.6G  91% /
+finished 2026-11-27T12:14:18Z
+DRIVER-DONE
