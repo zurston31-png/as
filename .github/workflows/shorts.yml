@@ -1,0 +1,48 @@
+name: Daily Shorts
+
+on:
+  schedule:
+    - cron: "17 15 * * *"  # every day 15:17 UTC
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many Shorts to make"
+        default: "5"
+      privacy:
+        description: "public, unlisted, private, or none (render only)"
+        default: "public"
+
+permissions:
+  contents: write  # to commit posted.json so topics aren't repeated
+
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - run: pip install -r requirements.txt
+      - run: python autoshorts.py --count "${{ inputs.count || vars.SHORTS_PER_DAY || '5' }}" --privacy "${{ inputs.privacy || 'public' }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shorts
+          path: out/*.mp4
+          if-no-files-found: ignore
+      - name: Save posted topics
+        if: always()
+        run: |
+          git config user.name "autoshorts"
+          git config user.email "actions@users.noreply.github.com"
+          git add posted.json 2>/dev/null || exit 0
+          git diff --cached --quiet || (git commit -m "Record posted Shorts" && git push)
