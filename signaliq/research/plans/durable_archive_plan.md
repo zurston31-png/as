@@ -1,7 +1,7 @@
 # Durable research archive: plan
 
-Status: **plan only. Nothing has been pushed anywhere.** No private repository is assumed to
-exist or to be reachable from this session. The research archive must never go to
+Status: **plan only. No research data is stored off this container.** No bucket or private
+repository is assumed to exist or to be reachable from this session. The research archive must never go to
 `zurston31-png/as`, which is public.
 
 ## Why
@@ -44,34 +44,57 @@ Stage 1.1 database is the item that matters most.
    restricts redistribution. A private store that only you can read is the conservative
    choice. Please check the terms for whichever destination you pick.
 
-## Options
+## Recommendation: object storage, plus an independent second copy
 
-| Option | Fits the files? | Integrity | What you would set up |
-| --- | --- | --- | --- |
-| **A. New private GitHub repository** (recommended) | yes: every archive file is under 95 MB (GitHub's limit is 100 MB per file); about 1.6 GB plus the response store | git hashes every object; our manifest adds sha256 and table fingerprints; full history | create the repository as Private; install the Claude GitHub App on it; tell me its name |
-| B. Private Hugging Face dataset | yes | per-file hashes; history | a private dataset and an access token added as an environment secret for its host |
-| C. Cloud bucket (GCS or S3) with object versioning | yes | provider checksums plus our manifest; versioning and retention lock available | a bucket and a credential scoped to it, added as an environment secret |
-| D. Your own computer or drive | yes | our manifest | once A exists, `git clone` the private repository onto your computer or drive and run `archive_database.py verify` there; best used as the second copy |
+GitHub's own documentation says Git is not designed to be a backup tool, limits a single push
+to 2 GB and each file to 100 MB, and recommends repositories under 1 GB (under 5 GB strongly
+recommended). At about 2.1 GB, and growing with every version, the archive belongs in object
+storage, not in Git.
 
-Recommended: **A as the primary copy, D as the second.**
+**Primary copy: a private object storage bucket**, with:
 
-## Procedure (once you have set up a destination)
+- **object versioning on**, so an overwrite or deletion keeps the earlier version;
+- **an object lock or retention policy** (for example, keep every object for at least a year), so
+  that even a mistaken or malicious delete cannot remove an archived version during that time;
+- **a credential scoped to that one bucket, without delete permission**: it can list, read and
+  add files only. A session holding it cannot destroy the archive;
+- public access blocked at the bucket or account level.
+
+Providers that offer all of this include Backblaze B2, AWS S3, Google Cloud Storage and
+Cloudflare R2. At 2 to 3 GB the storage cost is small at any of them; please check current
+pricing. How this session would authenticate differs by provider, and must be confirmed when
+you choose one:
+
+- S3, R2 and GCS's S3-compatible access sign each request with a secret key. That key would have
+  to be an environment variable that commands in sessions can read, which is another reason to
+  give it no delete permission.
+- Backblaze B2's own API starts with a username/password-style key exchange, which may be
+  possible to store as a network secret that this session never sees. I have not tested this.
+
+**Second copy: independent of the first**, so that no single account, provider or mistake can
+lose both. In order of preference:
+
+1. a bucket at a **different provider, under a different account**, which you copy into yourself
+   from the first bucket (for example with `rclone`). No session credential ever touches it;
+2. a copy on **your own computer or an external drive**, downloaded from the first bucket and
+   checked there with `scripts/archive_database.py verify`.
+
+Not recommended as the primary copy: a private GitHub repository (Git is not a backup tool, and
+the size limits above apply). It remains acceptable as a small extra copy of the manifests and
+hashes, which are already in git.
+
+## Procedure (once a bucket exists)
 
 1. **Export:**
    - `scripts/archive_database.py export` for each database;
-   - copy the raw response store as is, plus its `response_store_tool.py summary`.
-2. **Check visibility.** I confirm through the GitHub tools that the repository is private.
-   If it is public or unknown, nothing is pushed.
-3. **Push** with git. Every file is under 95 MB, so no Git LFS is needed. GitHub refuses a
-   single push larger than 2 GB, and recommends keeping repositories small (ideally under
-   1 GB; under 5 GB strongly recommended). Please check these figures in GitHub's current
-   documentation. The full archive is about 2.1 GB, so it goes up in at least two pushes:
-   Stage 1.1 in one, and the response store and small databases in another. Each new
-   version adds roughly its own compressed size, so the repository will pass 5 GB after
-   about two more full versions. At that point a new repository per version, or option C,
-   is the better home.
-4. **Fresh clone** into an empty directory.
-5. **Verify the clone:**
+   - export the raw response store the same way (it is a SQLite file, so it is split into files
+     under 95 MB like the others), plus its `response_store_tool.py summary`.
+2. **Check that the bucket is private** before the first upload; nothing is uploaded otherwise.
+3. **Upload** every file and the manifests under a new version prefix (for example
+   `stage_1_1/2026-11-25/`). Nothing is ever overwritten.
+4. **Download into an empty directory** (or verify each object's provider checksum against the
+   manifest's sha256), never trusting the local files.
+5. **Verify the downloaded copy:**
    - `archive_database.py verify` (sha256 of every file, row counts, fingerprints);
    - `archive_database.py restore`;
    - `table_fingerprints.py --logical` compared with the reference;
@@ -80,17 +103,26 @@ Recommended: **A as the primary copy, D as the second.**
    - a replay run compared byte for byte with the record run.
 6. **Record the result** in `research/results/` (hashes only, no data) and commit it to this
    repository.
+7. **Second copy:** you copy the bucket to the second destination and verify it the same way.
 
-Steps 3 to 5 were rehearsed in this session against a local bare git repository standing in
-for the private remote (`research/results/phase1b/archive_roundtrip.txt`).
+## What has and has not been proved
+
+A rehearsal in this session (`research/results/phase1b/archive_roundtrip.txt`) pushed the Stage
+1.1 archive into a local bare git repository, cloned it fresh over the `file://` transport, and
+verified the clone against the live database. **That proves the archive format and the
+verification workflow. It does not prove durability:** the bare repository and the clone were
+on this same container's disk, and both disappear with it. **No research data is stored off this
+container yet.** It is not safe until step 5 passes on a copy downloaded from a real off-machine
+destination (threshold F4).
 
 ## What I need from you
 
-- Create the destination: a private repository under your account or organization, for
-  example `signaliq-research-data`. Make sure "Private" is selected.
-- Install the Claude GitHub App on that repository, then tell me its name. I will attach it to
-  the session with push access and check its visibility before pushing anything.
-- Decide whether you also want a second copy (option D).
+1. Choose a provider and create a **private bucket** with versioning and an object lock or
+   retention policy, and public access blocked.
+2. Create a credential limited to **that bucket**, with list, read and write permissions and **no
+   delete**. Add it to this environment's settings yourself; never paste it into the chat. Tell
+   me the provider and the bucket name, and I will tell you exactly which setting it goes in.
+3. Choose the second copy: a second provider and account, or your own drive.
 
 ## Risks found while planning
 
