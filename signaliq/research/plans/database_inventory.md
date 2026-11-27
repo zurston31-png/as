@@ -13,6 +13,7 @@ Every database the research workflow uses, and what may happen to it. Enforced i
 | `data/signaliq.db` | IEX market data, Strategy A's input | 4.4 MB | same; ingestion, `run_strategy.py` and `validate.py` refuse it, and `init_db` refuses to migrate it |
 | `data/sip_research.db` | validation batch v2 database | 1.4 GB | same (**added in Phase 1c**; it was the default research database before) |
 | `data/phase1b_record/alpaca_responses.db` | raw Alpaca responses of the Phase 1b recording (version 2, below) | 497 MB | record mode refuses it; replay mode (read-only) only (**added in Phase 1c**) |
+| `data/phase1d_anomaly/alpaca_responses.db` | raw responses of the four approved anomaly requests (4 requests, 4 attempts; sha256 4f157cc8…) | 24 KB | same (**added in Phase 1e**) |
 
 The Strategy A archive (`research/results/strategy_a/`, 13 files under `SHA256SUMS`) and the
 Stage 1.0/1.1 result folders are protected through git and checked by the protected-data check.

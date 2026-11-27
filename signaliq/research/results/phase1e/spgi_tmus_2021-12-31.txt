@@ -1,0 +1,15 @@
+2021-12-31 decision: 63-session window 2021-10-04 .. 2021-12-31 (Stage 1.1, version 1, read-only)
+
+Original ranking (stored):
+  TMUS: rank 100, member 1, stored median 628,197,191 (recomputed 628,197,191)
+  SPGI: rank 101, member 0, stored median 625,129,380 (recomputed 625,129,380)
+
+SPGI on 2021-10-25 (defective bar: 3 trades): close x volume = 60,250,449; the smallest of its 63 window values (the median is the 32nd)
+SPGI dollar volume on the sessions before and after: 670,222,804 and 1,155,667,446
+
+Effect on SPGI's 63-session median:
+  as stored: 625,129,380
+  largest possible, whatever the real 10-25 value: 637,784,038 (median moves up one rank)
+  TMUS median to beat: 628,197,191
+  SPGI would rank above TMUS if its real 2021-10-25 dollar volume were above 628,197,191
+  = 69% of the mean of its neighbouring sessions; SPGI's lowest dollar volume in the window apart from 10-25: 288,895,599

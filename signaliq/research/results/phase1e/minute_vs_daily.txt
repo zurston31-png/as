@@ -1,0 +1,9 @@
+SIP 1-minute bars (requests 1 and 3) aggregated, against the defective daily bars
+
+ticker day        minute bars minute trades minute volume | daily trades daily volume | match
+AFL    2021-10-25           2             3       332,794 |            3      332,794 | equal   (minute bars at 13:30Z, 20:00Z)
+SPGI   2021-10-25           2             3       134,677 |            3      134,677 | equal   (minute bars at 13:30Z, 20:00Z)
+AJG    2022-03-08           1             1         7,950 |            5      161,099 | differs by 4 trades, 153,149 shares   (minute bars at 14:30Z)
+AME    2022-03-08           2             2       125,600 |            3      125,700 | differs by 1 trades, 100 shares   (minute bars at 14:30Z, 21:00Z)
+
+A full regular session has 390 one-minute bars. Every ticker here has only the opening print (13:30Z/14:30Z = 09:30 New York) and, except AJG, the closing print (20:00Z/21:00Z = 16:00).

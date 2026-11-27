@@ -1,0 +1,28 @@
+Phase 1 protected data check, after all Phase 1 runs (2026-11-27T15:59Z)
+
+1. sha256 of the protected database files, against the hashes taken before Phase 1:
+  OK   data/universe_stage.db aca7478991c5ebe7fb64d52a8af48a162126fff6dd5a050ed89b96646aedb65c
+  OK   data/universe_stage_v1_0_tables.db 55bdc101068cbad77f458032cf639d8e5d747621080103db1f88c480ae7a4ae6
+  OK   data/signaliq.db 3bba6d15f0fbd11f08d1cbacf67ab8b16c6f735a17888585c318ca8d9fcb30fc
+
+2. IEX database data/signaliq.db (opened read-only):
+  bars: 15861 (expected 15861); fingerprint e66890e79788fc78 (expected e66890e79788fc78) -> OK
+
+3. Strategy A archive research/results/strategy_a/:
+  sha256sum -c SHA256SUMS: 13 OK, 0 not OK
+
+4. Stage 1.1 table fingerprints (all 21 tables), against the Stage 1.1 reference:
+  OK   21 of 21 tables identical
+
+5. Git: commits since Phase 1 began (base b4190ef) touching the protected archives:
+  research/results/universe_stage_100: 0 commits, 0 uncommitted changes
+  research/results/universe_stage_100_v1_1: 0 commits, 0 uncommitted changes
+  research/results/strategy_a: 0 commits, 0 uncommitted changes
+
+RESULT: PASS
+exit 0
+
+6. Protected since Phase 1c/1e:
+  OK   data/sip_research.db 1c0732ab2f7533611a477e23d650c50e0dee059e2646978c921a66e1bc09cd25
+  OK   data/phase1b_record/alpaca_responses.db 108d2a177926916376e9199fc86e5477401f66d806f552bc0d4a7123bc4cb6dc
+  OK   data/phase1d_anomaly/alpaca_responses.db 4f157cc873d81628c40ab7be5786d3ebd360fe82b93b0e2ae7e3bb8aea76ffda
