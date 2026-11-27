@@ -252,11 +252,15 @@ def main():
     token = yt_token()
     videos = trending(token, a.niche)
     print("trending:", *[f"  {v['score']:>6}x  {v['title']}" for v in videos[:8]], sep="\n")
+    failures = 0
     for _ in range(a.count):
         try:
             make_one(token, a.niche, videos, state, a.privacy, out_dir)
         except Exception as e:  # one bad video shouldn't stop the rest
             print("failed:", e)
+            failures += 1
+    if failures:  # red run, so GitHub emails the owner
+        raise SystemExit(f"{failures} of {a.count} videos failed")
 
 
 if __name__ == "__main__":
