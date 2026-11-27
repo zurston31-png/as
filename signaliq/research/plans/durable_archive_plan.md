@@ -102,8 +102,8 @@ version.
    writeFiles, **without deleteFiles** (on AWS: an IAM user whose policy allows only
    `s3:ListBucket`, `s3:GetObject`, `s3:PutObject` on that bucket, with Block Public Access on).
 3. Make a **personal** environment for this repository (not the Default, not an organization
-   environment) and add two environment variables yourself: `SIGNALIQ_ARCHIVE_KEY_ID` and
-   `SIGNALIQ_ARCHIVE_KEY_SECRET`. Never paste them into the chat.
+   environment) and add the four variables listed under "Exact requirements" yourself. Never
+   paste them into the chat.
 4. Tell me the bucket name and the endpoint (e.g. `s3.us-west-004.backblazeb2.com`). I will ask
    for that one host to be allowed in the environment's network settings (you approve it).
 
@@ -140,6 +140,62 @@ step 5 below, and the result is committed. Until then nothing is called durable.
 6. **Record the result** in `research/results/` (hashes only, no data) and commit it to this
    repository.
 7. **Second copy:** you copy the bucket to the second destination and verify it the same way.
+
+## Exact requirements (before any credential is added)
+
+Nothing below has been run. The tool is `rclone` (installed with `apt-get install -y rclone` in
+the session; not yet tested here), reading its settings from environment variables so that no
+configuration file holds the key.
+
+**Environment variables** (a personal environment for this repository; you add them, never in
+the chat):
+
+| Variable | Secret | Value |
+| --- | --- | --- |
+| `SIGNALIQ_ARCHIVE_KEY_ID` | yes | the key's ID (B2 "keyID", AWS "access key ID") |
+| `SIGNALIQ_ARCHIVE_KEY_SECRET` | yes | the key's secret (B2 "applicationKey", AWS "secret access key") |
+| `SIGNALIQ_ARCHIVE_BUCKET` | no | e.g. `signaliq-research-archive` |
+| `SIGNALIQ_ARCHIVE_ENDPOINT` | no | e.g. `s3.us-west-004.backblazeb2.com` (B2) or `s3.us-east-1.amazonaws.com` (AWS) |
+
+The endpoint host also has to be allowed in the environment's network settings (I propose
+that change; you approve it).
+
+**Permissions of the key, exactly:**
+
+- Backblaze B2 application key: bucket = only the archive bucket; capabilities `listBuckets`,
+  `listFiles`, `readFiles`, `writeFiles`. **Not** `deleteFiles`, `writeBucketRetentions`,
+  `bypassGovernance`, `writeFileRetentions`, `writeFileLegalHolds` or any key-management
+  capability.
+- AWS: an IAM user with only this policy (no console access):
+  `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":"arn:aws:s3:::BUCKET"},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":"arn:aws:s3:::BUCKET/*"}]}`
+- Bucket: private, Object Lock on with a default retention (e.g. 1 year), versioning on (implied
+  by Object Lock), public access blocked.
+
+**Verification procedure** (each step must pass before the next; the results are committed as
+hashes and counts only):
+
+1. *Safety checks, before any research data is sent:*
+   - an unauthenticated `curl -sI https://$SIGNALIQ_ARCHIVE_ENDPOINT/$SIGNALIQ_ARCHIVE_BUCKET/`
+     returns 401 or 403 (the bucket is not public);
+   - upload a 1-line test object `_probe/probe.txt`, then try to delete it with the key: the
+     delete **must be refused**. If it succeeds, stop: the key can delete;
+   - read the test object's retention: a retain-until date must be set (object lock active).
+2. *Upload:* `rclone copy` each export directory (Stage 1.1, Stage 1.0, IEX, `sip_research.db`,
+   the Phase 1b response store) to `<bucket>/<dataset>/<export date>/`, with `--immutable` (never
+   overwrite) and `--checksum`.
+3. *Fresh download:* `rclone copy` the same prefixes into a new, empty directory (never reusing
+   the local export).
+4. *F4 checks on the downloaded copy:* `scripts/archive_database.py verify` (sha256 of every
+   file against its manifest, row counts, fingerprints); `restore`;
+   `scripts/table_fingerprints.py --logical` equal to the reference for all 21 Stage 1.1 tables;
+   `scripts/audit_completeness.py` PASS; `scripts/response_store_tool.py verify` PASS with
+   fingerprint 61544d16fc7e61e4; the IEX restore gives 15,861 bars and fingerprint
+   e66890e79788fc78.
+5. *Record:* commit the counts, hashes and results under `research/results/`. Only then is the
+   archive called durable.
+
+Disk: the Stage 1.1 export (1.6 GB) plus its restore (2.8 GB) needs about 4.5 GB free at once;
+the container has 5.0 GB, so the datasets are verified one at a time.
 
 ## What has and has not been proved
 

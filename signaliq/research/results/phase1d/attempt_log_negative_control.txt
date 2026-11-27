@@ -1,0 +1,5 @@
+Negative control (2026-11-27): the same test with put_attempt patched to drop status-500 attempts.
+Expected: FAIL. Result:
+  FAIL attempts logged 14 = requests the server received 15 = client request log lines 15
+  FAIL TESTA attempts in order: [429, 200, RemoteProtocolError, ReadTimeout, 200]
+RESULT: FAIL (as expected: the test detects a lost failed attempt)

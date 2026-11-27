@@ -1,0 +1,6 @@
+2021-04-19: 499 bars; auction-only shape 496; version 2: {'repaired': 499}; exchange now: {'NYSE': 400, 'unknown': 80, 'Nasdaq': 18, 'TXSE': 1}; eligible at a decision covering it: 451; member at one: 67
+   trades {1: 317, 2: 158, 3: 24}; normal trades median 23,169; volume share quartiles 1%/1%/4%
+2021-10-25: 221 bars; auction-only shape 197; version 2: {'still auction-only': 220, 'repaired': 1}; exchange now: {'NYSE': 182, 'unknown': 36, 'Nasdaq': 3}; eligible at a decision covering it: 211; member at one: 1
+   trades {2: 40, 3: 106, 4: 38, 5: 37}; normal trades median 15,654; volume share quartiles 7%/10%/15%
+2022-03-08: 47 bars; auction-only shape 47; version 2: {'still auction-only': 46, 'repaired': 1}; exchange now: {'unknown': 7, 'NYSE': 39, 'Nasdaq': 1}; eligible at a decision covering it: 47; member at one: 0
+   trades {2: 6, 3: 13, 4: 15, 5: 13}; normal trades median 12,413; volume share quartiles 7%/10%/13%

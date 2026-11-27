@@ -305,3 +305,16 @@ def test_a_store_made_before_attempts_were_logged_still_replays(settings, tmp_pa
     assert player.verify() == []
     with _client(settings, player) as client:
         assert _fetch(client) == recorded
+
+
+def test_verify_finds_a_stored_response_without_its_logged_attempt(settings, tmp_path, two_pages):
+    path = tmp_path / "responses.db"
+    with _client(settings, ResponseStore(path, "record"), two_pages.transport) as client:
+        _fetch(client)
+    assert ResponseStore(path, "replay").verify() == []
+    db = sqlite3.connect(path)
+    db.execute("delete from attempts where id = (select min(id) from attempts)")
+    db.commit()
+    db.close()
+    problems = ResponseStore(path, "replay").verify()
+    assert len(problems) == 1 and "without its logged 200 attempt" in problems[0]

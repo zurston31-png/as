@@ -330,6 +330,23 @@ class ResponseStore:
                 continue
             if len(body) != size or hashlib.sha256(body).hexdigest() != sha:
                 problems.append(f"{key}: body does not match its recorded sha256 or length")
+        # A store that logs attempts must hold, for every stored response, the 200 attempt
+        # that delivered it (same body sha256). Older stores, without attempts, are skipped.
+        with self._lock, contextlib.suppress(sqlite3.OperationalError):
+            unlogged = self._db.execute(
+                "select key from responses r where not exists (select 1 from attempts a"
+                " where a.key = r.key and a.status = 200 and a.body_sha256 = r.body_sha256)"
+                " and exists (select 1 from attempts) order by key"
+            ).fetchall()
+            problems += [
+                f"{key}: stored response without its logged 200 attempt" for (key,) in unlogged
+            ]
+            problems += [
+                f"attempt {i}: neither a status nor an error recorded"
+                for (i,) in self._db.execute(
+                    "select id from attempts where status is null and error is null"
+                )
+            ]
         return problems
 
     def close(self) -> None:

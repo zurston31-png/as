@@ -106,3 +106,50 @@ Added after Phase 1. Like everything above, none of these is approved.
 | F4 | Off-machine archive: a **fresh copy** from the private destination verifies: sha256 of **every** file, **21 of 21** Stage 1.1 table fingerprints after restore, completeness audit PASS, F3 on the restored store | durable storage that can actually be recovered | Phase 2 does not start ("required before expansion") |
 | F5 | Destination visibility **private**, checked before every push | the research data is never published | nothing is pushed |
 | F6 | Co-registrant measurement complete: **0** SEC answers missing when the issuer step runs with the rule on, after the approved fetch | that the rule is judged on a complete run, not on 2 of 78 cases | the rule is not adopted; the missing answers are listed for approval |
+
+## G. Proposed after Phase 1c (data quality, attempt logging): final wording for your decision
+
+Added after Phase 1c. **Not adopted**; this is the exact wording for you to accept, change or
+reject.
+
+| # | Threshold | What it measures | If it fails |
+| --- | --- | --- | --- |
+| G1 | **0** flagged auction-only bars without a reviewed explanation and an approved treatment | that defective provider bars are never used silently | gate fails; every flagged bar is listed (date, ticker, normal and flagged trade count, version-2 status, membership impact) and waits for an explanation and a treatment you approve |
+| G2 | Every HTTP attempt recorded: attempts logged **=** requests sent; **0** stored responses without their logged 200 attempt; **0** attempts with neither a status nor an error; every request that ended in failure replays as the **same** failure, with **0** network requests | that the provider exchange is preserved completely, failures and retries included | the run is not accepted; it is repeated in record mode into a new, empty store |
+
+**How G1 is measured** (`scripts/audit_auction_bars.py`, read-only, tested in
+`tests/test_audit_auction_bars.py`):
+
+1. A bar is flagged when its **security** (not its ticker) had a median of **at least 1,000**
+   trades over the **20** market sessions just before it, counting sessions without a bar as 0,
+   and the bar has **at most 5** trades. Counting missing sessions as 0 keeps a long suspension
+   from looking liquid; using the security keeps a reused ticker from inheriting another
+   company's history (both produced the 13 false alarms of the first scan).
+2. Every flagged bar must have a row in a reviewed list (TSV: session, security_id,
+   explanation, treatment). Treatments: *kept and flagged* (the bar stays, every report names
+   it), *excluded from the median*, or *replaced from a named source*. Any treatment other than
+   "kept and flagged" changes the data, so it is a new dataset version that needs your approval.
+3. For each decision whose 63-session window holds a flagged bar, membership is recomputed
+   with the flagged bars left out; every member change is listed.
+4. Stage 1.1 today: **767 flagged bars, all unexplained: G1 FAILS** (2021-04-19 499,
+   2021-10-25 221, 2022-03-08 47).
+
+Limits: it finds only near-empty bars (5 trades or fewer). A day missing half its trades is not
+caught, and the three numbers (1,000 / 20 / 5) are themselves part of what you approve.
+
+**How G2 is measured:**
+
+1. Each record run starts with a **new, empty** store (the driver refuses an existing file), so
+   the store holds exactly that run's attempts.
+2. The number of rows in `attempts` equals the number of "Alpaca request" lines in the client's
+   log for the run (one line per attempt, written before the request is sent).
+3. `scripts/response_store_tool.py verify` reports 0 problems: every stored body (responses and
+   failed attempts) matches its sha256 and length; every stored response has its logged 200
+   attempt with the same sha256; no attempt lacks both a status and an error.
+4. The offline replay meets F2, and every request whose last attempt failed raises the same
+   error class and status as in the record run (shown on a local fake provider in
+   `research/results/phase1d/attempt_log_controlled_test.txt`, with a negative control).
+
+Limits: it covers the Alpaca client only (SEC requests have their own cache counts, B12). Stores
+recorded before attempt logging (the Phase 1b store) cannot meet G2. They still replay, and
+`verify` skips the attempt checks for them.
