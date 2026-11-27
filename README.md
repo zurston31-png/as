@@ -5,7 +5,7 @@ Makes trending YouTube Shorts every day, on GitHub's free servers:
 1. **Research:** finds Shorts in your niche from the last 14 days that got far more views than their channel's size (YouTube Data API, free).
 2. **Script:** Claude writes an original ~45-second script on one of those topics (about 3-4 cents per video).
 3. **Voice:** free Microsoft neural voice (edge-tts).
-4. **Footage:** free vertical stock clips from Pexels, credited in the description.
+4. **Footage:** free stock clips from Pixabay, credited in the description.
 5. **Render:** ffmpeg builds a 1080×1920 video with captions.
 6. **Upload:** posts to your channel and records the topic in `posted.json` so it isn't repeated.
 
@@ -14,8 +14,8 @@ Makes trending YouTube Shorts every day, on GitHub's free servers:
 ### 1. Claude API key
 Create a key at https://console.anthropic.com → API Keys. Add a few dollars of credit.
 
-### 2. Pexels API key (free)
-Sign up at https://www.pexels.com/api/ and copy your key.
+### 2. Pixabay API key (free)
+Sign up at https://pixabay.com, then open https://pixabay.com/api/docs/ and copy the key shown under **Parameters → key**.
 
 ### 3. YouTube access
 1. Go to https://console.cloud.google.com, create a project, and enable **YouTube Data API v3**.
@@ -30,7 +30,7 @@ Sign up at https://www.pexels.com/api/ and copy your key.
 
 ### 4. Add the secrets to GitHub
 Repo → **Settings → Secrets and variables → Actions → New repository secret**. Add:
-`ANTHROPIC_API_KEY`, `PEXELS_API_KEY`, `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN`.
+`ANTHROPIC_API_KEY`, `PIXABAY_API_KEY`, `YT_CLIENT_ID`, `YT_CLIENT_SECRET`, `YT_REFRESH_TOKEN`.
 
 Optional: under **Variables**, set `SHORTS_PER_DAY` (default 5, about the most the default YouTube quota allows).
 

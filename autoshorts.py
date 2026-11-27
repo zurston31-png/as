@@ -1,7 +1,7 @@
 """Daily trending YouTube Shorts: research -> script -> voice -> footage -> render -> upload.
 
-Free parts: YouTube Data API, Pexels, edge-tts, ffmpeg. Paid part: one Claude call per video.
-Env: ANTHROPIC_API_KEY, PEXELS_API_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN.
+Free parts: YouTube Data API, Pixabay, edge-tts, ffmpeg. Paid part: one Claude call per video.
+Env: ANTHROPIC_API_KEY, PIXABAY_API_KEY, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN.
 """
 import argparse
 import asyncio
@@ -116,7 +116,7 @@ These Shorts are breaking out right now (score = views divided by channel subscr
 Pick ONE and write an original Short on the same topic or angle, not a copy of its title.
 - 100-120 spoken words in 8-12 lines. The first line is the hook: a concrete, surprising detail.
 - Only state facts that are well established. Use no numbers you are unsure of.
-- footage_query: 2-4 plain words that find matching vertical stock footage on Pexels (e.g. "galaxy stars", "sun surface").
+- footage_query: 2-4 plain words that find matching vertical stock footage on Pixabay (e.g. "galaxy stars", "sun surface").
 - title under 70 characters; description of 1-2 sentences ending with 3-4 hashtags including #shorts; 5-10 tags.
 - source_video_id: the id of the video you picked."""
     resp = anthropic.Anthropic().messages.parse(
@@ -144,21 +144,18 @@ def speak(lines, out_dir):
 
 
 def find_clip(query, out_path, skip):
-    r = requests.get("https://api.pexels.com/videos/search", timeout=30,
-                     headers={"Authorization": os.environ["PEXELS_API_KEY"]},
-                     params={"query": query, "orientation": "portrait", "per_page": 10})
+    r = requests.get("https://pixabay.com/api/videos/", timeout=30, params={
+        "key": os.environ["PIXABAY_API_KEY"], "q": query, "per_page": 20, "safesearch": "true"})
     r.raise_for_status()
-    for video in r.json()["videos"]:
-        if video["id"] in skip:
-            continue
-        files = [f for f in video["video_files"] if f.get("height") and f["height"] >= 1280]
-        if not files:
-            continue
-        best = min(files, key=lambda f: f["height"])  # smallest file that is still HD
-        out_path.write_bytes(requests.get(best["link"], timeout=120).content)
-        skip.add(video["id"])
-        return video["user"]["name"]
-    return None
+    hits = [h for h in r.json()["hits"] if h["id"] not in skip and h["videos"]["large"]["url"]]
+    # Pixabay has no orientation filter: prefer vertical clips, render() crops the rest
+    hits.sort(key=lambda h: h["videos"]["large"]["height"] <= h["videos"]["large"]["width"])
+    if not hits:
+        return None
+    hit = hits[0]
+    out_path.write_bytes(requests.get(hit["videos"]["large"]["url"], timeout=120).content)
+    skip.add(hit["id"])
+    return hit["user"]
 
 
 def duration(path):
@@ -228,7 +225,7 @@ def make_one(token, niche, videos, state, privacy, out_dir):
             raise RuntimeError(f"no footage for {line.footage_query!r}")
         credits.add(who)
         segments.append((clip, audio, line.text))
-    script.description += f"\n\nFootage: Pexels ({', '.join(sorted(credits))}). Voice: AI."
+    script.description += f"\n\nFootage: Pixabay ({', '.join(sorted(credits))}). Voice: AI."
     out = out_dir / f"{dt.date.today()}-{script.source_video_id}.mp4"
     render(segments, out, work)
     video_id = upload(token, out, script, privacy) if privacy != "none" else None
