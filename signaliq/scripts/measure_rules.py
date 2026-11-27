@@ -20,6 +20,7 @@ import argparse
 import sys
 from collections import defaultdict
 from dataclasses import astuple
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -200,10 +201,105 @@ def coregistrant(s, out: Path) -> None:
     print("\n".join(lines[:2]), flush=True)
 
 
+def coregistrant_requirements(s, out: Path) -> None:
+    """Every SEC answer the issuer step would need with the co-registrant rule on and that is
+    not in the cache, without fetching any. Cache only (``StrictCache``)."""
+    import math
+    import os
+
+    from app.universe import sec, sec_history
+
+    lines = ["CO-REGISTRANT RULE: SEC ANSWERS NEEDED AND NOT IN THE CACHE (nothing fetched)"]
+    stored = evidence.stored_issuer_points(s)
+    client = evidence.StrictCache(s)
+    os.environ[rules.COREGISTRANT_VARIABLE] = "1"
+    try:
+        records, _conflicts = evidence.issuer_records(s, client, evidence.sec_findings(s, client))
+    finally:
+        os.environ.pop(rules.COREGISTRANT_VARIABLE, None)
+    missing = sorted(client.missing)
+    lines.append(
+        "Method: the issuer step (issuer_records, the only step that requests SEC answers;"
+        " every later step reads the cache only) run with the rule on against a cache that"
+        " records each answer it lacks instead of fetching it."
+    )
+    lines.append(f"\nFirst-level answers missing: {len(missing)}")
+    lines += [f"  {key}" for key in missing]
+
+    securities = {x.security_id: x for x in s.execute(select(Security)).scalars()}
+    lines.append("\nCompanies the rule adds to a security's issuer evidence:")
+    total_known, total_later, total_bound = len(missing), 0, 0
+    for sid, _last, points, _sics in records:
+        before = {p.cik for p in stored.get(sid, [])}
+        for cik in sorted({p.cik for p in points} - before):
+            security = securities[sid]
+            first = security.first_session - timedelta(days=365)
+            last = security.last_trade_session
+            name = next(p.name for p in points if p.cik == cik)
+            lines.append(
+                f"  id {sid} {security.last_symbol}: CIK {cik} {name}; SIC history from {first}"
+                f" to {last}"
+            )
+            text = client.get(sec_history.SUBMISSIONS_URL.format(cik=str(int(cik)).zfill(10)))
+            if not text:
+                lines.append("    submissions file: NOT in the cache")
+                continue
+            pages = sec_history.older_pages(text)
+            have = [p for p in pages if client.get(sec.SUBMISSIONS_PAGE_URL.format(name=p))]
+            lines.append(
+                f"    submissions file: in the cache; older pages listed {len(pages)},"
+                f" in the cache {len(have)}: {pages}"
+            )
+            company = sec_history.parse_submissions(text)
+            dated = sorted({(f, a) for _, f, a in company.filings}) if company else []
+            oldest = dated[0][0] if dated else None
+            inside = [d for d in dated if first <= d[0] <= last]
+            prior = [d for d in dated if d[0] < first]
+            settled = bool(prior) or not pages or len(have) == len(pages)
+            n = len(inside) + (1 if prior else 0)
+            if settled:
+                ends = ([prior[-1]] if prior else []) + ([inside[-1]] if inside else [])
+                lines.append(
+                    f"    filing headers that must be read (both ends of the interval, known"
+                    f" now): {len(ends)}"
+                )
+                for filed, accession in ends:
+                    folder = accession.replace("-", "")
+                    url = (
+                        f"{sec_history.ARCHIVES}/Archives/edgar/data/{int(cik)}/{folder}/"
+                        f"{accession}.hdr.sgml"
+                    )
+                    state = "in the cache" if client.get(url) else "NOT in the cache"
+                    lines.append(f"      {filed} {url} ({state})")
+            else:
+                total_later += 1
+                lines.append(
+                    f"    the cached file lists filings back to {oldest} only; the filing"
+                    f" before {first} is on an older page, so 1 of the 2 end headers is known"
+                    " only after that page is fetched"
+                )
+            bound = math.ceil(math.log2(max(n, 2)))
+            total_bound += bound
+            lines.append(
+                f"    if the SIC changed inside the interval: up to {bound} more headers per"
+                f" change (halving over about {n} filings); if not: none"
+            )
+    lines.append(
+        f"\nTotal: {total_known} answers known now to be needed; {total_later} more known only"
+        f" after an older page is read; up to {total_bound} more per SIC change. A changed"
+        " issuer can also change later issuer-confirmed rename decisions, and a rename merge"
+        " starts another pass whose new securities may need further answers; that is known"
+        " only once the step above completes."
+    )
+    out.write_text("\n".join(lines) + "\n")
+    print("\n".join(lines[:3]), flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dated-types", type=Path)
     parser.add_argument("--coregistrant", type=Path)
+    parser.add_argument("--coregistrant-requirements", type=Path)
     args = parser.parse_args()
     engine = open_research_database()
     with session_scope(create_session_factory(engine)) as s:
@@ -211,6 +307,8 @@ def main() -> int:
             dated_types(s, args.dated_types)
         if args.coregistrant:
             coregistrant(s, args.coregistrant)
+        if args.coregistrant_requirements:
+            coregistrant_requirements(s, args.coregistrant_requirements)
     return 0
 
 

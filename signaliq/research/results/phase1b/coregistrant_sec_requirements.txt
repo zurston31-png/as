@@ -1,0 +1,35 @@
+CO-REGISTRANT RULE: SEC ANSWERS NEEDED AND NOT IN THE CACHE (nothing fetched)
+Method: the issuer step (issuer_records, the only step that requests SEC answers; every later step reads the cache only) run with the rule on against a cache that records each answer it lacks instead of fetching it.
+
+First-level answers missing: 1
+  https://data.sec.gov/submissions/CIK0001067701-submissions-001.json
+
+Companies the rule adds to a security's issuer evidence:
+  id 571 URI: CIK 0001067701 UNITED RENTALS INC /DE; SIC history from 2015-01-04 to 2024-12-31
+    submissions file: in the cache; older pages listed 1, in the cache 0: ['CIK0001067701-submissions-001.json']
+    the cached file lists filings back to 2016-01-11 only; the filing before 2015-01-04 is on an older page, so 1 of the 2 end headers is known only after that page is fetched
+    if the SIC changed inside the interval: up to 10 more headers per change (halving over about 836 filings); if not: none
+  id 864 HTZ: CIK 0001657853 HERTZ GLOBAL HOLDINGS, INC; SIC history from 2020-11-09 to 2024-12-31
+    submissions file: in the cache; older pages listed 0, in the cache 0: []
+    filing headers that must be read (both ends of the interval, known now): 2
+      2020-11-05 https://www.sec.gov/Archives/edgar/data/1657853/000165785320000110/0001657853-20-000110.hdr.sgml (in the cache)
+      2024-12-13 https://www.sec.gov/Archives/edgar/data/1657853/000095010324017766/0000950103-24-017766.hdr.sgml (in the cache)
+    if the SIC changed inside the interval: up to 9 more headers per change (halving over about 312 filings); if not: none
+
+Total: 1 answers known now to be needed; 1 more known only after an older page is read; up to 19 more per SIC change. A changed issuer can also change later issuer-confirmed rename decisions, and a rename merge starts another pass whose new securities may need further answers; that is known only once the step above completes.
+
+SIC values read from headers already in the cache (no request made):
+  HTZ, CIK 0001657853: 2020-11-05 header SIC 7510; 2024-12-13 header SIC 7510. Both ends agree,
+    so the halving reads nothing more: 0 new requests for HTZ.
+  URI, CIK 0001067701: latest end header (2024-12-09, 0000950170-24-134604) is in the cache, SIC
+    7359. The other end (the last filing before 2015-01-04) is listed only on the older page.
+
+New SEC requests needed for the issuer step with the rule on:
+  certain:     1  https://data.sec.gov/submissions/CIK0001067701-submissions-001.json
+  then:        0 or 1  the header of United Rentals, Inc.'s last filing before 2015-01-04
+                       (0 if it happens to be cached; its URL is known only after the page above)
+  then:        0 if that header's SIC is 7359 (as at the other end); otherwise up to 10
+  minimum 1, maximum 12, expected 2 (United Rentals' SIC has been 7359 at every header read so far)
+  After the issuer step: 0 SEC requests in the later steps (they read the cache only), unless the
+  changed issuers change a rename decision and start another pass. Whether that happens is known
+  only when the run completes; any further request it needs would be stopped and listed, not fetched.

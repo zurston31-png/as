@@ -93,3 +93,16 @@ If a measured figure falls far outside its estimate (for example, distinct membe
 
    They are unchanged from Stage 1.1 and are listed here only so the list is complete. A
    change to any of them would be a new rule needing approval.
+
+## F. Proposed after Phase 1 (raw responses, archive, co-registrant), not approved
+
+Added after Phase 1. Like everything above, none of these is approved.
+
+| # | Threshold | What it measures | If it fails |
+| --- | --- | --- | --- |
+| F1 | Every Alpaca response used by a stage run is in its raw response store: **0** responses used that were not stored (record run) | that the run's provider data is preserved exactly as received | the run is not accepted; it is repeated in record mode |
+| F2 | Replay of the stored responses: report **byte-identical** to the record run, **0** differing table fingerprints (all tables), **0** network requests | reproducibility from preserved data, independent of later provider revisions | gate fails; the difference is investigated (a replay cannot legitimately differ) |
+| F3 | Response store integrity: **0** bodies whose sha256 or length does not match | the stored responses are intact | stop; restore the store from the archive and verify again |
+| F4 | Off-machine archive: a **fresh copy** from the private destination verifies: sha256 of **every** file, **21 of 21** Stage 1.1 table fingerprints after restore, completeness audit PASS, F3 on the restored store | durable storage that can actually be recovered | Phase 2 does not start ("required before expansion") |
+| F5 | Destination visibility **private**, checked before every push | the research data is never published | nothing is pushed |
+| F6 | Co-registrant measurement complete: **0** SEC answers missing when the issuer step runs with the rule on, after the approved fetch | that the rule is judged on a complete run, not on 2 of 78 cases | the rule is not adopted; the missing answers are listed for approval |
