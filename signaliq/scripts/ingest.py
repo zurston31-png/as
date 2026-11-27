@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import ConfigurationError, Settings, configure_logging, get_settings
 from app.data.ingestion import BatchIngestionResult, IngestionError, run_ingestion
-from app.database import database_file_path
+from app.database import ProtectedDatabase, database_file_path
 from app.models import RunStatus
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         batch = run_ingestion(
             settings, symbols, timeframe=args.timeframe, start=args.start, end=args.end
         )
-    except (ConfigurationError, IngestionError) as exc:
+    except (ConfigurationError, IngestionError, ProtectedDatabase) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

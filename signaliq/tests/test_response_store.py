@@ -179,6 +179,17 @@ def test_refuses_a_file_that_is_not_a_response_store(tmp_path):
     assert _sha(other) == before
 
 
+def test_record_mode_refuses_a_protected_store(tmp_path, monkeypatch):
+    from app import database
+
+    path = tmp_path / "archived_responses.db"
+    ResponseStore(path, "record").close()
+    monkeypatch.setitem(database.PROTECTED_DATABASES, path.resolve(), "a test archive")
+    with pytest.raises(ResponseStoreError, match="protected"):
+        ResponseStore(path, "record")
+    ResponseStore(path, "replay").close()
+
+
 def test_replay_needs_an_existing_store(tmp_path):
     with pytest.raises(ResponseStoreError, match="existing response store"):
         ResponseStore(tmp_path / "missing.db", "replay")

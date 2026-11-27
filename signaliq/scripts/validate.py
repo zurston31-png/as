@@ -36,10 +36,12 @@ from app.data.validation import (
     validate_stored_bars,
 )
 from app.database import (
+    ProtectedDatabase,
     create_db_engine,
     create_session_factory,
     database_file_path,
     init_db,
+    refuse_protected,
     session_scope,
 )
 from app.models import CheckStatus, format_utc
@@ -162,6 +164,12 @@ def main(argv: list[str] | None = None) -> int:
             "scripts/ingest.py)",
             file=sys.stderr,
         )
+        return 2
+
+    try:
+        refuse_protected(settings.database_url)
+    except ProtectedDatabase as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
 
     engine = create_db_engine(settings.database_url)

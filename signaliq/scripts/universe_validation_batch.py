@@ -4,8 +4,9 @@
 Downloads SIP daily bars and corporate actions for the validation batch, up to
 2024-12-31, gathers independent evidence (OpenFIGI, Wikidata, hand-entered
 corrections checked against prices, SEC EDGAR delisting notices and 8-Ks) and
-writes everything to the SIP research
-database (data/sip_research.db by default). The market data database and the
+writes everything to the SIP research database named by
+SIGNALIQ_SIP_RESEARCH_DATABASE_URL (required: there is no default, and the archived
+databases are refused). The market data database and the
 Strategy A results are not read or written. Nothing is simulated.
 
     python scripts/universe_validation_batch.py [--report FILE] [--refresh]
@@ -64,27 +65,6 @@ from app.universe.models import (
 RULE = MembershipRule()
 MAX_MERGE_PASSES = 4
 MAX_COMPLETENESS_ROUNDS = 4
-
-
-STAGE_DATABASE = Path(__file__).resolve().parent.parent / "data" / "universe_stage.db"
-
-
-def use_stage_database() -> None:
-    """Point the run at the stage database (a copy of the research database at first use).
-
-    The copy keeps the cached source answers, so they are not asked again; the validation
-    batch's own database is never written by a stage.
-    """
-    import os
-    import shutil
-
-    from app.universe.database import DEFAULT_URL, URL_VARIABLE
-
-    if os.environ.get(URL_VARIABLE):
-        return
-    if not STAGE_DATABASE.exists():
-        shutil.copyfile(DEFAULT_URL.removeprefix("sqlite:///"), STAGE_DATABASE)
-    os.environ[URL_VARIABLE] = f"sqlite:///{STAGE_DATABASE.as_posix()}"
 
 
 def stage_pool(session, client, settings):
@@ -1355,7 +1335,6 @@ def main(argv=None) -> int:
     global RULE
     if args.stage:
         RULE = MembershipRule(size=args.stage)
-        use_stage_database()
     text = report(run(get_settings(), args.refresh, args.stage))
     print(text)
     if args.report:

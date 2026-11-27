@@ -52,7 +52,13 @@ from app.data.validation import (
     session_window_utc,
     validate_records,
 )
-from app.database import create_db_engine, create_session_factory, init_db, session_scope
+from app.database import (
+    create_db_engine,
+    create_session_factory,
+    init_db,
+    refuse_protected,
+    session_scope,
+)
 from app.models import Bar, CheckStage, CheckStatus, IngestionRun, RunStatus, utc_now
 
 logger = logging.getLogger(__name__)
@@ -529,6 +535,7 @@ def run_ingestion(
     ``ConfigurationError`` when the Alpaca credentials are missing and
     ``IngestionError`` when the request itself is invalid.
     """
+    refuse_protected(settings.database_url)
     engine = create_db_engine(settings.database_url)
     try:
         init_db(engine)

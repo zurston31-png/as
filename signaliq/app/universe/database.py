@@ -10,30 +10,22 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, create_engine, inspect
 
 from app.config import PROJECT_ROOT
-from app.database import create_db_engine, database_file_path
+from app.database import (  # noqa: F401  (re-exported: the protected list lives there)
+    PROTECTED_DATABASES,
+    ProtectedDatabase,
+    create_db_engine,
+    database_file_path,
+    protected_label,
+)
 from app.universe import sec_cache
 
-DEFAULT_URL = f"sqlite:///{(PROJECT_ROOT / 'data' / 'sip_research.db').as_posix()}"
+#: The validation batch v2 database: protected, read only. There is no default research
+#: database; a run without SIGNALIQ_SIP_RESEARCH_DATABASE_URL stops instead of writing here.
+V2_DATABASE = PROJECT_ROOT / "data" / "sip_research.db"
 URL_VARIABLE = "SIGNALIQ_SIP_RESEARCH_DATABASE_URL"
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 VERSION_TABLE = "sip_research_alembic_version"
 READ_ONLY_VARIABLE = "SIGNALIQ_SIP_RESEARCH_READ_ONLY"
-
-#: Archived databases that no workflow may write. They can be opened read-only only
-#: (``read_only=True`` or SIGNALIQ_SIP_RESEARCH_READ_ONLY=1), which SQLite itself enforces.
-PROTECTED_DATABASES: dict[Path, str] = {
-    (PROJECT_ROOT / "data" / "universe_stage.db").resolve(): "the Stage 1.1 research database",
-    (PROJECT_ROOT / "data" / "universe_stage_v1_0_tables.db").resolve(): "the Stage 1.0 tables",
-    (PROJECT_ROOT / "data" / "signaliq.db").resolve(): "the IEX market data database",
-}
-
-
-class ProtectedDatabase(RuntimeError):
-    """An archived database was about to be opened for writing."""
-
-
-def protected_label(path: Path | None) -> str | None:
-    return None if path is None else PROTECTED_DATABASES.get(path.resolve())
 
 
 def _read_only_requested() -> bool:
@@ -60,8 +52,18 @@ def _open_read_only(path: Path) -> Engine:
     return engine
 
 
+class NoResearchDatabase(RuntimeError):
+    """No research database was named: fail closed rather than pick one."""
+
+
 def research_database_url() -> str:
-    return os.environ.get(URL_VARIABLE, "").strip() or DEFAULT_URL
+    url = os.environ.get(URL_VARIABLE, "").strip()
+    if not url:
+        raise NoResearchDatabase(
+            f"{URL_VARIABLE} is not set. Name the research database explicitly "
+            "(a new file for a new run); there is no default."
+        )
+    return url
 
 
 def _config(connection) -> Config:

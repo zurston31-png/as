@@ -37,6 +37,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+from app.database import protected_label
+
 PATH_VARIABLE = "SIGNALIQ_ALPACA_RESPONSES"
 MODE_VARIABLE = "SIGNALIQ_ALPACA_RESPONSES_MODE"
 MODES = ("record", "replay")
@@ -98,6 +100,12 @@ class ResponseStore:
             self._db.execute("PRAGMA query_only=ON")
             self._check_tables(require=True)
         else:
+            label = protected_label(self.path)
+            if label:
+                raise ResponseStoreError(
+                    f"{self.path} is {label}, archived and protected: "
+                    "replay it, never record into it"
+                )
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._db = sqlite3.connect(self.path, check_same_thread=False)
             self._check_tables(require=False)

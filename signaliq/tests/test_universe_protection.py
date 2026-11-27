@@ -57,6 +57,27 @@ def test_a_protected_database_cannot_be_opened_for_writing(protected):
 def test_the_stage_1_1_databases_are_registered_as_protected():
     names = {p.name for p in udb.PROTECTED_DATABASES}
     assert {"universe_stage.db", "universe_stage_v1_0_tables.db", "signaliq.db"} <= names
+    assert {"sip_research.db", "alpaca_responses.db"} <= names
+
+
+def test_there_is_no_default_research_database(monkeypatch):
+    monkeypatch.delenv(udb.URL_VARIABLE, raising=False)
+    with pytest.raises(udb.NoResearchDatabase):
+        udb.open_research_database()
+
+
+def test_market_data_writers_refuse_a_protected_database(protected, settings):
+    from app.data.ingestion import run_ingestion
+    from app.database import create_db_engine, init_db
+
+    before = _sha(protected)
+    with pytest.raises(udb.ProtectedDatabase):
+        run_ingestion(settings.model_copy(update={"database_url": _url(protected)}), ["TESTA"])
+    engine = create_db_engine(_url(protected))  # a migration would write: refused
+    with pytest.raises(udb.ProtectedDatabase):
+        init_db(engine)
+    engine.dispose()
+    assert _sha(protected) == before
 
 
 def test_read_only_mode_reads_and_sqlite_refuses_every_write(protected):

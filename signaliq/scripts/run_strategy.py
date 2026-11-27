@@ -35,11 +35,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import ConfigurationError, get_settings
 from app.database import (
+    ProtectedDatabase,
     SchemaError,
     create_db_engine,
     create_session_factory,
     database_file_path,
     init_db,
+    refuse_protected,
     session_scope,
 )
 from app.strategies.assumptions import (
@@ -145,6 +147,12 @@ def main(argv: list[str] | None = None) -> int:
             "Create it with:  python -m app.database   and download bars with scripts/ingest.py",
             file=sys.stderr,
         )
+        return 2
+
+    try:
+        refuse_protected(settings.database_url)
+    except ProtectedDatabase as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
 
     engine = create_db_engine(settings.database_url)

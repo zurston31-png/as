@@ -50,10 +50,10 @@ from sqlalchemy import select
 
 from app.database import create_session_factory, session_scope
 from app.universe import sec
-from app.universe.database import open_research_database
+from app.universe.database import V2_DATABASE, open_research_database
 from app.universe.models import ExternalResponse
 
-V5_DB = Path(__file__).resolve().parent.parent / "data" / "sip_research.db"
+V5_DB = V2_DATABASE
 FORMS = ("", "25", "8-K", "15")
 PREFIX = sec.BROWSE_URL + "?CIK="
 RETIRED_KEY = re.compile(r"#-?\d{1,20}$")

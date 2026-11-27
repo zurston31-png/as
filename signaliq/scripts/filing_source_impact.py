@@ -23,11 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.database import create_session_factory, session_scope
 from app.universe import evidence, sec
-from app.universe.database import open_research_database
+from app.universe.database import V2_DATABASE, open_research_database
 
-V5_URL = (
-    f"sqlite:///{(Path(__file__).resolve().parent.parent / 'data' / 'sip_research.db').as_posix()}"
-)
+V5_URL = f"sqlite:///{V2_DATABASE.as_posix()}"
 
 
 class Incomplete(Exception):
@@ -119,7 +117,7 @@ def main() -> int:
 
     cache_engine = open_research_database()
     cache = create_session_factory(cache_engine)
-    v5_engine = open_research_database(V5_URL)
+    v5_engine = open_research_database(V5_URL, read_only=True)
     v5 = create_session_factory(v5_engine)
     status = 0
     for label, factory in (("v5 validation batch", v5), ("Stage 1 (stage database)", cache)):

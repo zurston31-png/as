@@ -23,7 +23,7 @@ from sqlalchemy import Connection, Engine, create_engine, event, func, inspect, 
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import ConfigurationError, get_settings
+from app.config import PROJECT_ROOT, ConfigurationError, get_settings
 from app.models import Base
 
 #: The market data tables (Milestone 1), in the order they are reported.
@@ -48,6 +48,40 @@ _VERSION_TABLE = "alembic_version"
 
 class SchemaError(RuntimeError):
     """The database is in a state the migrations cannot safely continue from."""
+
+
+_DATA = PROJECT_ROOT / "data"
+
+#: Archived databases that no workflow may write (see research/plans/database_inventory.md).
+#: Research databases open them read-only only; the market data writers refuse them.
+PROTECTED_DATABASES: dict[Path, str] = {
+    (_DATA / "universe_stage.db").resolve(): "the Stage 1.1 research database",
+    (_DATA / "universe_stage_v1_0_tables.db").resolve(): "the Stage 1.0 tables",
+    (_DATA / "signaliq.db").resolve(): "the IEX market data database",
+    (_DATA / "sip_research.db").resolve(): "the validation batch v2 database",
+    (_DATA / "phase1b_record" / "alpaca_responses.db").resolve(): (
+        "the Phase 1b raw Alpaca responses (recorded 2026-11-27)"
+    ),
+}
+
+
+class ProtectedDatabase(RuntimeError):
+    """An archived database was about to be opened for writing."""
+
+
+def protected_label(path: Path | None) -> str | None:
+    return None if path is None else PROTECTED_DATABASES.get(path.resolve())
+
+
+def refuse_protected(database_url: str, action: str = "write to") -> None:
+    """Raise ProtectedDatabase when ``database_url`` names a protected database."""
+    path = database_file_path(database_url)
+    label = protected_label(path)
+    if label:
+        raise ProtectedDatabase(
+            f"refusing to {action} {path}: it is {label}, archived and protected. "
+            "Set SIGNALIQ_DATABASE_URL to a new database file."
+        )
 
 
 def database_file_path(database_url: str) -> Path | None:
@@ -122,6 +156,7 @@ def init_db(engine: Engine) -> list[str]:
     head = head_revision()
     with engine.begin() as connection:
         if MigrationContext.configure(connection).get_current_revision() != head:
+            refuse_protected(str(engine.url), "migrate")
             config = _migration_config(connection)
             tables = set(inspect(connection).get_table_names())
             if _VERSION_TABLE not in tables and tables:
