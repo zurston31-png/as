@@ -26,12 +26,14 @@ YT = "https://www.googleapis.com/youtube/v3"
 
 def yt_token():
     r = requests.post("https://oauth2.googleapis.com/token", data={
-        "client_id": os.environ["YT_CLIENT_ID"],
-        "client_secret": os.environ["YT_CLIENT_SECRET"],
-        "refresh_token": os.environ["YT_REFRESH_TOKEN"],
+        "client_id": os.environ["YT_CLIENT_ID"].strip(),
+        "client_secret": os.environ["YT_CLIENT_SECRET"].strip(),
+        # tolerate pasting the whole "YT_REFRESH_TOKEN = 1//..." line
+        "refresh_token": os.environ["YT_REFRESH_TOKEN"].split("=")[-1].strip(),
         "grant_type": "refresh_token",
     }, timeout=30)
-    r.raise_for_status()
+    if not r.ok:  # Google's body says which value is wrong (invalid_client vs invalid_grant)
+        raise SystemExit(f"YouTube login failed: {r.status_code} {r.text}")
     return r.json()["access_token"]
 
 
