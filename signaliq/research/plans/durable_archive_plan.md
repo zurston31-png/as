@@ -51,7 +51,7 @@ Stage 1.1 database is the item that matters most.
 | **A. New private GitHub repository** (recommended) | yes: every archive file is under 95 MB (GitHub's limit is 100 MB per file); about 1.6 GB plus the response store | git hashes every object; our manifest adds sha256 and table fingerprints; full history | create the repository as Private; install the Claude GitHub App on it; tell me its name |
 | B. Private Hugging Face dataset | yes | per-file hashes; history | a private dataset and an access token added as an environment secret for its host |
 | C. Cloud bucket (GCS or S3) with object versioning | yes | provider checksums plus our manifest; versioning and retention lock available | a bucket and a credential scoped to it, added as an environment secret |
-| D. Your own computer or drive | yes | our manifest | download the archive files; best used as the second copy |
+| D. Your own computer or drive | yes | our manifest | once A exists, `git clone` the private repository onto your computer or drive and run `archive_database.py verify` there; best used as the second copy |
 
 Recommended: **A as the primary copy, D as the second.**
 
@@ -62,7 +62,14 @@ Recommended: **A as the primary copy, D as the second.**
    - copy the raw response store as is, plus its `response_store_tool.py summary`.
 2. **Check visibility.** I confirm through the GitHub tools that the repository is private.
    If it is public or unknown, nothing is pushed.
-3. **Push** with git. Every file is under 95 MB, so no Git LFS is needed.
+3. **Push** with git. Every file is under 95 MB, so no Git LFS is needed. GitHub refuses a
+   single push larger than 2 GB, and recommends keeping repositories small (ideally under
+   1 GB; under 5 GB strongly recommended). Please check these figures in GitHub's current
+   documentation. The full archive is about 2.1 GB, so it goes up in at least two pushes:
+   Stage 1.1 in one, and the response store and small databases in another. Each new
+   version adds roughly its own compressed size, so the repository will pass 5 GB after
+   about two more full versions. At that point a new repository per version, or option C,
+   is the better home.
 4. **Fresh clone** into an empty directory.
 5. **Verify the clone:**
    - `archive_database.py verify` (sha256 of every file, row counts, fingerprints);
