@@ -18,7 +18,8 @@ import requests
 from pydantic import BaseModel
 
 STATE = Path(__file__).with_name("posted.json")
-VOICE = "en-US-AndrewMultilingualNeural"  # warmer, more expressive than GuyNeural
+# first voice that returns audio wins; edge-tts sometimes returns nothing for a voice
+VOICES = ["en-US-ChristopherNeural", "en-US-GuyNeural"]
 YT = "https://www.googleapis.com/youtube/v3"
 
 
@@ -139,7 +140,14 @@ def speak(lines, out_dir):
         paths = []
         for i, line in enumerate(lines):
             p = out_dir / f"line{i}.mp3"
-            await edge_tts.Communicate(line, VOICE, rate="+12%").save(str(p))
+            for voice in VOICES:
+                try:
+                    await edge_tts.Communicate(line, voice, rate="+10%").save(str(p))
+                    break
+                except edge_tts.exceptions.NoAudioReceived:
+                    print(f"no audio from {voice}, trying next voice")
+            else:
+                raise RuntimeError("no voice returned audio")
             paths.append(p)
         return paths
     return asyncio.run(run())
@@ -252,11 +260,15 @@ def main():
     token = yt_token()
     videos = trending(token, a.niche)
     print("trending:", *[f"  {v['score']:>6}x  {v['title']}" for v in videos[:8]], sep="\n")
+    failures = 0
     for _ in range(a.count):
         try:
             make_one(token, a.niche, videos, state, a.privacy, out_dir)
         except Exception as e:  # one bad video shouldn't stop the rest
             print("failed:", e)
+            failures += 1
+    if failures:  # red run, so GitHub emails the owner
+        raise SystemExit(f"{failures} of {a.count} videos failed")
 
 
 if __name__ == "__main__":
