@@ -1,0 +1,7 @@
+Size of the volume lost on 2021-04-19, for the bars Alpaca later repaired (from replacements.json),
+in days of the security's average daily volume over 2021-02-01..2021-05-28 (the bound's 4-month span for 2021-05-28)
+securities: 503
+quantiles: p10 0.44  p25 0.53  median 0.64  p75 0.78  p90 1.00  max 2.74 (BTI)
+share losing more than 0.4 days: 94.0%
+share losing more than 1.7 days: 0.6%
+share losing more than 2.9 days: 0.0%

@@ -1,0 +1,13 @@
+Decisions whose 63-session window touches a defect month: tight bound (months the window touches), and
+how many average days of the defect month a ticker's missing day would need to be to reach the N-th member
+
+2021-04-30 (defect month 2021-04-19): TIRX base 0.710, crosses only if its missing day > 8.8 days; TRIP base 0.847, crosses only if its missing day > 15.0 days; VUZI base 0.773, crosses only if its missing day > 19.7 days
+2021-05-28 (defect month 2021-04-19): TIRX base 0.694, crosses only if its missing day > 9.5 days; TRIP base 0.798, crosses only if its missing day > 20.2 days; VUZI base 0.727, crosses only if its missing day > 24.1 days
+2021-06-30 (defect month 2021-04-19): TIRX base 0.723, crosses only if its missing day > 8.3 days; PLBY base 0.584, crosses only if its missing day > 31.9 days; PTC base 0.507, crosses only if its missing day > 33.7 days
+2021-10-29 (defect month 2021-10-25): DWACW base 0.822, crosses only if its missing day > 4.5 days; DATS base 0.795, crosses only if its missing day > 8.3 days; AVIR base 0.707, crosses only if its missing day > 10.8 days
+2021-11-30 (defect month 2021-10-25): DWACW base 0.816, crosses only if its missing day > 5.0 days; DATS base 0.741, crosses only if its missing day > 11.1 days; AVIR base 0.668, crosses only if its missing day > 12.9 days
+2021-12-31 (defect month 2021-10-25): DWACW base 0.807, crosses only if its missing day > 5.4 days; MQ base 0.836, crosses only if its missing day > 16.6 days; AVIR base 0.581, crosses only if its missing day > 16.9 days
+2022-03-31 (defect month 2022-03-08): IMPP base 0.768, crosses only if its missing day > 8.0 days; CFLT base 0.873, crosses only if its missing day > 17.6 days; DRIP base 0.618, crosses only if its missing day > 18.7 days
+2022-04-29 (defect month 2022-03-08): DRIP base 0.711, crosses only if its missing day > 12.9 days; CHKP base 0.824, crosses only if its missing day > 14.8 days; NTRA base 0.642, crosses only if its missing day > 22.4 days
+2022-05-31 (defect month 2022-03-08): DRIP base 0.734, crosses only if its missing day > 11.3 days; NTRA base 0.544, crosses only if its missing day > 27.0 days; CHKP base 0.657, crosses only if its missing day > 27.4 days
+2022-06-30 (defect month 2022-03-08): DRIP base 0.924, crosses only if its missing day > 3.1 days; CHKP base 0.838, crosses only if its missing day > 12.3 days; YUMC base 0.818, crosses only if its missing day > 14.7 days

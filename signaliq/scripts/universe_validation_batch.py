@@ -17,6 +17,7 @@ contact address in the User-Agent, as SEC requires.
 """
 
 import argparse
+import csv
 import io
 import re
 import sys
@@ -63,6 +64,48 @@ from app.universe.models import (
 )
 
 RULE = MembershipRule()
+UNCERTAIN = (
+    Path(__file__).resolve().parents[1]
+    / "research"
+    / "results"
+    / "phase1g"
+    / "uncertain_decisions.tsv"
+)
+
+
+def uncertainty_lines(stored: dict[str, float], rows: list[dict] | None) -> list[str]:
+    """Report lines for the decisions labelled uncertain (reviewed label file, Phase 1g).
+
+    A label is shown only while it matches this run: the stored 100th member's median at that
+    decision must equal the one the label was computed from. Otherwise the uncertainty has to be
+    recomputed, and the report says so instead of showing a stale label.
+    """
+    if rows is None:
+        return [f"  Uncertain decisions: label file {UNCERTAIN.name} missing; uncertainty unknown"]
+    lines = [
+        "  Uncertain decisions (bars of 2021-10-25 / 2022-03-08 that lost trades; stored "
+        f"membership kept, no replacement chosen; {UNCERTAIN.name}): "
+        f"{len({r['decision'] for r in rows})}"
+    ]
+    for r in rows:
+        here = stored.get(r["decision"])
+        if here is None:
+            continue
+        if f"{here:,.0f}" != r["stored_100th_median"]:
+            lines.append(
+                f"    {r['decision']}: LABEL DOES NOT MATCH THIS RUN (100th member median "
+                f"{here:,.0f} here, {r['stored_100th_median']} in the label file): recompute it"
+            )
+            continue
+        lines.append(
+            f"    {r['decision']}: UNCERTAIN. 100th member {r['stored_100th_member']} kept; "
+            f"{r['possible_entrant']} enters if its {r['unrepaired_session']} dollar volume was above "
+            f"{r['entrant_dollar_volume_needed_above']} (stored {r['entrant_dollar_volume_stored']}; "
+            f"{r['found_by']})"
+        )
+    return lines
+
+
 MAX_MERGE_PASSES = 4
 MAX_COMPLETENESS_ROUNDS = 4
 
@@ -850,6 +893,19 @@ def report(facts: dict) -> str:
             for r in s.execute(select(Membership).where(Membership.eligible == 0)).scalars()
         )
         print(f"  Not-eligible reasons (all decisions): {dict(reasons)}")
+        hundredth = {
+            str(d)[:10]: v
+            for d, v in s.execute(
+                select(Membership.decision_session, func.min(Membership.median_dollar_volume))
+                .where(Membership.member == 1)
+                .group_by(Membership.decision_session)
+            )
+        }
+        labels = None
+        if UNCERTAIN.exists():
+            with UNCERTAIN.open() as f:
+                labels = list(csv.DictReader(f, delimiter="\t"))
+        print("\n".join(uncertainty_lines(hundredth, labels)))
         print("  Members that later ended:")
         for sid in sorted(ever):
             x = securities[sid]
