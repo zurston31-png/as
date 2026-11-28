@@ -1,0 +1,116 @@
+"""The SIP research database: its own file, its own migrations, its own version table."""
+
+import os
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import Engine, create_engine, inspect
+
+from app.config import PROJECT_ROOT
+from app.database import (  # noqa: F401  (re-exported: the protected list lives there)
+    PROTECTED_DATABASES,
+    ProtectedDatabase,
+    create_db_engine,
+    database_file_path,
+    protected_label,
+)
+from app.universe import sec_cache
+
+#: The validation batch v2 database: protected, read only. There is no default research
+#: database; a run without SIGNALIQ_SIP_RESEARCH_DATABASE_URL stops instead of writing here.
+V2_DATABASE = PROJECT_ROOT / "data" / "sip_research.db"
+URL_VARIABLE = "SIGNALIQ_SIP_RESEARCH_DATABASE_URL"
+MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+VERSION_TABLE = "sip_research_alembic_version"
+READ_ONLY_VARIABLE = "SIGNALIQ_SIP_RESEARCH_READ_ONLY"
+
+
+def _read_only_requested() -> bool:
+    return os.environ.get(READ_ONLY_VARIABLE, "").strip() == "1"
+
+
+def _open_read_only(path: Path) -> Engine:
+    """An engine whose every connection is read-only at the SQLite level (``mode=ro``)."""
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    engine = create_engine(
+        f"sqlite:///file:{path.resolve().as_posix()}?mode=ro&uri=true",
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    with engine.connect() as connection:
+        config = _config(connection)
+        head = ScriptDirectory.from_config(config).get_current_head()
+        current = MigrationContext.configure(
+            connection, opts={"version_table": VERSION_TABLE}
+        ).get_current_revision()
+    if current != head:
+        engine.dispose()
+        raise RuntimeError(f"{path} is at schema {current}, not {head}; read-only, so not upgraded")
+    return engine
+
+
+class NoResearchDatabase(RuntimeError):
+    """No research database was named: fail closed rather than pick one."""
+
+
+def research_database_url() -> str:
+    url = os.environ.get(URL_VARIABLE, "").strip()
+    if not url:
+        raise NoResearchDatabase(
+            f"{URL_VARIABLE} is not set. Name the research database explicitly "
+            "(a new file for a new run); there is no default."
+        )
+    return url
+
+
+def _config(connection) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(MIGRATIONS_DIR))
+    config.attributes["connection"] = connection
+    return config
+
+
+def open_research_database(url: str | None = None, read_only: bool | None = None) -> Engine:
+    """Open (and create or upgrade) the research database. Refuses the market data database.
+
+    A protected database (``PROTECTED_DATABASES``) is opened only read-only, and only when
+    that is asked for; otherwise ``ProtectedDatabase`` is raised before anything is opened.
+    A read-only parent cache (``sec_cache``) is attached from SIGNALIQ_SIP_RESEARCH_PARENT_DB.
+    """
+    url = url or research_database_url()
+    path = database_file_path(url)
+    read_only = _read_only_requested() if read_only is None else read_only
+    label = protected_label(path)
+    if label and not read_only:
+        raise ProtectedDatabase(
+            f"{path} is {label}, archived and protected: it can be opened read-only only "
+            f"({READ_ONLY_VARIABLE}=1). Work on a new database instead."
+        )
+    sec_cache.configure_from_environment()
+    parent = sec_cache.parent_path()
+    if parent is not None and path is not None and parent == path.resolve():
+        raise RuntimeError("the parent cache must be another database than the one opened")
+    if read_only:
+        if path is None:
+            raise ValueError("read-only mode needs a database file")
+        return _open_read_only(path)
+    engine = create_db_engine(url)
+    tables = set(inspect(engine).get_table_names())
+    if "bars" in tables or "alembic_version" in tables:
+        engine.dispose()
+        raise RuntimeError(
+            f"{url} is the market data database, not the SIP research database. "
+            "The two are kept apart on purpose."
+        )
+    with engine.begin() as connection:
+        config = _config(connection)
+        head = ScriptDirectory.from_config(config).get_current_head()
+        current = MigrationContext.configure(
+            connection, opts={"version_table": VERSION_TABLE}
+        ).get_current_revision()
+        if current != head:
+            command.upgrade(config, "head")
+    return engine

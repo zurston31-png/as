@@ -1,0 +1,152 @@
+DATED SECURITY TYPES (proposed rule, measured on the Stage 1.1 data, not adopted)
+Cover pages in the issuer evidence: 71585 for 948 securities. In the cache and read: 4074; conclusive (one recognised class): 3464; not in the cache, so not read: 67511.
+The issuer search reads the first and last cover page of each company's run and the pages its halving probes; the pages in between are evidence of the ticker from the filing list, but their class titles were never read. Reading them all is a fetch of 67511 pages, which Phase 1 does not do.
+
+Securities whose read cover pages give more than one type over time: 3
+
+  id 84 BX: undated type common (confirmed), counted for membership as common; cover pages 84, of which not read 76
+    partnership 2019-05-09..2019-05-09  1 conclusive pages read
+      first: 2019-05-09 10-Q CIK 0001393818 'Common units representing limited partner interests'
+             https://www.sec.gov/Archives/edgar/data/1393818/000119312519142951/d709126d10q.htm
+    common    2019-07-05..2024-12-23  4 conclusive pages read
+      first: 2019-07-05 8-K CIK 0001393818 'Class A Common Stock'
+             https://www.sec.gov/Archives/edgar/data/1393818/000119312519189772/d754189d8k.htm
+      last:  2024-12-23 8-K CIK 0001393818 'Common Stock'
+             https://www.sec.gov/Archives/edgar/data/1393818/000119312524284196/d888684d8k.htm
+    type at each decision under the rule:
+      2020-01-31..2020-01-31: unknown (4 cover pages after 2019-09-03 not read)
+      2020-02-28..2020-03-31: unknown (5 cover pages after 2019-09-03 not read)
+      2020-04-30..2020-04-30: unknown (6 cover pages after 2019-09-03 not read)
+      2020-05-29..2020-05-29: unknown (7 cover pages after 2019-09-03 not read)
+      2020-06-30..2020-06-30: unknown (8 cover pages after 2019-09-03 not read)
+      2020-07-31..2020-08-31: unknown (9 cover pages after 2019-09-03 not read)
+      2020-09-30..2020-09-30: common (8-K cover page of 2020-09-29)
+      2020-10-30..2020-10-30: unknown (1 cover pages after 2020-09-29 not read)
+      2020-11-30..2020-12-31: unknown (3 cover pages after 2020-09-29 not read)
+      2021-01-29..2021-01-29: unknown (4 cover pages after 2020-09-29 not read)
+      2021-02-26..2021-03-31: unknown (5 cover pages after 2020-09-29 not read)
+      2021-04-30..2021-04-30: unknown (6 cover pages after 2020-09-29 not read)
+      2021-05-28..2021-06-30: unknown (7 cover pages after 2020-09-29 not read)
+      2021-07-30..2021-07-30: unknown (11 cover pages after 2020-09-29 not read)
+      2021-08-31..2021-09-30: unknown (13 cover pages after 2020-09-29 not read)
+      2021-10-29..2021-10-29: unknown (14 cover pages after 2020-09-29 not read)
+      2021-11-30..2021-11-30: unknown (15 cover pages after 2020-09-29 not read)
+      2021-12-31..2021-12-31: unknown (18 cover pages after 2020-09-29 not read)
+      2022-01-31..2022-01-31: unknown (22 cover pages after 2020-09-29 not read)
+      2022-02-28..2022-03-31: unknown (23 cover pages after 2020-09-29 not read)
+      2022-04-29..2022-04-29: unknown (24 cover pages after 2020-09-29 not read)
+      2022-05-31..2022-05-31: unknown (27 cover pages after 2020-09-29 not read)
+      2022-06-30..2022-06-30: unknown (29 cover pages after 2020-09-29 not read)
+      2022-07-29..2022-07-29: unknown (30 cover pages after 2020-09-29 not read)
+      2022-08-31..2022-09-30: unknown (31 cover pages after 2020-09-29 not read)
+      2022-10-31..2022-10-31: unknown (33 cover pages after 2020-09-29 not read)
+      2022-11-30..2022-12-30: unknown (36 cover pages after 2020-09-29 not read)
+      2023-01-31..2023-01-31: unknown (37 cover pages after 2020-09-29 not read)
+      2023-02-28..2023-03-31: unknown (38 cover pages after 2020-09-29 not read)
+      2023-04-28..2023-04-28: unknown (39 cover pages after 2020-09-29 not read)
+      2023-05-31..2023-06-30: unknown (40 cover pages after 2020-09-29 not read)
+      2023-07-31..2023-07-31: unknown (41 cover pages after 2020-09-29 not read)
+      2023-08-31..2023-09-29: unknown (43 cover pages after 2020-09-29 not read)
+      2023-10-31..2023-10-31: unknown (44 cover pages after 2020-09-29 not read)
+      2023-11-30..2023-11-30: unknown (45 cover pages after 2020-09-29 not read)
+      2023-12-29..2023-12-29: unknown (46 cover pages after 2020-09-29 not read)
+      2024-01-31..2024-01-31: unknown (47 cover pages after 2020-09-29 not read)
+      2024-02-29..2024-03-28: unknown (48 cover pages after 2020-09-29 not read)
+      2024-04-30..2024-04-30: unknown (49 cover pages after 2020-09-29 not read)
+      2024-05-31..2024-06-28: unknown (50 cover pages after 2020-09-29 not read)
+      2024-07-31..2024-07-31: unknown (52 cover pages after 2020-09-29 not read)
+      2024-08-30..2024-08-30: unknown (53 cover pages after 2020-09-29 not read)
+      2024-09-30..2024-09-30: unknown (54 cover pages after 2020-09-29 not read)
+      2024-10-31..2024-10-31: unknown (55 cover pages after 2020-09-29 not read)
+      2024-11-29..2024-11-29: unknown (58 cover pages after 2020-09-29 not read)
+    decisions where eligibility would change: 58 (2020-01-31..2024-11-29)
+
+  id 128 CRH: undated type unknown (conflict), counted for membership as unknown; cover pages 33, of which not read 28
+    adr       2020-03-06..2021-03-12  2 conclusive pages read
+      first: 2020-03-06 20-F CIK 0000849395 'American Depositary Shares, each representing the right to receive one Ordinary Share'
+             https://www.sec.gov/Archives/edgar/data/849395/000119312520064341/d790396d20f.htm
+      last:  2021-03-12 20-F CIK 0000849395 'American Depositary Shares, each representing the right to receive one Ordinary Share'
+             https://www.sec.gov/Archives/edgar/data/849395/000119312521078969/d911751d20f.htm
+    common    2024-12-30..2024-12-30  1 conclusive pages read
+      first: 2024-12-30 8-K CIK 0000849395 'Ordinary Shares of €0.32 each'
+             https://www.sec.gov/Archives/edgar/data/849395/000162828024052576/crh-20241230.htm
+    type at each decision under the rule:
+      2020-01-31..2020-02-28: unknown (no conclusive cover page yet)
+      2020-03-31..2021-02-26: adr (20-F cover page of 2020-03-06)
+      2021-03-31..2023-12-29: adr (20-F cover page of 2021-03-12)
+      2024-01-31..2024-01-31: unknown (1 cover pages after 2021-03-12 not read)
+      2024-02-29..2024-02-29: unknown (5 cover pages after 2021-03-12 not read)
+      2024-03-28..2024-03-28: unknown (9 cover pages after 2021-03-12 not read)
+      2024-04-30..2024-04-30: unknown (14 cover pages after 2021-03-12 not read)
+      2024-05-31..2024-06-28: unknown (16 cover pages after 2021-03-12 not read)
+      2024-07-31..2024-07-31: unknown (17 cover pages after 2021-03-12 not read)
+      2024-08-30..2024-08-30: unknown (19 cover pages after 2021-03-12 not read)
+      2024-09-30..2024-09-30: unknown (20 cover pages after 2021-03-12 not read)
+      2024-10-31..2024-10-31: unknown (22 cover pages after 2021-03-12 not read)
+      2024-11-29..2024-11-29: unknown (23 cover pages after 2021-03-12 not read)
+    decisions where eligibility would change: 0
+
+  id 436 PRU: undated type common (confirmed), counted for membership as common; cover pages 101, of which not read 96
+    preferred 2019-05-07..2019-05-10  2 conclusive pages read
+      first: 2019-05-07 8-K CIK 0000354707 'Hawaiian Electric Company, Inc. Guarantee with respect to 6.50% Cumulative Quarterly Income Preferred Securities Series 2004 (QUIPS SM ) of HECO Capital Trust III HE'
+             https://www.sec.gov/Archives/edgar/data/354707/000035470719000066/heiheform8-k05x7x19.htm
+      last:  2019-05-10 8-K CIK 0000354707 'Hawaiian Electric Company, Inc. Guarantee with respect to 6.50% Cumulative Quarterly Income Preferred Securities Series 2004 (QUIPS SM ) of HECO Capital Trust III HE'
+             https://www.sec.gov/Archives/edgar/data/354707/000035470719000070/heihe8-k05x07x1905x10x19.htm
+    common    2019-05-14..2024-12-10  2 conclusive pages read
+      first: 2019-05-14 8-K CIK 0001137774 'Common Stock, Par Value $.01'
+             https://www.sec.gov/Archives/edgar/data/1137774/000119312519146686/d751501d8k.htm
+      last:  2024-12-10 8-K CIK 0001137774 'Common Stock, Par Value $.01'
+             https://www.sec.gov/Archives/edgar/data/1137774/000119312524274354/d897722d8k.htm
+    type at each decision under the rule:
+      2020-01-31..2020-01-31: unknown (12 cover pages after 2019-05-14 not read)
+      2020-02-28..2020-02-28: unknown (14 cover pages after 2019-05-14 not read)
+      2020-03-31..2020-03-31: unknown (15 cover pages after 2019-05-14 not read)
+      2020-04-30..2020-04-30: unknown (17 cover pages after 2019-05-14 not read)
+      2020-05-29..2020-06-30: unknown (20 cover pages after 2019-05-14 not read)
+      2020-07-31..2020-07-31: unknown (21 cover pages after 2019-05-14 not read)
+      2020-08-31..2020-08-31: unknown (24 cover pages after 2019-05-14 not read)
+      2020-09-30..2020-09-30: unknown (25 cover pages after 2019-05-14 not read)
+      2020-10-30..2020-10-30: unknown (26 cover pages after 2019-05-14 not read)
+      2020-11-30..2020-11-30: unknown (27 cover pages after 2019-05-14 not read)
+      2020-12-31..2020-12-31: unknown (28 cover pages after 2019-05-14 not read)
+      2021-01-29..2021-01-29: unknown (29 cover pages after 2019-05-14 not read)
+      2021-02-26..2021-03-31: unknown (31 cover pages after 2019-05-14 not read)
+      2021-04-30..2021-04-30: unknown (32 cover pages after 2019-05-14 not read)
+      2021-05-28..2021-06-30: unknown (34 cover pages after 2019-05-14 not read)
+      2021-07-30..2021-07-30: unknown (37 cover pages after 2019-05-14 not read)
+      2021-08-31..2021-08-31: unknown (38 cover pages after 2019-05-14 not read)
+      2021-09-30..2021-09-30: unknown (39 cover pages after 2019-05-14 not read)
+      2021-10-29..2021-10-29: unknown (40 cover pages after 2019-05-14 not read)
+      2021-11-30..2021-12-31: unknown (42 cover pages after 2019-05-14 not read)
+      2022-01-31..2022-01-31: unknown (43 cover pages after 2019-05-14 not read)
+      2022-02-28..2022-03-31: unknown (46 cover pages after 2019-05-14 not read)
+      2022-04-29..2022-04-29: unknown (49 cover pages after 2019-05-14 not read)
+      2022-05-31..2022-06-30: unknown (51 cover pages after 2019-05-14 not read)
+      2022-07-29..2022-07-29: unknown (52 cover pages after 2019-05-14 not read)
+      2022-08-31..2022-08-31: unknown (54 cover pages after 2019-05-14 not read)
+      2022-09-30..2022-09-30: unknown (55 cover pages after 2019-05-14 not read)
+      2022-10-31..2022-10-31: unknown (57 cover pages after 2019-05-14 not read)
+      2022-11-30..2022-12-30: unknown (58 cover pages after 2019-05-14 not read)
+      2023-01-31..2023-01-31: unknown (60 cover pages after 2019-05-14 not read)
+      2023-02-28..2023-02-28: unknown (63 cover pages after 2019-05-14 not read)
+      2023-03-31..2023-03-31: unknown (64 cover pages after 2019-05-14 not read)
+      2023-04-28..2023-04-28: unknown (66 cover pages after 2019-05-14 not read)
+      2023-05-31..2023-06-30: unknown (69 cover pages after 2019-05-14 not read)
+      2023-07-31..2023-07-31: unknown (70 cover pages after 2019-05-14 not read)
+      2023-08-31..2023-08-31: unknown (71 cover pages after 2019-05-14 not read)
+      2023-09-29..2023-09-29: unknown (74 cover pages after 2019-05-14 not read)
+      2023-10-31..2023-10-31: unknown (75 cover pages after 2019-05-14 not read)
+      2023-11-30..2023-11-30: unknown (76 cover pages after 2019-05-14 not read)
+      2023-12-29..2023-12-29: unknown (77 cover pages after 2019-05-14 not read)
+      2024-01-31..2024-01-31: unknown (79 cover pages after 2019-05-14 not read)
+      2024-02-29..2024-02-29: unknown (84 cover pages after 2019-05-14 not read)
+      2024-03-28..2024-03-28: unknown (85 cover pages after 2019-05-14 not read)
+      2024-04-30..2024-04-30: unknown (87 cover pages after 2019-05-14 not read)
+      2024-05-31..2024-06-28: unknown (88 cover pages after 2019-05-14 not read)
+      2024-07-31..2024-07-31: unknown (91 cover pages after 2019-05-14 not read)
+      2024-08-30..2024-09-30: unknown (93 cover pages after 2019-05-14 not read)
+      2024-10-31..2024-11-29: unknown (95 cover pages after 2019-05-14 not read)
+    decisions where eligibility would change: 59 (2020-01-31..2024-11-29)
+
+Membership recomputed with the rule off: identical to the stored Stage 1.1 membership (61124 security-decisions)
+Membership with the rule on: 0 of 59 decisions differ

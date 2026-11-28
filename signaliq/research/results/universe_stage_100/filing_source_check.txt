@@ -1,0 +1,212 @@
+browse-edgar company filing lists in the cache: 1204
+  retired key format (Python hash(), unreadable by any run, not compared): 68 for 29 companies, each of which also has lists under the current key
+  parameters not recovered: 0
+  JSON list not built (no SEC answer): 0
+  asked by CIK (switched to the JSON service): 925
+  asked by ticker (stay on browse-edgar): 211
+
+LISTS ASKED BY CIK (switched to SEC's JSON service)
+    920  identical
+      5  differs: explained: browse-edgar today answers exactly the JSON list
+
+  differs (5):
+    CIK 0000748592 type=25 dateb=2023-02-11: cached browse-edgar 0000748592 0 filings, JSON 0000748592 1 filings; only browse-edgar []; only JSON [('0001140361-21-035197', '2021-10-22', '25')] -> explained: browse-edgar today answers exactly the JSON list
+    CIK 0001060736 type=25 dateb=2021-02-19: cached browse-edgar 0001060736 1 filings, JSON 0001060736 0 filings; only browse-edgar [('0001354457-23-000938', '2023-12-14', '25-NSE')]; only JSON [] -> explained: browse-edgar today answers exactly the JSON list
+    CIK 0001280784 type=25 dateb=2022-07-01: cached browse-edgar 0001280784 4 filings, JSON 0001280784 5 filings; only browse-edgar []; only JSON [('0000876661-21-000990', '2021-07-02', '25-NSE')] -> explained: browse-edgar today answers exactly the JSON list
+    CIK 0001280784 type=25 dateb=2023-02-16: cached browse-edgar 0001280784 4 filings, JSON 0001280784 5 filings; only browse-edgar []; only JSON [('0000876661-21-000990', '2021-07-02', '25-NSE')] -> explained: browse-edgar today answers exactly the JSON list
+    CIK 0001486159 type=8-K dateb=2021-02-06: cached browse-edgar 0001486159 100 filings, JSON 0001486159 100 filings; only browse-edgar [('0001193125-21-307365', '2021-10-26', '8-K'), ('0001193125-21-311528', '2021-10-28', '8-K'), ('0001193125-21-337601', '2021-11-23', '8-K'), ('0001193125-22-067100', '2022-03-07', '8-K')]; only JSON [('0001193125-13-032995', '2013-02-01', '8-K'), ('0001193125-13-074345', '2013-02-25', '8-K'), ('0001193125-13-087629', '2013-03-01', '8-K'), ('0001193125-13-147758', '2013-04-09', '8-K')] -> explained: browse-edgar today answers exactly the JSON list
+
+LISTS ASKED BY TICKER (stay on browse-edgar; sec.find uses only the CIK)
+    118  same CIK
+     84  CIK only from browse-edgar (a ticker not in SEC's list today)
+      6  CIK only from SEC's ticker list today
+      3  different CIK (the ticker has a new holder today)
+    AAIC dateb=2024-04-11: browse-edgar 0001209028, JSON None
+    ABMD dateb=2023-04-20: browse-edgar 0000815094, JSON None
+    ATVI dateb=2024-02-09: browse-edgar 0000718877, JSON None
+    AVLR dateb=2023-02-15: browse-edgar 0001348036, JSON None
+    AYX dateb=2024-07-16: browse-edgar 0001689923, JSON None
+    BACA dateb=2024-12-12: browse-edgar 0001869673, JSON None
+    BACA dateb=2024-12-31: browse-edgar 0001869673, JSON None
+    BBBY dateb=2023-08-30: browse-edgar 0000886158, JSON None
+    BIG dateb=2024-12-31: browse-edgar 0000768835, JSON None
+    BKI dateb=2023-12-30: browse-edgar 0001627014, JSON None
+    BMAC dateb=2024-04-05: browse-edgar 0001848020, JSON None
+    BTRS dateb=2023-04-14: browse-edgar 0001774155, JSON None
+    BTX dateb=2019-12-07: browse-edgar 0000748592, JSON 0001836057
+    BTX dateb=2023-02-11: browse-edgar 0000748592, JSON 0001836057
+    CCXI dateb=2023-02-16: browse-edgar 0001340652, JSON None
+    CEI dateb=2024-12-05: browse-edgar 0001309082, JSON None
+    CHK dateb=2020-10-24: browse-edgar 0000895126, JSON None
+    CLR dateb=2023-03-22: browse-edgar 0000732834, JSON None
+    COR dateb=2022-04-26: browse-edgar None, JSON 0001140859
+    COUP dateb=2023-06-27: browse-edgar 0001385867, JSON None
+    CTLT dateb=2024-12-31: browse-edgar 0001596783, JSON None
+    CTXS dateb=2023-01-27: browse-edgar 0000877890, JSON None
+    DO dateb=2020-08-22: browse-edgar 0000949039, JSON None
+    DO dateb=2024-12-31: browse-edgar 0000949039, JSON None
+    DRE dateb=2023-01-28: browse-edgar 0000783280, JSON None
+    DWAC dateb=2018-01-23: browse-edgar 0001849635, JSON None
+    DWAC dateb=2018-02-09: browse-edgar 0001849635, JSON None
+    DWAC dateb=2018-03-02: browse-edgar 0001849635, JSON None
+    DWAC dateb=2018-07-04: browse-edgar 0001849635, JSON None
+    DWAC dateb=2018-08-02: browse-edgar 0001849635, JSON None
+    EXPR dateb=2024-07-04: browse-edgar 0001483510, JSON None
+    EYES dateb=2022-12-28: browse-edgar 0001266806, JSON None
+    FLAC dateb=2023-03-22: browse-edgar 0001828326, JSON None
+    FRC dateb=2023-08-26: browse-edgar 0001132979, JSON None
+    GBT dateb=2023-02-01: browse-edgar 0001629137, JSON None
+    GEN dateb=2021-07-23: browse-edgar None, JSON 0000849399
+    HZNP dateb=2024-02-02: browse-edgar 0001492426, JSON None
+    LB dateb=2021-11-30: browse-edgar None, JSON 0001995807
+    LHCG dateb=2023-06-21: browse-edgar 0001303313, JSON None
+    LSI dateb=2023-11-16: browse-edgar 0000944314, JSON None
+    MDGS dateb=2016-05-25: browse-edgar 0001618500, JSON None
+    MMAT dateb=2024-12-18: browse-edgar 0001431959, JSON None
+    MNDT dateb=2023-01-07: browse-edgar 0001370880, JSON None
+    MON dateb=2018-10-04: browse-edgar 0001828325, JSON None
+    MON dateb=2023-04-22: browse-edgar 0001828325, JSON None
+    MONDW dateb=2023-02-23: browse-edgar 0001828852, JSON None
+    MRO dateb=2024-12-31: browse-edgar 0000101778, JSON None
+    NHWK dateb=2024-10-12: browse-edgar 0001476963, JSON None
+    NLSN dateb=2023-02-08: browse-edgar 0001492633, JSON None
+    NOVVW dateb=2023-01-27: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2023-04-12: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2023-05-13: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2023-09-01: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-02-02: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-03-09: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-05-07: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-06-22: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-10-23: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-12-03: browse-edgar 0001858028, JSON None
+    NOVVW dateb=2024-12-31: browse-edgar 0001858028, JSON None
+    NUAN dateb=2022-07-01: browse-edgar 0001002517, JSON None
+    NVTA dateb=2024-06-04: browse-edgar 0001501134, JSON None
+    PACW dateb=2024-03-29: browse-edgar 0001102112, JSON None
+    PGRU dateb=2024-12-31: browse-edgar 0001873331, JSON None
+    PRTY dateb=2023-05-17: browse-edgar 0001592058, JSON None
+    PXD dateb=2024-08-30: browse-edgar 0001038357, JSON None
+    RAD dateb=2024-02-10: browse-edgar 0000084129, JSON None
+    RETA dateb=2024-01-23: browse-edgar 0001358762, JSON None
+    REV dateb=2023-02-17: browse-edgar 0000887921, JSON None
+    RXDX dateb=2018-06-07: browse-edgar 0001718852, JSON None
+    SAIL dateb=2022-12-13: browse-edgar None, JSON 0002030781
+    SAVE dateb=2024-12-31: browse-edgar 0001498710, JSON None
+    SBNY dateb=2023-07-08: browse-edgar 0001288784, JSON None
+    SERV dateb=2023-02-08: browse-edgar None, JSON 0001832483
+    SGEN dateb=2024-04-11: browse-edgar 0001060736, JSON None
+    SIVB dateb=2023-07-07: browse-edgar 0000719739, JSON None
+    SPLK dateb=2024-07-13: browse-edgar 0001353283, JSON None
+    SPWR dateb=2024-12-13: browse-edgar 0000867773, JSON 0001838987
+    SRNE dateb=2023-06-22: browse-edgar 0000850261, JSON None
+    STI dateb=2020-04-04: browse-edgar None, JSON 0001881551
+    STOR dateb=2023-06-02: browse-edgar 0001538990, JSON None
+    SWN dateb=2024-12-31: browse-edgar 0000007332, JSON None
+    TMX dateb=2023-02-08: browse-edgar 0001428875, JSON None
+    TWTR dateb=2023-02-24: browse-edgar 0001418091, JSON None
+    UTAA dateb=2024-01-13: browse-edgar 0001879221, JSON None
+    VIEW dateb=2024-08-02: browse-edgar 0001811856, JSON None
+    VMW dateb=2024-03-20: browse-edgar 0001124610, JSON None
+    WE dateb=2024-03-02: browse-edgar 0001813756, JSON None
+    XELA dateb=2024-12-31: browse-edgar 0001620179, JSON None
+    YELL dateb=2023-12-13: browse-edgar 0000716006, JSON None
+    YGF dateb=2024-06-07: browse-edgar 0001875496, JSON None
+    YNDX dateb=2022-06-25: browse-edgar 0001513845, JSON None
+    ZEN dateb=2023-03-21: browse-edgar 0001463172, JSON None
+
+DIFFICULT CASES (v5 validation batch outcomes; lists asked by CIK)
+  First Republic / Signature Bank: 2 securities, 0 of 0 CIK lists identical
+    FRC    id  26: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0001132979']
+    SBNY   id  50: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0001288784']
+  acquired: 34 securities, 123 of 124 CIK lists identical
+    ALXN   id   2: issuer CIK 0000899866; 3 of 3 CIK lists identical
+    ATVI   id   6: issuer CIK 0000718877; 3 of 3 CIK lists identical
+    BMAC   id  91: issuer CIK 0001848020; 3 of 3 CIK lists identical
+    BSJN   id   9: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave []
+    BTRS   id  74: issuer CIK 0001774155; 3 of 3 CIK lists identical
+    CELG   id  10: issuer CIK 0000816284; 3 of 3 CIK lists identical
+    CERN   id  11: issuer CIK 0000804753; 5 of 5 CIK lists identical
+    CETUR  id  98: issuer CIK 0001936702; 9 of 9 CIK lists identical
+    CTXS   id  15: issuer CIK 0000877890; 3 of 3 CIK lists identical
+    DISCA  id  17: issuer CIK 0001437107; 3 of 3 CIK lists identical
+    DO     id  94: issuer CIK 0000949039; 6 of 6 CIK lists identical
+    FLAC   id  80: issuer CIK 0001828326; 3 of 3 CIK lists identical
+    FSBC   id  69: issuer CIK 0001667939; 3 of 3 CIK lists identical
+    GMZ    id  28: issuer CIK 0001579762; 3 of 3 CIK lists identical
+    HZNP   id  32: issuer CIK 0001492426; 3 of 3 CIK lists identical
+    LHCG   id  34: issuer CIK 0001303313; 3 of 3 CIK lists identical
+    LNKD   id  36: issuer CIK 0001271024; 3 of 3 CIK lists identical
+    MLNX   id  37: issuer CIK 0001356104; 4 of 4 CIK lists identical
+    MON    id  38: issuer CIK 0001110783; 6 of 6 CIK lists identical
+    MXIM   id  40: issuer CIK 0000743316; 3 of 3 CIK lists identical
+    NOVVW  id  87: issuer CIK 0001858028; 13 of 13 CIK lists identical
+    PGRU   id  79: issuer CIK 0001873331; 3 of 3 CIK lists identical
+    PXD    id  43: issuer CIK 0001038357; 3 of 3 CIK lists identical
+    PYPT   id  96: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave []
+    RATE   id  46: issuer CIK 0001518222; 3 of 3 CIK lists identical
+    RETA   id  67: issuer CIK 0001358762; 3 of 3 CIK lists identical
+    RHT    id  48: issuer CIK 0001087423; 3 of 3 CIK lists identical
+    SGEN   id  51: issuer CIK 0001060736; 3 of 4 CIK lists identical
+    SPLK   id  54: issuer CIK 0001353283; 3 of 3 CIK lists identical
+    TWTR   id  58: issuer CIK 0001418091; 3 of 3 CIK lists identical
+    TWX    id  59: issuer CIK 0001105705; 5 of 5 CIK lists identical
+    VMW    id  61: issuer CIK 0001124610; 3 of 3 CIK lists identical
+    WLL    id  62: issuer CIK 0001255474; 3 of 3 CIK lists identical
+    XLNX   id  63: issuer CIK 0000743988; 3 of 3 CIK lists identical
+  bankruptcy or failure: 19 securities, 65 of 65 CIK lists identical
+    BBBY   id   7: issuer CIK 0000886158; 3 of 3 CIK lists identical
+    BIG    id   8: issuer CIK 0000768835; 3 of 3 CIK lists identical
+    CHK    id  12: issuer CIK 0000895126; 5 of 5 CIK lists identical
+    CRC    id  14: issuer CIK 0001609253; 3 of 3 CIK lists identical
+    DO     id  18: issuer CIK 0000949039; 6 of 6 CIK lists identical
+    ENDP   id  20: issuer CIK 0001593034; 3 of 3 CIK lists identical
+    EXPR   id  22: issuer CIK 0001483510; 3 of 3 CIK lists identical
+    FTR    id  27: issuer CIK 0000020520; 3 of 3 CIK lists identical
+    HTZ    id  31: issuer CIK 0001657853; 3 of 3 CIK lists identical
+    JCP    id  33: issuer CIK 0001166126; 3 of 3 CIK lists identical
+    PRTY   id  42: issuer CIK 0001592058; 4 of 4 CIK lists identical
+    RAD    id  45: issuer CIK 0000084129; 3 of 3 CIK lists identical
+    REV    id  47: issuer CIK 0000887921; 3 of 3 CIK lists identical
+    SAVE   id  49: issuer CIK 0001498710; 3 of 3 CIK lists identical
+    SHLD   id  52: issuer CIK 0001310067; 5 of 5 CIK lists identical
+    SIVB   id  53: issuer CIK 0000719739; 3 of 3 CIK lists identical
+    VIEW   id  75: issuer CIK 0001811856; 3 of 3 CIK lists identical
+    WE     id  76: issuer CIK 0001813756; 3 of 3 CIK lists identical
+    YELL   id  64: issuer CIK 0000716006; 3 of 3 CIK lists identical
+  other delisting (redeemed): 9 securities, 19 of 19 CIK lists identical
+    BACA   id  92: issuer CIK 0001869673; 6 of 6 CIK lists identical
+    IMVTW  id  73: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave []
+    JMPNL  id  72: issuer CIK 0001302350; 3 of 3 CIK lists identical
+    MON    id  82: issuer CIK 0001828325; 4 of 4 CIK lists identical
+    MONDW  id  83: issuer CIK 0001828852; 3 of 3 CIK lists identical
+    OILD   id  68: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0000927971']
+    OILD   id  70: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0000927971']
+    SHLD   id  78: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave []
+    UTAA   id  93: issuer CIK 0001879221; 3 of 3 CIK lists identical
+  other delisting (unknown): 2 securities, 3 of 3 CIK lists identical
+    WDRW   id  65: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave []
+    YGF    id  99: issuer CIK 0001875496; 3 of 3 CIK lists identical
+  reused ticker (kept-separate securities): 20 securities, 56 of 56 CIK lists identical
+    CHK    id  12: issuer CIK 0000895126; 5 of 5 CIK lists identical
+    CHK    id  81: issuer CIK 0000895126; 5 of 5 CIK lists identical
+    CRC    id  14: issuer CIK 0001609253; 3 of 3 CIK lists identical
+    CRC    id  77: issuer CIK 0001609253; 3 of 3 CIK lists identical
+    DO     id  18: issuer CIK 0000949039; 6 of 6 CIK lists identical
+    DO     id  94: issuer CIK 0000949039; 6 of 6 CIK lists identical
+    FSBC   id  69: issuer CIK 0001667939; 3 of 3 CIK lists identical
+    FSBC   id  85: issuer CIK 0001275168; 1 of 1 CIK lists identical
+    HTZ    id  31: issuer CIK 0001657853; 3 of 3 CIK lists identical
+    HTZ    id  89: issuer CIK 0001657853; 3 of 3 CIK lists identical
+    MON    id  38: issuer CIK 0001110783; 6 of 6 CIK lists identical
+    MON    id  82: issuer CIK 0001828325; 4 of 4 CIK lists identical
+    OILD   id  68: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0000927971']
+    OILD   id  70: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0000927971']
+    OILD   id  90: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave ['0000927971']
+    RATE   id  46: issuer CIK 0001518222; 3 of 3 CIK lists identical
+    RATE   id  95: issuer CIK 0001432353; 0 of 0 CIK lists identical
+    SHLD   id  52: issuer CIK 0001310067; 5 of 5 CIK lists identical
+    SHLD   id  78: issuer CIK none (no SEC issuer); 0 of 0 CIK lists identical; ticker lookups gave []
+    SHLD   id 100: issuer CIK 0001432353; 0 of 0 CIK lists identical
+
+RESULT: PASS (0 unexplained differences, 0 not recovered, 0 not built)

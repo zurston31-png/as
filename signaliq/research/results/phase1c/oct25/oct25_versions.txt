@@ -1,0 +1,10 @@
+The suspect bars (Stage 1.1 = version 1) against the raw Phase 1b responses (version 2, adjustment=raw)
+2021-04-19: suspect 499; in the raw responses 499; still <= 5 trades in version 2: 0; v2 identical to v1 (OHLCV, trades): 0
+2021-10-25: suspect 218; in the raw responses 218; still <= 5 trades in version 2: 217; v2 identical to v1 (OHLCV, trades): 215
+2022-03-08: suspect 47; in the raw responses 47; still <= 5 trades in version 2: 46; v2 identical to v1 (OHLCV, trades): 46
+  AFL    v1 (56.69, 56.98, 56.69, 56.98, 332794, 3)  raw v2 (56.69, 56.98, 56.69, 56.98, 332794, 3)
+  AIV    v1 (7.44, 7.44, 7.36, 7.36, 70439, 5)  raw v2 (7.44, 7.44, 7.36, 7.36, 70439, 5)
+  AJG    v1 (165.69, 165.69, 164.25, 164.25, 108897, 3)  raw v2 (165.69, 165.69, 164.25, 164.25, 108897, 3)
+  ALL    v1 (128.35, 129.0, 128.35, 129.0, 145754, 4)  raw v2 (128.35, 129, 128.35, 129, 145754, 4)
+  AME    v1 (131.22, 131.22, 130.49, 130.49, 75751, 3)  raw v2 (131.22, 131.22, 130.49, 130.49, 75751, 3)
+  AMP    v1 (299.3, 299.3, 298.0, 298.0, 98546, 5)  raw v2 (299.3, 299.3, 298, 298, 98546, 5)

@@ -1,0 +1,12 @@
+seed: RESULT: every table equal to the parent
+control: recomputed membership on the untouched seed equals Stage 1.1's: True (61124 rows)
+replaced: 505 security_bars rows, 504 ticker_bars rows (all on 2021-04-19); without a located raw source: 0
+decisions recomputed: 59
+B2: recomputed from data cut off at each decision: 59 of 59 identical []
+B3: every price and volume after 2022-06-30 multiplied by 10, earlier decisions unchanged: True
+
+real	7m22.336s
+user	6m24.185s
+sys	0m35.478s
+
+[exited with code 0]

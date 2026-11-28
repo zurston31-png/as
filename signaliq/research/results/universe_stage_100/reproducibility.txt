@@ -1,0 +1,18 @@
+Stage 1 reproducibility: two independent cache-only runs of
+  python scripts/universe_validation_batch.py --stage 100 --report <file>
+on the final stage database, after the full fetch run.
+
+run A: exit 0
+run B: exit 0
+f8aa470ed9c7b81e1513ec5ad54dd1fad6b58fbbf049cfe4b21a459e22de4a10  stage100_runA.txt
+f8aa470ed9c7b81e1513ec5ad54dd1fad6b58fbbf049cfe4b21a459e22de4a10  stage100_runB.txt
+byte comparison (cmp): IDENTICAL
+validation_report.txt in this folder: f8aa470ed9c7b81e1513ec5ad54dd1fad6b58fbbf049cfe4b21a459e22de4a10
+
+Network requests made by each run (from the report, section 2):
+  OpenFIGI: 1018 of 1158 tickers found (requests this run: 0)
+  Wikidata: 877 of 1158 tickers have a company item (requests this run: 0)
+  SEC: 11968 cached responses (requests this run: 0, failed: 0)
+  OpenFIGI: 1018 of 1158 tickers found (requests this run: 0)
+  Wikidata: 877 of 1158 tickers have a company item (requests this run: 0)
+  SEC: 11968 cached responses (requests this run: 0, failed: 0)

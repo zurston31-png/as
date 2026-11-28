@@ -1,0 +1,18 @@
+IEX database data/signaliq.db (read-only)
+  bars: 15861 (expected 15861)
+  fingerprint: e66890e79788fc78 (expected e66890e79788fc78)
+  result: UNCHANGED
+Strategy A archive research/results/strategy_a: sha256sum -c SHA256SUMS
+audit.json: OK
+audit_report.txt: OK
+buy_and_hold.csv: OK
+equity_base.csv: OK
+equity_severe.csv: OK
+equity_worse.csv: OK
+runs.json: OK
+signals_base.csv: OK
+signals_severe.csv: OK
+signals_worse.csv: OK
+trades_base.csv: OK
+trades_severe.csv: OK
+trades_worse.csv: OK

@@ -1,0 +1,288 @@
+Old: universe_stage_v1_0_tables.db (1041 securities); new: universe_stage.db (1036 securities)
+Securities only in the old run: 6
+  id 785 LAZR: now part of id 746
+  id 801 TT: now part of id 285
+  id 874 ERNA: now part of id 389
+  id 898 NBIS: now part of id 616
+  id 1049 BBWI: now part of id 316
+  id 1066 COHR: now part of id 953
+Securities only in the new run: 1
+  id 1088 GOLD
+
+MEMBERSHIP
+  2020-06-30: +1 -1; in: SPG (old: not eligible: not_common_stock); out: TMUS (new: rank 101)
+  2020-09-30: +1 -1; in: GOLD (old: not in that run); out: GOLD (new: not eligible: not_common_stock)
+  2021-01-29: +1 -1; in: CVS (old: rank 101); out: AZN (new: not eligible: not_common_stock)
+  2021-02-26: +1 -1; in: PARA (old: not eligible: blank_check_company); out: AZN (new: not eligible: not_common_stock)
+  2021-03-31: +1 -1; in: PARA (old: not eligible: blank_check_company); out: DHR (new: rank 101)
+  2021-04-30: +1 -1; in: PARA (old: not eligible: blank_check_company); out: TDOC (new: rank 101)
+  2021-05-28: +1 -1; in: PARA (old: not eligible: blank_check_company); out: AMC (new: rank 101)
+  2021-06-30: +1 -1; in: PARA (old: not eligible: blank_check_company); out: NVAX (new: rank 101)
+  2021-07-30: +1 -1; in: PARA (old: not eligible: blank_check_company); out: SPGI (new: rank 101)
+Decisions with a different member list: 9 of 59
+Securities that entered at some decision: PARA x6, SPG x1, GOLD x1, CVS x1
+Securities that left at some decision: AZN x2, TMUS x1, GOLD x1, DHR x1, TDOC x1, AMC x1, NVAX x1, SPGI x1
+Distinct members: old 207, new 208
+Not-eligible reasons, old: {'blank_check_company': 339, 'history_too_short': 501, 'no_trade_on_decision_session': 5317, 'not_common_stock': 12213, 'price_adjustment_under_review': 118, 'raw_price_below_minimum': 3155, 'too_few_active_sessions': 14}
+Not-eligible reasons, new: {'blank_check_company': 448, 'history_too_short': 471, 'no_trade_on_decision_session': 5603, 'not_common_stock': 10620, 'price_adjustment_under_review': 118, 'raw_price_below_minimum': 3495, 'too_few_active_sessions': 10}
+
+TYPES (security_type, type_status)
+  common/single_source -> common/confirmed: 75
+  unknown/conflict -> adr/confirmed: 32
+  unknown/conflict -> adr/single_source: 21
+  unknown/unknown -> common/single_source: 10
+  unknown/conflict -> common/confirmed: 9
+  common/confirmed -> common/single_source: 4
+  unknown/unknown -> common/confirmed: 4
+  etf/single_source -> common/single_source: 2
+  common/confirmed -> adr/resolved: 2
+  fund/single_source -> common/confirmed: 2
+  unknown/conflict -> common/resolved: 2
+  common/single_source -> adr/single_source: 2
+  unknown/conflict -> partnership/single_source: 2
+  unit/single_source -> common/resolved: 2
+  common/confirmed -> adr/single_source: 1
+  common/single_source -> adr/resolved: 1
+  adr/single_source -> adr/confirmed: 1
+  unknown/conflict -> etf/single_source: 1
+  etf/single_source -> unknown/unknown: 1
+  unknown/conflict -> common/single_source: 1
+    id 21 AHT: common/single_source -> common/confirmed
+    id 22 AAIC: unknown/conflict -> common/confirmed
+    id 35 AMRN: unknown/conflict -> adr/confirmed
+    id 37 AMTD: unknown/unknown -> common/single_source
+    id 41 ANSS: etf/single_source -> common/single_source
+    id 43 ANY: common/single_source -> common/confirmed
+    id 52 ASML: unknown/conflict -> adr/single_source
+    id 57 AZN: common/confirmed -> adr/resolved
+    id 60 BABA: unknown/conflict -> adr/confirmed
+    id 69 BHP: unknown/conflict -> adr/single_source
+    id 70 BIDU: unknown/conflict -> adr/confirmed
+    id 73 BK: common/single_source -> common/confirmed
+    id 80 BP: unknown/conflict -> adr/confirmed
+    id 91 CCI: unknown/conflict -> common/confirmed
+    id 107 CLNE: common/single_source -> common/confirmed
+    id 120 CONE: unknown/conflict -> common/confirmed
+    id 122 COR: unknown/unknown -> common/single_source
+    id 144 CZR: common/confirmed -> common/single_source
+    id 161 DLR: unknown/conflict -> common/confirmed
+    id 177 EDU: unknown/conflict -> adr/single_source
+    id 189 CZR: common/single_source -> common/confirmed
+    id 195 ETSY: common/single_source -> common/confirmed
+    id 203 EYES: etf/single_source -> common/single_source
+    id 214 XPRO: common/single_source -> common/confirmed
+    id 229 GEN: unknown/unknown -> common/single_source
+    id 238 GOLD: common/confirmed -> adr/single_source
+    id 243 GRUB: unknown/unknown -> common/single_source
+    id 245 GSK: unknown/conflict -> adr/single_source
+    id 246 GWPH: unknown/conflict -> adr/confirmed
+    id 251 HDB: unknown/conflict -> adr/single_source
+    id 259 HRC: common/single_source -> common/confirmed
+    id 261 HR: common/single_source -> common/confirmed
+    id 278 IMMU: common/single_source -> common/confirmed
+    id 280 INFY: unknown/conflict -> adr/confirmed
+    id 281 INO: common/single_source -> common/confirmed
+    id 288 ITUB: unknown/conflict -> adr/single_source
+    id 293 JD: unknown/conflict -> adr/confirmed
+    id 294 JKS: unknown/conflict -> adr/single_source
+    id 316 BBWI: unknown/unknown -> common/confirmed
+    id 346 MMC: common/single_source -> common/confirmed
+    id 354 MPW: common/single_source -> common/confirmed
+    id 356 MRIN: unknown/unknown -> common/single_source
+    id 369 MVIS: common/single_source -> common/confirmed
+    id 372 CENN: common/single_source -> common/confirmed
+    id 383 NOK: unknown/conflict -> adr/confirmed
+    id 388 NTES: unknown/conflict -> adr/confirmed
+    id 389 ERNA: fund/single_source -> common/confirmed
+    id 393 NURO: common/single_source -> common/confirmed
+    id 397 NVO: unknown/conflict -> adr/confirmed
+    id 399 NVTA: common/single_source -> common/confirmed
+    id 410 BYON: common/single_source -> common/confirmed
+    id 416 PBR: unknown/conflict -> adr/single_source
+    id 450 QTS: unknown/conflict -> common/resolved
+    id 456 RIO: unknown/conflict -> adr/single_source
+    id 467 SAP: unknown/conflict -> adr/single_source
+    id 471 SBUX: common/single_source -> common/confirmed
+    id 498 SPG: unknown/conflict -> common/confirmed
+    id 506 SQ: common/single_source -> common/confirmed
+    id 509 SRNE: common/single_source -> common/confirmed
+    id 515 STOR: common/single_source -> common/confirmed
+    id 529 TCO: unknown/conflict -> common/resolved
+    id 536 TEVA: common/confirmed -> adr/resolved
+    id 546 MMAT: common/confirmed -> common/single_source
+    id 550 TRV: common/single_source -> common/confirmed
+    id 553 TSM: unknown/conflict -> adr/single_source
+    id 565 UL: unknown/conflict -> adr/confirmed
+    id 577 VALE: unknown/conflict -> adr/confirmed
+    id 581 VIPS: unknown/conflict -> adr/confirmed
+    id 601 WMT: common/single_source -> common/confirmed
+    id 616 NBIS: common/single_source -> common/confirmed
+    id 618 YY: common/single_source -> adr/single_source
+    id 622 ZEN: common/single_source -> common/confirmed
+    id 628 IAC: common/single_source -> common/confirmed
+    id 629 NNDM: unknown/conflict -> adr/single_source
+    id 637 INFO: common/single_source -> common/confirmed
+    id 638 MDGL: common/single_source -> common/confirmed
+    id 651 TAL: unknown/conflict -> adr/single_source
+    id 654 CEI: unknown/unknown -> common/single_source
+    id 656 INVH: unknown/conflict -> common/confirmed
+    id 665 SOS: common/single_source -> adr/resolved
+    id 668 IR: unknown/unknown -> common/confirmed
+    id 669 ARGX: unknown/conflict -> adr/confirmed
+    id 670 CELH: common/single_source -> common/confirmed
+    id 673 ATUS: common/single_source -> common/confirmed
+    id 675 XELA: common/single_source -> common/confirmed
+    id 676 VERU: common/single_source -> common/confirmed
+    id 677 WWR: common/single_source -> common/confirmed
+    id 685 SE: unknown/conflict -> adr/confirmed
+    id 688 SAIL: common/single_source -> common/confirmed
+    id 703 SIGA: common/single_source -> common/confirmed
+    id 704 BILI: unknown/conflict -> adr/confirmed
+    id 706 IQ: unknown/conflict -> adr/confirmed
+    id 712 CGC: common/single_source -> common/confirmed
+    id 714 NKLA: common/single_source -> common/confirmed
+    id 720 PDD: unknown/conflict -> adr/confirmed
+    id 723 NIO: adr/single_source -> adr/confirmed
+    id 731 ET: unknown/conflict -> partnership/single_source
+    id 737 AMR: common/single_source -> common/confirmed
+    id 740 TME: unknown/conflict -> adr/confirmed
+    id 746 LAZR: unknown/unknown -> common/confirmed
+    id 747 SAVA: common/single_source -> common/confirmed
+    id 749 DOW: common/single_source -> common/confirmed
+    id 750 JMIA: unknown/conflict -> adr/confirmed
+    id 753 HYLN: common/single_source -> common/confirmed
+    id 759 LK: unknown/conflict -> adr/single_source
+    id 762 GOTU: unknown/conflict -> adr/confirmed
+    id 764 ATER: common/single_source -> common/confirmed
+    id 774 SNDL: common/single_source -> common/confirmed
+    id 786 BNTX: unknown/conflict -> adr/confirmed
+    id 787 FUTU: unknown/conflict -> adr/confirmed
+    id 792 GEN: common/single_source -> common/confirmed
+    id 793 TCOM: unknown/conflict -> adr/confirmed
+    id 794 CAN: unknown/conflict -> adr/confirmed
+    id 797 EH: unknown/conflict -> adr/confirmed
+    id 807 SKLZ: common/single_source -> common/confirmed
+    id 811 BIOR: unknown/unknown -> common/single_source
+    id 813 LI: unknown/conflict -> adr/single_source
+    id 816 BEKE: unknown/conflict -> adr/single_source
+    id 817 QS: common/single_source -> common/confirmed
+    id 819 XPEV: unknown/conflict -> adr/confirmed
+    id 820 PSAC: unit/single_source -> common/resolved
+    id 830 RKLB: common/single_source -> common/confirmed
+    id 836 LOGC: common/single_source -> common/confirmed
+    id 842 LGVN: common/single_source -> common/confirmed
+    id 845 RBLX: common/single_source -> common/confirmed
+    id 848 ALLG: unknown/unknown -> common/single_source
+    id 855 DIDI: common/single_source -> adr/single_source
+    id 860 FFIE: unknown/unknown -> common/single_source
+    id 868 SHEL: unknown/conflict -> adr/single_source
+    id 869 WBD: unknown/conflict -> common/confirmed
+    id 871 STI: common/single_source -> common/confirmed
+    id 875 NVDL: unknown/conflict -> etf/single_source
+    id 881 ARM: unknown/conflict -> adr/confirmed
+    id 895 GRAF: common/single_source -> common/confirmed
+    id 903 AGNC: common/single_source -> common/confirmed
+    id 910 AVB: unknown/conflict -> common/confirmed
+    id 912 BTI: unknown/conflict -> adr/single_source
+    id 914 BUD: unknown/conflict -> adr/confirmed
+    id 923 COHR: common/single_source -> common/confirmed
+    id 930 DQ: unknown/conflict -> adr/confirmed
+    id 934 EPD: unknown/conflict -> partnership/single_source
+    id 935 EQR: fund/single_source -> common/confirmed
+    id 947 DOC: common/single_source -> common/confirmed
+    id 949 HIG: common/single_source -> common/confirmed
+    id 952 IBN: unknown/conflict -> adr/single_source
+    id 953 COHR: unknown/unknown -> common/confirmed
+    id 955 INSM: common/single_source -> common/confirmed
+    id 971 NVS: unknown/conflict -> adr/confirmed
+    id 972 FLG: unknown/conflict -> common/confirmed
+    id 977 PSTG: common/single_source -> common/confirmed
+    id 989 SQM: unknown/conflict -> adr/single_source
+    id 990 STM: unknown/conflict -> adr/single_source
+    id 1002 WHR: common/single_source -> common/confirmed
+    id 1011 XTIA: common/single_source -> common/confirmed
+    id 1012 MI: common/single_source -> common/confirmed
+    id 1013 BTU: common/single_source -> common/confirmed
+    id 1016 CODX: common/single_source -> common/confirmed
+    id 1018 WISA: unknown/unknown -> common/single_source
+    id 1020 SINT: common/single_source -> common/confirmed
+    id 1021 KNTK: common/single_source -> common/confirmed
+    id 1024 TMDX: common/single_source -> common/confirmed
+    id 1030 SPRU: common/single_source -> common/confirmed
+    id 1042 SGAM: unit/single_source -> common/resolved
+    id 1043 RLX: unknown/conflict -> adr/confirmed
+    id 1046 BETS: common/confirmed -> common/single_source
+    id 1050 IVVD: common/single_source -> common/confirmed
+    id 1052 VFS: common/single_source -> common/confirmed
+    id 1057 IREN: common/confirmed -> common/single_source
+    id 1058 APLM: common/single_source -> common/confirmed
+    id 1060 COSM: common/single_source -> common/confirmed
+    id 1061 UVIX: etf/single_source -> unknown/unknown
+    id 1065 ATXG: common/single_source -> common/confirmed
+    id 1068 NXT: unknown/conflict -> common/single_source
+    id 1070 ALTM: common/single_source -> common/confirmed
+    id 1071 TLN: common/single_source -> common/confirmed
+
+ISSUER AT THE LAST TRADE
+  Known: old 952, new 948; same CIK 923
+  found only now: 9
+    id 90 CBS: old None -> new ('0000813828', 'CBS CORP', 'cover_page')
+    id 506 SQ: old None -> new ('0001512673', 'Block, Inc.', 'cover_page')
+    id 612 XOM: old None -> new ('0000034088', 'EXXON MOBIL CORP', 'cover_page')
+    id 618 YY: old None -> new ('0001530238', 'JOYY Inc.', 'cover_page')
+    id 628 IAC: old None -> new ('0001800227', 'IAC Inc.', 'cover_page')
+    id 807 SKLZ: old None -> new ('0001801661', 'Skillz Inc.', 'cover_page')
+    id 923 COHR: old None -> new ('0000021510', 'COHERENT INC', 'cover_page')
+    id 991 TD: old None -> new ('0000947263', 'TORONTO DOMINION BANK', 'cover_page')
+    id 1088 GOLD: old None -> new ('0000756894', 'BARRICK GOLD CORP', 'full_text')
+  lost now: 13
+    id 147 DD: old ('0000030554', 'EIDP, Inc.', 'form25') -> new None
+    id 156 DIA: old ('0001041130', 'SPDR DOW JONES INDUSTRIAL AVERAGE ETF TRUST', 'ticker_today') -> new None
+    id 341 MDY: old ('0000936958', 'SPDR S&P MIDCAP 400 ETF TRUST', 'ticker_today') -> new None
+    id 476 SCO: old ('0001415311', 'ProShares Trust II', 'ticker_today') -> new None
+    id 505 SPY: old ('0000884394', 'SPDR S&P 500 ETF TRUST', 'ticker_today') -> new None
+    id 785 LAZR: old ('0001758057', 'Luminar Technologies, Inc./DE', 'full_text') -> new None
+    id 801 TT: old ('0001466258', 'Trane Technologies plc', 'ticker_today') -> new None
+    id 816 BEKE: old ('0001809587', 'KE Holdings Inc.', 'ticker_today') -> new None
+    id 874 ERNA: old ('0000748592', 'Ernexa Therapeutics Inc.', 'ticker_today') -> new None
+    id 898 NBIS: old ('0001513845', 'Nebius Group N.V.', 'ticker_today') -> new None
+    id 997 VIXY: old ('0001415311', 'ProShares Trust II', 'ticker_today') -> new None
+    id 1049 BBWI: old ('0000701985', 'Bath & Body Works, Inc.', 'ticker_today') -> new None
+    id 1066 COHR: old ('0000820318', 'COHERENT CORP.', 'ticker_today') -> new None
+  different CIK: 16
+    id 55 AXON: old ('0001280784', 'Hercules Capital, Inc.', 'form25') -> new ('0001636050', 'Axovant Sciences Ltd.', 'full_text')
+    id 75 BLK: old ('0001364742', 'BlackRock Inc.', 'full_text') -> new ('0002012383', 'BlackRock, Inc.', 'cover_page')
+    id 144 CZR: old ('0001590895', 'Caesars Entertainment, Inc.', 'ticker_today') -> new ('0000858339', 'CAESARS HOLDINGS, INC.', 'form25')
+    id 189 CZR: old ('0000858339', 'CAESARS HOLDINGS, INC.', 'form25') -> new ('0001590895', 'Caesars Entertainment, Inc.', 'cover_page')
+    id 238 GOLD: old ('0001591588', 'Gold.com, Inc.', 'ticker_today') -> new ('0001175580', 'RANDGOLD RESOURCES LTD', 'form25')
+    id 258 HR: old ('0001360604', 'Healthcare Realty Trust Inc', 'ticker_today') -> new ('0000899749', 'HRTI, LLC', 'form25')
+    id 261 HR: old ('0000899749', 'HRTI, LLC', 'form25') -> new ('0001360604', 'Healthcare Realty Trust Inc', 'cover_page')
+    id 285 TT: old ('0001699150', 'Ingersoll Rand Inc.', 'ticker_today') -> new ('0001466258', 'Trane Technologies plc', 'cover_page')
+    id 418 PCG: old ('0001004980', 'PG&E Corp', 'ticker_today') -> new ('0000075488', 'PACIFIC GAS & ELECTRIC Co', 'cover_page')
+    id 449 QSR: old ('0001618756', 'Restaurant Brands International Inc.', 'ticker_today') -> new ('0001618755', 'Restaurant Brands International Limited Partnership', 'cover_page')
+    id 571 URI: old ('0001067701', 'UNITED RENTALS, INC.', 'ticker_today') -> new ('0001047166', 'UNITED RENTALS NORTH AMERICA INC', 'cover_page')
+    id 673 ATUS: old ('0000733099', 'ROGERS COMMUNICATIONS INC', 'full_text') -> new ('0001702780', 'Altice USA, Inc.', 'cover_page')
+    id 746 LAZR: old ('0001783398', 'Gores Holdings IV, Inc.', 'full_text') -> new ('0001758057', 'Luminar Technologies, Inc./DE', 'cover_page')
+    id 795 PARA: old ('0001826011', 'Parabolic Technologies, Inc.', 'ticker_today') -> new ('0000813828', 'Paramount Global', 'cover_page')
+    id 864 HTZ: old ('0001657853', 'HERTZ GLOBAL HOLDINGS, INC', 'ticker_today') -> new ('0000047129', 'HERTZ CORP', 'cover_page')
+    id 927 DOC: old ('0000765880', 'HEALTHPEAK PROPERTIES, INC.', 'ticker_today') -> new ('0001574540', 'DOC DR Holdco, LLC', 'form25')
+
+OUTCOMES AND EXIT VALUES (ended securities)
+  id 19 AGN: status ended -> ended; outcome acquired_stock_and_cash/confirmed -> acquired_stock_and_cash/confirmed; value None (none) -> 193.00936 (deal_terms)
+  id 144 CZR: status trading -> ended; outcome None/None -> acquired_stock_and_cash/confirmed; value None (None) -> None (none)
+  id 189 CZR: status ended -> trading; outcome acquired/single_source -> None/None; value None (none) -> None (None)
+  id 238 GOLD: status trading -> ended; outcome None/None -> acquired_stock/single_source; value None (None) -> 80.2768 (deal_terms)
+  id 258 HR: status trading -> ended; outcome None/None -> acquired_stock/confirmed; value None (None) -> None (none)
+  id 261 HR: status ended -> trading; outcome acquired/single_source -> None/None; value None (none) -> None (None)
+  id 316 BBWI: status ended -> trading; outcome resumed_or_fragment/unresolved -> None/None; value None (none) -> None (None)
+  id 389 ERNA: status ended -> trading; outcome unknown/unresolved -> None/None; value None (none) -> None (None)
+  id 462 RTN: status ended -> ended; outcome acquired/single_source -> acquired_stock/single_source; value None (none) -> 116.576564 (deal_terms)
+  id 616 NBIS: status ended -> trading; outcome unknown/unresolved -> None/None; value None (none) -> None (None)
+  id 668 IR: status ended -> trading; outcome unknown/unresolved -> None/None; value None (none) -> None (None)
+  id 746 LAZR: status ended -> trading; outcome trading_gap/not_an_exit -> None/None; value None (none) -> None (None)
+  id 768 WORK: status ended -> ended; outcome acquired_stock_and_cash/confirmed -> acquired_stock_and_cash/confirmed; value None (none) -> 45.577736 (deal_terms)
+  id 927 DOC: status trading -> ended; outcome None/None -> acquired_stock/confirmed; value None (None) -> None (none)
+  id 947 DOC: status ended -> trading; outcome unknown/unresolved -> None/None; value None (none) -> None (None)
+  id 953 COHR: status ended -> trading; outcome resumed_or_fragment/unresolved -> None/None; value None (none) -> None (None)
+  Value basis, old: {'assumed_zero': 19, 'deal_terms': 7, 'none': 80, 'stated_cash': 52}
+  Value basis, new: {'assumed_zero': 19, 'deal_terms': 11, 'none': 71, 'stated_cash': 52}

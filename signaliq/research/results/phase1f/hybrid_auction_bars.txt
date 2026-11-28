@@ -1,0 +1,7 @@
+Auction-only bar audit of universe_stage.db (read-only)
+rule: median >= 1000 trades over the 20 market sessions before (missing = 0), and <= 5 trades
+flagged bars: 268
+  2021-10-25: 221
+  2022-03-08: 47
+flagged bars without a reviewed explanation and treatment: 268
+RESULT: FAIL

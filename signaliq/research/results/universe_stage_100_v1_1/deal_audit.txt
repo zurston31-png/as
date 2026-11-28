@@ -1,0 +1,13 @@
+ok   ALXN  effective 2021-07-21: 60 cash + 2.1243 AZN @ 57.77 (2021-07-21) = 182.7208; target last close 182.5 (+0.1%); quotes 2/2; stored verified, exit value 182.720811
+ok   CELG  effective 2019-11-20: 50 cash + 1 BMY @ 56.41 (2019-11-20) = 106.4100; target last close 108.24 (-1.7%); quotes 1/1; stored verified, exit value 106.41
+ok   DISCA effective 2022-04-08: 0 cash + 1 WBD @ 24.78 (2022-04-11) = 24.7800; target last close 24.43 (+1.4%); quotes 1/1; stored verified, exit value 24.78
+ok   MXIM  effective 2021-08-26: 0 cash + 0.63 ADI @ 167.36 (2021-08-26) = 105.4368; target last close 103.14 (+2.2%); quotes 1/1; stored verified, exit value 105.4368
+ok   PXD   effective 2024-05-03: 0 cash + 2.3234 XOM @ 116.0 (2024-05-03) = 269.5144; target last close 269.62 (-0.0%); quotes 1/1; stored verified, exit value 269.51439999999997
+ok   VMW   effective 2023-11-22: 142.5 cash + 0 AVGO @ 972.0 (2023-11-22) = 142.5000; target last close 142.48 (+0.0%); quotes 3/3; stored verified, exit value 142.5
+ok   XLNX  effective 2022-02-14: 0 cash + 1.7234 AMD @ 114.27 (2022-02-14) = 196.9329; target last close 194.92 (+1.0%); quotes 1/1; stored verified, exit value 196.932918
+ok   AGN   effective 2020-05-08: 120.3 cash + 0.866 ABBV @ 83.96 (2020-05-08) = 193.0094; target last close 193.02 (-0.0%); quotes 2/2; stored verified, exit value 193.00936
+ok   WORK  effective 2021-07-21: 26.79 cash + 0.0776 CRM @ 242.11 (2021-07-21) = 45.5777; target last close 45.2 (+0.8%); quotes 2/2; stored verified, exit value 45.577736
+ok   RTN   effective 2020-04-03: 0 cash + 2.3348 RTX @ 49.93 (2020-04-03) = 116.5766; target last close 116.96 (-0.3%); quotes 3/3; stored verified, exit value 116.576564
+ok   GOLD  effective 2019-01-01: 0 cash + 6.128 GOLD @ 13.1 (2019-01-02) = 80.2768; target last close 82.89 (-3.2%); quotes 3/3; stored verified, exit value 80.2768
+
+11 of 11 deals pass every check

@@ -1,0 +1,18 @@
+[hybrid]
+  Uncertain decisions (bars of 2021-10-25 / 2022-03-08 that lost trades; stored membership kept, no replacement chosen; uncertain_decisions.tsv): 3
+    2021-11-30: UNCERTAIN. 100th member FDX kept; DASH enters if its 2021-10-25 dollar volume was above 605,191,826 (stored 18,207,631; flagged bars and all-bars variant)
+    2021-12-31: UNCERTAIN. 100th member TMUS kept; PANW enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 619,524,044; all-bars variant only (its bar is not flagged))
+    2021-12-31: UNCERTAIN. 100th member TMUS kept; SPGI enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 60,250,449; flagged bars and all-bars variant)
+    2022-04-29: UNCERTAIN. 100th member ATVI kept; AMC enters if its 2022-03-08 dollar volume was above 687,334,896 (stored 11,493,945; flagged bars and all-bars variant)
+[stage 1.1]
+  Uncertain decisions (bars of 2021-10-25 / 2022-03-08 that lost trades; stored membership kept, no replacement chosen; uncertain_decisions.tsv): 3
+    2021-11-30: UNCERTAIN. 100th member FDX kept; DASH enters if its 2021-10-25 dollar volume was above 605,191,826 (stored 18,207,631; flagged bars and all-bars variant)
+    2021-12-31: UNCERTAIN. 100th member TMUS kept; PANW enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 619,524,044; all-bars variant only (its bar is not flagged))
+    2021-12-31: UNCERTAIN. 100th member TMUS kept; SPGI enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 60,250,449; flagged bars and all-bars variant)
+    2022-04-29: UNCERTAIN. 100th member ATVI kept; AMC enters if its 2022-03-08 dollar volume was above 687,334,896 (stored 11,493,945; flagged bars and all-bars variant)
+[version 2 rebuild]
+  Uncertain decisions (bars of 2021-10-25 / 2022-03-08 that lost trades; stored membership kept, no replacement chosen; uncertain_decisions.tsv): 3
+    2021-11-30: UNCERTAIN. 100th member FDX kept; DASH enters if its 2021-10-25 dollar volume was above 605,191,826 (stored 18,207,631; flagged bars and all-bars variant)
+    2021-12-31: UNCERTAIN. 100th member TMUS kept; PANW enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 619,524,044; all-bars variant only (its bar is not flagged))
+    2021-12-31: UNCERTAIN. 100th member TMUS kept; SPGI enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 60,250,449; flagged bars and all-bars variant)
+    2022-04-29: UNCERTAIN. 100th member ATVI kept; AMC enters if its 2022-03-08 dollar volume was above 687,334,896 (stored 11,493,945; flagged bars and all-bars variant)

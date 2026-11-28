@@ -1,0 +1,11 @@
+Membership impact of the 767 suspect bars (Stage 1.1, version 1). Members in(+)/out(-) at each affected decision.
+decision    Alpaca repair (v2)       bars left out                neighbour average              100th/101st gap
+2021-04-30  none                     +TDOC -HON                   none                           0.02% (HON/TDOC)
+2021-05-28  none                     +AMC -NCLH                   none                           0.43% (ACN/AMC)
+2021-06-30  none                     +DAL -CHTR                   +ACN +DAL -CHTR -NCLH          0.12% (NCLH/NVAX)
+2021-10-29  none                     none                         none                           1.63% (PTON/MDT)
+2021-11-30  none                     none                         none                           0.28% (FDX/DASH)
+2021-12-31  none                     +SPGI -TMUS                  +SPGI -TMUS                    0.49% (TMUS/SPGI)
+2022-03-31  none                     none                         none                           0.67% (CVS/MELI)
+2022-04-29  none                     none                         none                           1.14% (ATVI/AMC)
+2022-05-31  none                     none                         none                           0.75% (ANTM/UAL)

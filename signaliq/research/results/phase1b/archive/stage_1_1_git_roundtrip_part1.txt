@@ -1,0 +1,16 @@
+== 1. source repository: commit the Stage 1.1 export (01:57)
+size-pack: 1.59 GiB
+1.6G	.git
+files committed: 101
+== 2. push to a local bare repository standing in for the private remote (01:58)
+fatal: expected 'acknowledgments', received 'packfile'
+warning: push negotiation failed; proceeding anyway with push
+source head 8e39c5ab3172d67e3c923a9967748a57e50ab139
+remote head 8e39c5ab3172d67e3c923a9967748a57e50ab139
+notice: HEAD points to an unborn branch (master)
+remote fsck ok
+/dev/vda        252G   34G  5.1G  87% /
+== 3. fresh clone over the file:// transport (no hard links) (01:59)
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'

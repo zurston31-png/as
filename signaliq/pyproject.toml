@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signaliq"
+description = "SignalIQ Milestone 1: validated historical US stock bar ingestion (Alpaca -> SQLite -> FastAPI)."
+readme = "README.md"
+requires-python = ">=3.12"
+dynamic = ["version", "dependencies"]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = [
+    "integration: live tests that call the real Alpaca API (skipped unless credentials are configured)",
+]
+filterwarnings = [
+    # Starlette's test client now prefers the "httpx2" package and prints a
+    # deprecation notice when it runs on HTTPX. This project uses HTTPX, as
+    # specified for Milestone 1, and the test client still works with it
+    # (see "Known limitations" in the README).
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]
+
+# Optional code style tooling (not needed to run the project):
+#   pip install ruff && ruff check . && ruff format .
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PIE", "PT", "RUF"]
+ignore = [
+    "PT011",  # pytest.raises(ValueError) is used with a match= pattern throughout
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The scripts add the project folder to sys.path before importing ``app``.
+"scripts/*.py" = ["E402"]
+# The validation report is built from long f-strings that are one report line each.
+"scripts/universe_validation_batch.py" = ["E402", "E501"]
+# Curated SEC passages are quoted verbatim; splitting them would hide what is matched.
+"app/universe/curated.py" = ["E501"]
+"tests/test_universe_sec_history.py" = ["E501"]

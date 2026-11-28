@@ -1,0 +1,29 @@
+Live protection check (database files are only opened; no network: proxy -> 127.0.0.1:9)
+
+Protected list:
+  data/universe_stage.db: the Stage 1.1 research database
+  data/universe_stage_v1_0_tables.db: the Stage 1.0 tables
+  data/signaliq.db: the IEX market data database
+  data/sip_research.db: the validation batch v2 database
+  data/phase1b_record/alpaca_responses.db: the Phase 1b raw Alpaca responses (recorded 2026-11-27)
+
+Attempts that must be refused:
+  ok   research run with no database named: refused (NoResearchDatabase: SIGNALIQ_SIP_RESEARCH_DATABASE_URL is not set. Name the research database explicitly (a new file for a new run)
+  ok   research database opened for writing: data/sip_research.db: refused (ProtectedDatabase: /home/user/as/signaliq/data/sip_research.db is the validation batch v2 database, archived and protected: it ca)
+  ok   research database opened for writing: data/universe_stage.db: refused (ProtectedDatabase: /home/user/as/signaliq/data/universe_stage.db is the Stage 1.1 research database, archived and protected: it c)
+  ok   research database opened for writing: data/universe_stage_v1_0_tables.db: refused (ProtectedDatabase: /home/user/as/signaliq/data/universe_stage_v1_0_tables.db is the Stage 1.0 tables, archived and protected: it )
+  ok   research database opened for writing: data/signaliq.db: refused (ProtectedDatabase: /home/user/as/signaliq/data/signaliq.db is the IEX market data database, archived and protected: it can be ope)
+  ok   market data writers with the default SIGNALIQ_DATABASE_URL (data/signaliq.db): refused (ProtectedDatabase: refusing to write to /home/user/as/signaliq/data/signaliq.db: it is the IEX market data database, archived and)
+  ok   recording into the Phase 1b response store: refused (ResponseStoreError: data/phase1b_record/alpaca_responses.db is the Phase 1b raw Alpaca responses (recorded 2026-11-27), archived a)
+
+Still allowed (read only):
+  ok   data/sip_research.db read-only: securities 101 rows
+  ok   Phase 1b store in replay mode: {'responses': 2095, 'body_bytes': 1900477670, 'fingerprint': '61544d16fc7e61e4'}
+
+sha256 before and after:
+  ok   data/sip_research.db 1c0732ab2f7533611a477e23d650c50e0dee059e2646978c921a66e1bc09cd25
+  ok   data/signaliq.db 3bba6d15f0fbd11f08d1cbacf67ab8b16c6f735a17888585c318ca8d9fcb30fc
+  ok   data/universe_stage_v1_0_tables.db 55bdc101068cbad77f458032cf639d8e5d747621080103db1f88c480ae7a4ae6
+  ok   data/phase1b_record/alpaca_responses.db 108d2a177926916376e9199fc86e5477401f66d806f552bc0d4a7123bc4cb6dc
+
+RESULT: PASS

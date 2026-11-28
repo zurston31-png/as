@@ -1,0 +1,5 @@
+decision	status	stored_membership	stored_100th_member	stored_100th_median	possible_entrant	entrant_rank	entrant_stored_median	entrant_max_median	unrepaired_session	entrant_dollar_volume_needed_above	entrant_dollar_volume_stored	neighbouring_sessions	found_by
+2021-11-30	UNCERTAIN	kept as stored; no replacement chosen	FDX	605,191,826	DASH	101	603,486,004	607,974,167	2021-10-25	605,191,826	18,207,631	177,752,602, 186,906,121	flagged bars and all-bars variant
+2021-12-31	UNCERTAIN	kept as stored; no replacement chosen	TMUS	628,197,191	PANW	102	619,524,044	634,636,784	2021-10-25	628,197,191	619,524,044	580,266,737, 1,213,923,275	all-bars variant only (its bar is not flagged)
+2021-12-31	UNCERTAIN	kept as stored; no replacement chosen	TMUS	628,197,191	SPGI	101	625,129,380	637,784,038	2021-10-25	628,197,191	60,250,449	670,222,804, 1,155,667,446	flagged bars and all-bars variant
+2022-04-29	UNCERTAIN	kept as stored; no replacement chosen	ATVI	687,334,896	AMC	101	679,500,945	687,877,034	2022-03-08	687,334,896	11,493,945	608,855,585, 403,878,226	flagged bars and all-bars variant

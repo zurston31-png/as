@@ -1,0 +1,34 @@
+== 3 (again). point the bare remote's HEAD at main; discard the first clone; fresh clone (02:00)
+clone head 8e39c5ab3172d67e3c923a9967748a57e50ab139
+heads match (source = remote = clone)
+clone fsck ok
+/dev/vda        252G   34G  5.1G  87% /
+files checked out: 101
+1.7G	rt/clone/stage_1_1
+== 4. verify the clone (02:00)
+clone manifest identical to research/results/phase1/archive_manifest_stage_1_1.json
+files: 100, sha256 checked; problems: 0
+  ok   batch_symbols: 1101 rows, 46d0f9038d473f4a / 46d0f9038d473f4a; live database (1101, '46d0f9038d473f4a')
+  ok   candidates: 18490 rows, fa6d31eca65e926e / fa6d31eca65e926e; live database (18490, 'fa6d31eca65e926e')
+  ok   corporate_actions: 889 rows, 67730ac904cf2127 / 52985335b2f3e329; live database (889, '67730ac904cf2127')
+  ok   deal_values: 11 rows, 4e5b4c67f7fe092b / 4e5b4c67f7fe092b; live database (11, '4e5b4c67f7fe092b')
+  ok   exit_evidence: 399 rows, 6624f859e7dabe04 / 6624f859e7dabe04; live database (399, '6624f859e7dabe04')
+  ok   external_responses: 59007 rows, dd083732acf86453 / ddc30ff2e37141a9; live database (59007, 'dd083732acf86453')
+  ok   issuer_evidence: 71720 rows, 0164d15727635eb0 / 0164d15727635eb0; live database (71720, '0164d15727635eb0')
+  ok   issuer_sic: 4107 rows, 68ed0468c1226145 / 68ed0468c1226145; live database (4107, '68ed0468c1226145')
+  ok   membership: 61124 rows, 78d11433877415bc / 78d11433877415bc; live database (61124, '78d11433877415bc')
+  ok   monthly_bars: 691046 rows, c60804f7133b7b6f / c60804f7133b7b6f; live database (691046, 'c60804f7133b7b6f')
+  ok   securities: 1036 rows, 81fc4b128c23f35a / 81fc4b128c23f35a; live database (1036, '81fc4b128c23f35a')
+  ok   security_bars: 1928996 rows, ab82b29ee18a82d8 / ab82b29ee18a82d8; live database (1928996, 'ab82b29ee18a82d8')
+  ok   security_issuers: 948 rows, 304c24ce5daebc80 / 304c24ce5daebc80; live database (948, '304c24ce5daebc80')
+  ok   security_registry: 1088 rows, c98d619b15b1e0c9 / c98d619b15b1e0c9; live database (1088, 'c98d619b15b1e0c9')
+  ok   segment_links: 74 rows, ba5b3e94201fd78b / ba5b3e94201fd78b; live database (74, 'ba5b3e94201fd78b')
+  ok   sip_research_alembic_version: 1 rows, 2f70064bcd5be351 / 2f70064bcd5be351; live database (1, '2f70064bcd5be351')
+  ok   spin_offs: 27 rows, d6821e18388940d5 / d6821e18388940d5; live database (27, 'd6821e18388940d5')
+  ok   split_checks: 384 rows, 1de319621b65bd50 / 1de319621b65bd50; live database (384, '1de319621b65bd50')
+  ok   ticker_bars: 1960141 rows, 9b693ad36675d068 / 9b693ad36675d068; live database (1960141, '9b693ad36675d068')
+  ok   ticker_history: 1171 rows, 75b0cb7cce4dfcbd / 75b0cb7cce4dfcbd; live database (1171, '75b0cb7cce4dfcbd')
+  ok   type_evidence: 3134 rows, bdd23c51163f1707 / bdd23c51163f1707; live database (3134, 'bdd23c51163f1707')
+RESULT: PASS
+== round trip A part 1 done (02:09)
+/dev/vda        252G   34G  5.0G  88% /

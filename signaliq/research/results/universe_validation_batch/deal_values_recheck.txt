@@ -1,0 +1,13 @@
+ALXN   60 + 2.1243 x AZN live close 57.77 (2021-07-21) = 182.7208; pipeline 182.7208 [verified]; target last close 182.5 (+0.1%) -> MATCH
+CELG   50 + 1 x BMY live close 56.41 (2019-11-20) = 106.4100; pipeline 106.4100 [verified]; target last close 108.24 (-1.7%) -> MATCH
+DISCA  0 + 1 x WBD live close 24.78 (2022-04-11) = 24.7800; pipeline 24.7800 [verified]; target last close 24.43 (+1.4%) -> MATCH
+MXIM   0 + 0.63 x ADI live close 167.36 (2021-08-26) = 105.4368; pipeline 105.4368 [verified]; target last close 103.14 (+2.2%) -> MATCH
+PXD    0 + 2.3234 x XOM live close 116 (2024-05-03) = 269.5144; pipeline 269.5144 [verified]; target last close 269.62 (-0.0%) -> MATCH
+TWX    53.75 + 1.437 x T live close 32.52 (2018-06-14) = 100.4812; pipeline 100.4812 [verified]; target last close 98.77 (+1.7%) -> MATCH
+VMW    142.5 + 0 x AVGO live close 972 (2023-11-22) = 142.5000; pipeline 142.5000 [verified]; target last close 142.48 (+0.0%) -> MATCH
+WLL    6.25 + 0.5774 x OAS live close 109.3 (2022-07-01) = 69.3598; pipeline 69.3598 [verified]; target last close 68.03 (+2.0%) -> MATCH
+XLNX   0 + 1.7234 x AMD live close 114.27 (2022-02-14) = 196.9329; pipeline 196.9329 [verified]; target last close 194.92 (+1.0%) -> MATCH
+DO     5.65 + 0.2316 x NE live close 35.19 (2024-09-04) = 13.8000; pipeline 13.8000 [verified]; target last close 13.99 (-1.4%) -> MATCH
+FSBC   8.9 + 0.2197 x EVBN live close 26.56 (2020-05-01) = 14.7352; pipeline 14.7352 [value_far_from_last_close]; target last close 13.36 (+10.3%) -> MATCH
+FLAC   0 + 1 x NAMS live close 10.35 (2022-11-23) = 10.3500; pipeline 10.3500 [verified]; target last close 9.87 (+4.9%) -> MATCH
+independent recomputation matches the pipeline for 12 of 12 deals

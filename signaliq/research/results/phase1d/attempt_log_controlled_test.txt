@@ -1,0 +1,27 @@
+Controlled record/replay test of HTTP attempt logging (local fake provider only)
+server https://127.0.0.1:33507; credentials fake; store alpaca_responses.db
+
+1. Record
+  ok   attempts logged 15 = requests the server received 15 = client request log lines 15
+  ok   TESTA attempts in order: [500, 429, 200, 'RemoteProtocolError', 'ReadTimeout', 200]
+  ok   TESTA recorded outcome: data
+  ok   TESTB attempts in order: [422]
+  ok   TESTB recorded outcome: AlpacaRequestError 422
+  ok   TESTC attempts in order: [503, 503, 503, 503]
+  ok   TESTC recorded outcome: AlpacaServerError 503
+  ok   TESTD attempts in order: ['RemoteProtocolError', 'RemoteProtocolError', 'RemoteProtocolError', 'RemoteProtocolError']
+  ok   TESTD recorded outcome: AlpacaNetworkError
+  ok   every non-200 attempt has its body stored (7)
+  ok   store verify: 0 damaged bodies (responses and attempts)
+
+2. Replay (server stopped; proxy -> 127.0.0.1:9; no credentials; NoNetworkTransport)
+  ok   network requests during replay: 0 (live fetches 0)
+  ok   TESTA replay equals record: same bars
+  ok   TESTB replay equals record: AlpacaRequestError 422
+  ok   TESTC replay equals record: AlpacaServerError 503
+  ok   TESTD replay equals record: AlpacaNetworkError
+  ok   store sha256 unchanged by the replay
+  ok   the fake provider received nothing more
+
+store sha256 0407b0714449e1c763608ce5e98ec23eb7c0fc45f9adcf9b10715a430b40602e
+RESULT: PASS

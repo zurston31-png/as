@@ -1,0 +1,697 @@
+#!/usr/bin/env python3
+"""Independent audit of trading-gap merges, from the raw stored data. Read-only.
+
+    python scripts/audit_merges.py
+
+For every merge recorded in the research database, recomputes from the raw ticker bars,
+the raw corporate actions and the issuer's SEC filing list (cache only), without using
+the pipeline's decision code. Then, for every candidate kept separate, re-establishes from
+the same raw data at least one fact that rules out a merge (a delisting notice, a price
+break, a long gap, different issuers, a merger record, or a quoted fund liquidation).
+
+For every merge:
+
+1. both segments are bars of the same ticker, and inside the gap every bar Alpaca
+   returned is a filler bar (no volume, no trades);
+2. the number of sessions without a trade, recounted from the exchange calendar;
+3. the split-adjusted price ratio across the gap, recomputed from the raw split events;
+4. no Form 25 / 25-NSE filed by the security's issuer (when known) between the last
+   trade before the gap and the first trade after it;
+5. the merged security exists once in the securities table, spanning both segments.
+
+Then every documented identity exception (``CURATED_IDENTITY_LINKS``: one security across
+a suspension longer than the trading-gap rule, under a new ticker) is checked the same way,
+from raw data and not from the pipeline: each quoted passage is in its cached SEC document;
+both segment ends are real trades and neither ticker traded in between; both segments
+belong to one security, whose issuer is the link's CIK; the issuer's own filing list
+(cached SEC submissions) shows no delisting notice (Form 25) and no deregistration
+(Form 15) between the last and the first trade; and Alpaca, independently of SEC, records
+the ticker change of the same security in between (one security, not only one company).
+The price on each side is reported.
+
+Then every ticker handover (a ticker that passed from one company to another without a
+pause, cut into one security per company) is re-derived from the raw bars and the raw
+Alpaca events with separate code: a rename X -> T where X's last trade is within 10
+sessions of the rename, T traded before and after it, and T's earlier holder's own exit
+(acquired, or renamed away from T) is recorded within 10 sessions; plus the documented
+exceptions (``CURATED_HANDOVERS``, every passage found). For each: T's run is split in the
+stored securities exactly at the new holder's first trade, the earlier part and the new
+holder belong to different securities, the new holder's security came from X, and the
+issuer evidence differs across the cut and continues the new holder's own company. Every
+place where the stored securities split one uninterrupted run of a ticker must be one of
+these handovers.
+
+Exits with status 1 if any merge or exception fails a check.
+"""
+
+import sys
+from datetime import date, timedelta
+from itertools import pairwise
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from sqlalchemy import select
+
+from app.data.validation import trading_days
+from app.database import create_session_factory, session_scope
+from app.universe import sec
+from app.universe import sec_history as sh
+from app.universe.curated import CURATED_HANDOVERS, CURATED_IDENTITY_LINKS
+from app.universe.database import open_research_database
+from app.universe.models import (
+    CorporateAction,
+    IssuerEvidence,
+    Security,
+    SecurityIssuer,
+    SegmentLink,
+    TickerBar,
+    TickerHistory,
+)
+
+PRICE_LOW, PRICE_HIGH = 0.5, 2.0
+SCOPE_END = date(2024, 12, 31)
+
+
+def last_trade(session, sid):
+    return session.get(Security, sid).last_trade_session
+
+
+def main() -> int:
+    engine = open_research_database()
+    factory = create_session_factory(engine)
+    failures = 0
+    with session_scope(factory) as s:
+        client = sec.CachedSec(s, network=False)
+        links = list(
+            s.execute(
+                select(SegmentLink)
+                .where(SegmentLink.decision == "merged")
+                .order_by(SegmentLink.symbol, SegmentLink.earlier_last)
+            ).scalars()
+        )
+        actions = list(s.execute(select(CorporateAction)).scalars())
+        print(f"Merges to audit: {len(links)}\n")
+        for link in links:
+            problems = []
+            bars = {
+                b.session: b
+                for b in s.execute(
+                    select(TickerBar).where(
+                        TickerBar.symbol == link.symbol,
+                        TickerBar.session >= link.earlier_last,
+                        TickerBar.session <= link.later_first,
+                    )
+                ).scalars()
+            }
+            before, after = bars.get(link.earlier_last), bars.get(link.later_first)
+            if before is None or after is None or before.volume == 0 or after.volume == 0:
+                problems.append("a segment end is not a real trade of this ticker")
+            inside = [b for d, b in bars.items() if link.earlier_last < d < link.later_first]
+            traded = [b.session for b in inside if b.volume > 0 or b.trade_count > 0]
+            if traded:
+                problems.append(f"real trades inside the gap: {traded[:3]}")
+            gap = max(0, len(trading_days(link.earlier_last, link.later_first)) - 2)
+            if gap != link.gap_sessions:
+                problems.append(f"gap recount {gap} != recorded {link.gap_sessions}")
+            interim = {link.symbol} | {
+                a.new_symbol
+                for a in actions
+                if a.action_type == "name_change"
+                and a.old_symbol == link.symbol
+                and a.process_date
+                and link.earlier_last < a.process_date <= link.later_first
+            }
+            ratio = 1.0
+            for a in actions:
+                when = a.ex_date or a.process_date
+                if (
+                    a.action_type in ("forward_split", "reverse_split", "unit_split")
+                    and a.symbol in interim
+                    and when
+                    and link.earlier_last < when <= link.later_first
+                    and a.old_rate
+                    and a.new_rate
+                ):
+                    ratio *= a.new_rate / a.old_rate
+            price = None
+            if before is not None and after is not None and before.close:
+                price = after.close / (before.close / ratio)
+                if not PRICE_LOW <= price <= PRICE_HIGH and "SEC filings say" not in link.reason:
+                    problems.append(f"price ratio {price:.3f} outside {PRICE_LOW}-{PRICE_HIGH}")
+            owners = {
+                h.security_id
+                for h in s.execute(
+                    select(TickerHistory).where(
+                        TickerHistory.symbol == link.symbol,
+                        TickerHistory.valid_from.in_((link.later_first,)),
+                    )
+                ).scalars()
+            } | {
+                h.security_id
+                for h in s.execute(
+                    select(TickerHistory).where(
+                        TickerHistory.symbol == link.symbol,
+                        TickerHistory.valid_to == link.earlier_last,
+                    )
+                ).scalars()
+            }
+            if len(owners) != 1:
+                problems.append(f"segments belong to {len(owners)} securities, not one")
+            notices, notice_check = [], []
+            for sid in owners:
+                issuer = s.get(SecurityIssuer, sid)
+                if issuer is None:
+                    notice_check.append("no SEC issuer known")
+                    continue
+                # The pipeline asks for the issuer's Form 25 list up to 120 days after a
+                # segment's last trade; read that same list (cache only, never fetched here).
+                feeds = [
+                    client.company(issuer.cik, min(day + timedelta(days=120), SCOPE_END), "25")
+                    for day in (link.earlier_last, last_trade(s, sid))
+                ]
+                read = [f for f in feeds if f is not None]
+                if not read:
+                    problems.append(f"issuer {issuer.cik}: delisting-notice list not available")
+                    continue
+                filings = {(f.form, f.filed) for feed in read for f in feed.filings}
+                found = sorted(
+                    f"{form} {filed}"
+                    for form, filed in filings
+                    if form.startswith("25") and link.earlier_last < filed < link.later_first
+                )
+                notices += found
+                notice_check.append(f"issuer {issuer.cik}: notice list read, {len(found)} in gap")
+            if notices:
+                problems.append(f"issuer delisting notice in the gap: {notices}")
+            failures += bool(problems)
+            print(
+                f"{'FAIL' if problems else 'ok  '} {link.symbol:6} "
+                f"{link.earlier_last} -> {link.later_first}: "
+                f"{gap} sessions, {len(inside)} filler bars inside, price ratio "
+                f"{'n/a' if price is None else f'{price:.3f}'}"
+                + (f" after splits x{ratio:g}" if ratio != 1.0 else "")
+                + f", one security: {len(owners) == 1}; {', '.join(notice_check)}"
+                + (f"; {'; '.join(problems)}" if problems else "")
+            )
+        print(f"\n{len(links) - failures} of {len(links)} merges pass every check")
+        rejected_failures = audit_rejections(s, client, actions)
+        identity_failures = audit_identity_links(s, client)
+        rename_failures = audit_issuer_renames(s, client, actions)
+        handover_failures = audit_handovers(s, client)
+    engine.dispose()
+    return (
+        1
+        if failures
+        or rejected_failures
+        or identity_failures
+        or rename_failures
+        or handover_failures
+        else 0
+    )
+
+
+def audit_issuer_renames(s, client, actions) -> int:
+    """Recheck every rename confirmed by the issuer, and every rejected one, from raw data."""
+    from app.universe.models import IssuerEvidence
+
+    links = list(
+        s.execute(
+            select(SegmentLink)
+            .where(SegmentLink.decision.in_(("renamed", "rename_rejected")))
+            .order_by(SegmentLink.symbol, SegmentLink.earlier_last)
+        ).scalars()
+    )
+    print(f"\nRenames confirmed by the issuer, and rejected ones, to audit: {len(links)}\n")
+    failures = 0
+    for link in links:
+        old, new = link.link_id.split(":")[1].split(">")
+        problems, facts = [], []
+        a = s.scalar(
+            select(TickerBar).where(TickerBar.symbol == old, TickerBar.session == link.earlier_last)
+        )
+        b = s.scalar(
+            select(TickerBar).where(TickerBar.symbol == new, TickerBar.session == link.later_first)
+        )
+        if a is None or a.volume == 0 or b is None or b.volume == 0:
+            problems.append("a segment end is not a real trade")
+        gap = max(0, len(trading_days(link.earlier_last, link.later_first)) - 2)
+        if gap > 10:
+            problems.append(f"{gap} sessions apart")
+        ratio = 1.0
+        for x in actions:
+            when = x.ex_date or x.process_date
+            if (
+                x.action_type in ("forward_split", "reverse_split", "unit_split")
+                and x.symbol in (old, new)
+                and when
+                and link.earlier_last < when <= link.later_first
+                and x.old_rate
+                and x.new_rate
+            ):
+                ratio *= x.new_rate / x.old_rate
+        price = b.close / (a.close / ratio) if a and b and a.close else None
+        price_ok = price is not None and PRICE_LOW <= price <= PRICE_HIGH
+        company = sh.submissions(client, link.issuer_before)
+        notices = sorted(
+            f"{form} {filed}"
+            for form, filed, _ in (company.filings if company else ())
+            if form.startswith("25")
+            and link.earlier_last - timedelta(days=45) <= filed < link.later_first
+        )
+        merger = [
+            x.process_date
+            for x in actions
+            if x.acquiree_symbol == old
+            and x.action_type.endswith("merger")
+            and x.process_date
+            and link.earlier_last - timedelta(days=7)
+            <= x.process_date
+            <= link.later_first + timedelta(days=30)
+        ]
+        if link.decision == "renamed":
+            owners = {
+                h.security_id
+                for h in s.execute(
+                    select(TickerHistory).where(
+                        (
+                            (TickerHistory.symbol == old)
+                            & (TickerHistory.valid_to == link.earlier_last)
+                        )
+                        | (
+                            (TickerHistory.symbol == new)
+                            & (TickerHistory.valid_from == link.later_first)
+                        )
+                    )
+                ).scalars()
+            }
+            if len(owners) != 1:
+                problems.append(f"segments belong to {len(owners)} securities")
+            sides = {}
+            for symbol in (old, new):
+                rows = [
+                    e
+                    for e in s.execute(
+                        select(IssuerEvidence).where(
+                            IssuerEvidence.symbol == symbol,
+                            IssuerEvidence.cik == link.issuer_before,
+                            IssuerEvidence.how == "cover_page",
+                        )
+                    ).scalars()
+                    if abs(
+                        (e.filed - (link.earlier_last if symbol == old else link.later_first)).days
+                    )
+                    <= 120
+                ]
+                sides[symbol] = any(
+                    sh.cover_page_symbol(client.cover_text(e.url) or "", symbol) for e in rows
+                )
+            if not all(sides.values()):
+                problems.append(f"cover page of CIK {link.issuer_before} not re-read for {sides}")
+            if not price_ok:
+                problems.append(f"price ratio {price}")
+            if notices:
+                problems.append(f"delisting notice {notices}")
+            if merger:
+                problems.append(f"Alpaca merger {merger}")
+        else:
+            if not price_ok:
+                facts.append(f"price ratio {price if price is None else round(price, 3)}")
+            facts += [f"delisting notice {n}" for n in notices]
+            facts += [f"Alpaca merger {m}" for m in merger]
+            if not facts:
+                problems.append("no fact re-established that keeps them apart")
+        failures += bool(problems)
+        print(
+            f"{'FAIL' if problems else 'ok  '} {link.decision:15} {old} {link.earlier_last} -> "
+            f"{new} {link.later_first}: {gap} sessions apart, CIK {link.issuer_before}, "
+            f"price ratio {'n/a' if price is None else f'{price:.3f}'}"
+            + (f"; {'; '.join(facts)}" if facts else "")
+            + (f"; {'; '.join(problems)}" if problems else "")
+        )
+    print(f"\n{len(links) - failures} of {len(links)} rename decisions pass every check")
+    return failures
+
+
+def audit_identity_links(s, client) -> int:
+    """Recheck every documented identity exception from raw data (see the module docstring)."""
+    print(f"\nDocumented identity exceptions to audit: {len(CURATED_IDENTITY_LINKS)}\n")
+    failures = 0
+    for link in CURATED_IDENTITY_LINKS:
+        problems = []
+        for q in link.quotes:
+            if " ".join(q.text.split()) not in sh.plain_text(client.get(q.url)):
+                problems.append(f"quote not found in {q.url}")
+        old = s.scalar(
+            select(TickerBar).where(
+                TickerBar.symbol == link.old_symbol, TickerBar.session == link.old_last
+            )
+        )
+        new = s.scalar(
+            select(TickerBar).where(
+                TickerBar.symbol == link.new_symbol, TickerBar.session == link.new_first
+            )
+        )
+        if old is None or old.volume == 0 or new is None or new.volume == 0:
+            problems.append("a segment end is not a real trade")
+        between = [
+            (b.symbol, b.session)
+            for b in s.execute(
+                select(TickerBar).where(
+                    TickerBar.symbol.in_((link.old_symbol, link.new_symbol)),
+                    TickerBar.session > link.old_last,
+                    TickerBar.session < link.new_first,
+                )
+            ).scalars()
+            if b.volume > 0 or b.trade_count > 0
+        ]
+        if between:
+            problems.append(f"real trades in between: {between[:3]}")
+        owners = {
+            h.security_id
+            for h in s.execute(
+                select(TickerHistory).where(
+                    (
+                        (TickerHistory.symbol == link.old_symbol)
+                        & (TickerHistory.valid_to == link.old_last)
+                    )
+                    | (
+                        (TickerHistory.symbol == link.new_symbol)
+                        & (TickerHistory.valid_from == link.new_first)
+                    )
+                )
+            ).scalars()
+        }
+        if len(owners) != 1:
+            problems.append(f"segments belong to {len(owners)} securities, not one")
+        for sid in owners:
+            issuer = s.get(SecurityIssuer, sid)
+            if issuer is None or issuer.cik != link.cik:
+                problems.append(f"id {sid} issuer {issuer.cik if issuer else None}, not {link.cik}")
+        company = sh.submissions(client, link.cik)
+        if company is None:
+            problems.append(f"filing list of CIK {link.cik} not cached")
+            notices = []
+        else:
+            notices = sorted(
+                f"{form} {filed}"
+                for form, filed, _ in company.filings
+                if form.startswith(("25", "15")) and link.old_last <= filed <= link.new_first
+            )
+            if notices:
+                problems.append(f"filed in between: {notices}")
+        # Same shares, not only the same company: Alpaca (independent of SEC) records the
+        # ticker change of this security between the two segments.
+        renames = [
+            a
+            for a in s.execute(
+                select(CorporateAction).where(
+                    CorporateAction.action_type == "name_change",
+                    CorporateAction.old_symbol == link.old_symbol,
+                    CorporateAction.new_symbol == link.new_symbol,
+                )
+            ).scalars()
+            if a.process_date and link.old_last < a.process_date <= link.new_first
+        ]
+        if not renames:
+            problems.append("no Alpaca name change between the two tickers in between")
+        gap = max(0, len(trading_days(link.old_last, link.new_first)) - 2)
+        failures += bool(problems)
+        print(
+            f"{'FAIL' if problems else 'ok  '} {link.old_symbol} {link.old_last} -> "
+            f"{link.new_symbol} {link.new_first}: {gap} sessions without a trade; close "
+            f"{old.close if old else None} -> {new.close if new else None}; one security: "
+            f"{len(owners) == 1}; issuer {link.cik}; Form 25/15 in between: "
+            f"{len(notices) if company else 'not read'}; Alpaca name change "
+            f"{', '.join(str(a.process_date) for a in renames) or 'none'}"
+            + (f"; {'; '.join(problems)}" if problems else "")
+        )
+    print(
+        f"\n{len(CURATED_IDENTITY_LINKS) - failures} of {len(CURATED_IDENTITY_LINKS)} "
+        "identity exceptions pass every check"
+    )
+    return failures
+
+
+def audit_rejections(s, client, actions) -> int:
+    """For every candidate kept separate, re-establish a fact from raw data that rules it out."""
+    links = list(
+        s.execute(
+            select(SegmentLink)
+            .where(SegmentLink.decision == "kept_separate")
+            .order_by(SegmentLink.symbol, SegmentLink.earlier_last)
+        ).scalars()
+    )
+    print(f"\nRejected merge candidates to audit: {len(links)}\n")
+    failures = 0
+    for link in links:
+        facts = []
+        gap = max(0, len(trading_days(link.earlier_last, link.later_first)) - 2)
+        if gap > 250:
+            facts.append(f"gap {gap} sessions")
+        before = s.scalar(
+            select(TickerBar).where(
+                TickerBar.symbol == link.symbol, TickerBar.session == link.earlier_last
+            )
+        )
+        after = s.scalar(
+            select(TickerBar).where(
+                TickerBar.symbol == link.symbol, TickerBar.session == link.later_first
+            )
+        )
+        owners_a = {
+            h.security_id
+            for h in s.execute(
+                select(TickerHistory).where(
+                    TickerHistory.symbol == link.symbol, TickerHistory.valid_to == link.earlier_last
+                )
+            ).scalars()
+        }
+        owners_b = {
+            h.security_id
+            for h in s.execute(
+                select(TickerHistory).where(
+                    TickerHistory.symbol == link.symbol,
+                    TickerHistory.valid_from == link.later_first,
+                )
+            ).scalars()
+        }
+        ratio = 1.0
+        for a in actions:
+            when = a.ex_date or a.process_date
+            if (
+                a.action_type in ("forward_split", "reverse_split", "unit_split")
+                and a.symbol == link.symbol
+                and when
+                and link.earlier_last < when <= link.later_first
+                and a.old_rate
+                and a.new_rate
+            ):
+                ratio *= a.new_rate / a.old_rate
+        if before and after and before.close:
+            price = after.close / (before.close / ratio)
+            if not PRICE_LOW <= price <= PRICE_HIGH:
+                facts.append(f"price ratio {price:.2f}")
+        for sid in owners_a:
+            issuer = s.get(SecurityIssuer, sid)
+            if issuer is None:
+                continue
+            feed = client.company(
+                issuer.cik, min(last_trade(s, sid) + timedelta(days=120), SCOPE_END), "25"
+            )
+            if feed is None:
+                facts.append(f"issuer {issuer.cik}: notice list NOT READ")
+            else:
+                found = sorted(
+                    f"{f.form} {f.filed}"
+                    for f in feed.filings
+                    if f.form.startswith("25")
+                    and link.earlier_last - timedelta(days=45) < f.filed < link.later_first
+                )
+                if found:
+                    facts.append(f"issuer {issuer.cik} delisting notice {found[0]}")
+            for other in owners_b:
+                theirs = s.get(SecurityIssuer, other)
+                if theirs and theirs.cik != issuer.cik:
+                    facts.append(f"different issuers {issuer.cik} / {theirs.cik}")
+        for a in actions:
+            if (
+                a.acquiree_symbol == link.symbol
+                and a.process_date
+                and link.earlier_last <= a.process_date < link.later_first
+                and a.action_type.endswith("merger")
+            ):
+                facts.append(f"Alpaca {a.action_type} {a.process_date}")
+        heads = {
+            s.scalar(
+                select(TickerHistory.valid_from)
+                .where(TickerHistory.security_id == other)
+                .order_by(TickerHistory.valid_from)
+            )
+            for other in owners_b
+        }
+        if link.later_first not in heads:
+            facts.append("later segment is inside another security's history")
+        if "SEC filing: redeemed" in link.reason:
+            facts.append("fund liquidation quoted from SEC filings before the restart")
+        same = bool(owners_a & owners_b)
+        supported = [f for f in facts if "NOT READ" not in f]
+        good = supported and not same
+        failures += not good
+        print(
+            f"{'ok  ' if good else 'FAIL'} {link.symbol:6} "
+            f"{link.earlier_last} -> {link.later_first} "
+            f"(ids {sorted(owners_a)} / {sorted(owners_b)}): "
+            f"{'; '.join(facts) or 'NO FACT'}"
+        )
+    print(f"\n{len(links) - failures} of {len(links)} rejections independently supported")
+    return failures
+
+
+def audit_handovers(s, client) -> int:
+    """Recheck every ticker handover from raw data (see the module docstring)."""
+    window = 10
+    days = trading_days(date(2015, 12, 1), SCOPE_END)
+    position = {d: i for i, d in enumerate(days)}
+
+    def apart(a, b):  # sessions from a to b (signed), on the exchange calendar
+        return position.get(b, 0) - position.get(a, 0)
+
+    real: dict[str, list[date]] = {}
+    for b in s.execute(select(TickerBar).order_by(TickerBar.session)).scalars():
+        if b.volume > 0 or b.trade_count > 0:
+            real.setdefault(b.symbol, []).append(b.session)
+    events = [
+        a
+        for a in s.execute(select(CorporateAction)).scalars()
+        if a.process_date and date(2016, 1, 1) <= a.process_date <= SCOPE_END
+    ]
+    expected: dict[tuple[str, date], str] = {}
+    for a in events:
+        if a.action_type != "name_change" or not a.old_symbol or a.old_symbol == a.new_symbol:
+            continue
+        old_days = [
+            d for d in real.get(a.old_symbol, []) if abs(apart(d, a.process_date)) <= window + 1
+        ]
+        if not old_days:
+            continue
+        last_old = max(old_days)
+        held = real.get(a.new_symbol, [])
+        if not any(d < last_old for d in held) or not any(d > last_old for d in held):
+            continue
+        gone = [
+            e
+            for e in events
+            if abs(apart(e.process_date, a.process_date)) <= window + 1
+            and (
+                (e.action_type.endswith("merger") and e.acquiree_symbol == a.new_symbol)
+                or (
+                    e.action_type == "name_change"
+                    and e.old_symbol == a.new_symbol
+                    and e.new_symbol != a.new_symbol
+                )
+            )
+        ]
+        if gone:
+            cut = min(d for d in held if d > last_old)
+            expected[(a.new_symbol, cut)] = f"rename {a.old_symbol} -> {a.new_symbol}"
+    curated_problems = {}
+    for item in CURATED_HANDOVERS:
+        missing = [
+            q.url
+            for q in item.quotes
+            if " ".join(q.text.split()) not in sh.plain_text(client.get(q.url))
+        ]
+        sessions = real.get(item.symbol, [])
+        between = [d for d in sessions if item.old_last < d < item.new_first]
+        if missing or item.old_last not in sessions or item.new_first not in sessions or between:
+            curated_problems[(item.symbol, item.new_first)] = (
+                f"quotes missing {missing}; real trades between {between}"
+            )
+        expected[(item.symbol, item.new_first)] = "documented exception"
+    history: dict[str, list] = {}
+    for h in s.execute(select(TickerHistory)).scalars():
+        history.setdefault(h.symbol, []).append(h)
+    # Every place the stored securities split one uninterrupted run of a ticker.
+    splits = {}
+    for symbol, items in history.items():
+        items = sorted(items, key=lambda h: h.valid_from)
+        for a, b in pairwise(items):
+            if a.security_id != b.security_id and 0 < apart(a.valid_to, b.valid_from) <= window + 1:
+                splits[(symbol, b.valid_from)] = (a, b)
+    print(f"\nTicker handovers to audit: {len(expected)}\n")
+    failures = 0
+    for key in sorted(expected | dict.fromkeys(splits)):
+        symbol, cut = key
+        problems = []
+        if key in curated_problems:
+            problems.append(curated_problems[key])
+        if key not in expected:
+            problems.append("the securities split this ticker's run, but no handover explains it")
+        pair = splits.get(key)
+        if pair is None:
+            problems.append("the stored securities do not split the run here")
+            failures += 1
+            print(f"FAIL {symbol:5} cut {cut}: {'; '.join(problems)}")
+            continue
+        before, after = pair
+        prior = sorted(
+            (
+                h
+                for items in history.values()
+                for h in items
+                if h.security_id == after.security_id and h.valid_to < cut
+            ),
+            key=lambda h: h.valid_to,
+        )
+        came_from = prior[-1].symbol if prior else ""
+        if expected.get(key, "").startswith("rename") and came_from != expected[key].split()[1]:
+            problems.append(f"new holder's security came from {came_from or 'nothing'}")
+
+        def ciks(sid, sym, first, last):
+            return {
+                e.cik
+                for e in s.execute(
+                    select(IssuerEvidence).where(
+                        IssuerEvidence.security_id == sid,
+                        IssuerEvidence.symbol == sym,
+                        IssuerEvidence.filed >= first,
+                        IssuerEvidence.filed <= last,
+                    )
+                ).scalars()
+            }
+
+        old_side = ciks(before.security_id, symbol, before.valid_from, before.valid_to)
+        new_side = ciks(after.security_id, symbol, cut, after.valid_to)
+        own = ciks(after.security_id, came_from, date(2000, 1, 1), cut) if came_from else set()
+        if old_side and new_side and old_side & new_side and not (new_side - old_side):
+            problems.append(f"same issuer on both sides of the cut: {sorted(old_side)}")
+        if own and new_side and not own & new_side:
+            problems.append(
+                f"new holder's issuer under {symbol} {sorted(new_side)} is not its issuer under "
+                f"{came_from} {sorted(own)}"
+            )
+        for item in CURATED_HANDOVERS:
+            if (item.symbol, item.new_first) == key:
+                if new_side and item.new_cik not in new_side:
+                    problems.append(f"issuer after the cut {sorted(new_side)}, not {item.new_cik}")
+                if old_side and item.old_cik not in old_side:
+                    problems.append(f"issuer before the cut {sorted(old_side)}, not {item.old_cik}")
+                if not new_side:
+                    problems.append("no issuer evidence after the cut")
+        failures += bool(problems)
+        print(
+            f"{'FAIL' if problems else 'ok  '} {symbol:5} cut {cut} ({expected.get(key, '?')}): "
+            f"id {before.security_id} to {before.valid_to} (issuer {sorted(old_side) or 'none'}) | "
+            f"id {after.security_id} from {after.valid_from}, earlier ticker {came_from or '-'} "
+            f"(issuer {sorted(new_side) or 'none'}; "
+            f"under {came_from or '-'}: {sorted(own) or 'none'})"
+            + (f"; {'; '.join(problems)}" if problems else "")
+        )
+    total = len(expected | dict.fromkeys(splits))
+    print(f"\n{total - failures} of {total} handovers pass every check")
+    return failures
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,50 @@
+Alpaca data revision found by the Phase 1b recording (2026-11-27)
+
+The genuine recording (2026-11-27 08:38-10:01 UTC) does not reproduce Stage 1.1 exactly.
+Record and replay agree with each other in every check; the difference against Stage 1.1 comes
+from Alpaca, which changed its historical data. This is a provider revision, not a failure of the
+record/replay mechanism.
+
+When
+  - Phase 1 neutral run, fetched live before 2026-11-26 08:45 UTC: membership and 20 of 21 tables
+    identical to Stage 1.1; only NEE/FTV alpaca_adjusted_close differed (see the Phase 1 results).
+  - Recording #1 (2026-11-27 00:10-01:30), #2 (02:20-03:39) and #3 (08:38-10:01): all three
+    already contain the revised values below, and #1 and #2 have 0 content differences.
+  => Alpaca changed the data between 2026-11-26 08:45 and 2026-11-27 00:10 UTC.
+
+What changed (record database vs Stage 1.1, compared row by row; Stage 1.1 opened immutable)
+  1. Session 2021-04-19 repaired for 504 tickers (ticker_bars) / 505 security rows (security_bars).
+     In Stage 1.1 those bars held only 1-3 trades each (321 with 1, 159 with 2, 24 with 3) and a
+     fraction of the day's volume, e.g.
+       A   2021-04-19  Stage 1.1: volume 174,389, trades 2      now: volume 1,169,739, trades 14,931
+       AA  2021-04-19  Stage 1.1: volume 133,481, trades 2      now: volume 9,785,959, trades 65,795
+     Bars on 2021-04-19 with <= 5 trades: Stage 1.1 520 of 928, now 16 of 928.
+  2. SPY 2019-08-12: close 287.93 -> 288.07, volume 58,248,189 -> 73,497,902.
+  3. NEE and FTV alpaca_adjusted_close are back to the Stage 1.1 values (the 2026-11-26
+     difference is gone); only their 2021-04-19 rows differ now.
+  4. SPWR 2021-04-19 alpaca_adjusted_close: Stage 1.1 empty, now 344.75 (one more session in the
+     split cross-check: 1,903,181 -> 1,903,182 sessions; SPWR 837 -> 838 sessions off).
+
+Effect on the universe
+  - Members: identical in all 59 decisions (100 members each).
+  - 3 decisions have changed rows (2021-04-30, 2021-05-28, 2021-06-30, whose 63-session windows
+    contain 2021-04-19): 844 rows, columns rank and/or median_dollar_volume only; 52 of them are
+    member rows whose rank changed; 0 eligibility changes.
+  - Tables differing from Stage 1.1: batch_symbols, candidates, membership, security_bars,
+    ticker_bars (5 of 21). The other 16 are identical.
+  - Report: 6 lines differ (N-th member on 2021-04-30 615,174,483 -> 617,327,746 in four
+    "added" lines; split cross-check counts; SPWR).
+  - Completeness audit: PASS, output identical to the Stage 1.1 audit.
+
+Still broken in Alpaca's data
+  - Session 2021-10-25: 243 tickers have <= 5 trades (e.g. INFY 4, NLSN 3, GSK 5, CL 4) in both
+    Stage 1.1 and today's data, while AAPL/MSFT/SPY are normal. Not repaired; not investigated
+    further (outside the approved scope).
+
+Why it matters
+  - Asking Alpaca again does not return Stage 1.1's inputs. Stage 1.1's raw responses were never
+    stored, so its parsed rows are the only record of what it received.
+  - A stored response set (this recording) makes a run reproducible regardless of later provider
+    revisions; the replay proved that.
+  - Whether Stage 1.1 should be rebuilt on the repaired 2021-04-19 data is a decision for you; I
+    have not changed Stage 1.1.

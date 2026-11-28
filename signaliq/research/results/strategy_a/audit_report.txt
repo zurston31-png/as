@@ -1,0 +1,196 @@
+READ-ONLY AUDIT of stored simulations. Nothing was simulated or changed.
+
+BUY-AND-HOLD, 2021-06-01 open to 2024-12-31 close (split-adjusted, dividends NOT included; after costs = 5 bp per side)
+  SYMBOL      ENTRY      EXIT     RETURN  AFTER COSTS   MAX DD
+  AAPL       125.07    250.54   +100.32%     +100.12%    31.2%
+  AMD         81.01    120.83    +49.15%      +49.01%    65.4%
+  AMZN       162.18    219.47    +35.32%      +35.19%    56.1%
+  GOOGL      118.71    189.36    +59.51%      +59.36%    44.4%
+  META       330.15    585.79    +77.43%      +77.25%    76.7%
+  MSFT       251.19    421.70    +67.88%      +67.71%    37.5%
+  NVDA        16.27    134.20   +724.83%     +724.01%    66.4%
+  QQQ        335.35    511.23    +52.45%      +52.29%    35.6%
+  SPY        422.58    586.07    +38.69%      +38.55%    25.4%
+  TSLA       209.22    403.74    +92.97%      +92.78%    73.6%
+  Equal-weight portfolio of all 10 (equal dollars at the start, never rebalanced): +129.86%
+
+RUN 1: momentum_breakout v1.0, in_sample 2021-06-01 to 2024-12-31, cost scenario base (5 bp per side)
+  Starting / ending equity  100,000.00 / 138,020.12   total return +38.02%, annualised +9.40%
+  Volatility (annualised)   9.4%   Sharpe ratio (risk-free rate 0) 1.01
+  Exposure                  69.7% of sessions with a position open at the close, 2.58 positions on average
+
+  Trades
+    Trades 62: 31 wins, 31 losses, 0 breakeven   win rate 50.0%
+    Profit factor 3.23   payoff ratio (avg win / avg loss) 3.23
+    Average win 1,776.98 (3.24 R)   average loss -550.53 (-0.97 R)
+    Expectancy 613.23 per trade (1.14 R)
+    Gross profit 55,086.42   gross loss -17,066.30   net 38,020.12   assumed slippage paid 872.62
+    Holding period: mean 37.6 sessions, median 27.0; winners 64.4, losers 10.8
+    Exits: exit_signal 31, period_end 4, stop 19, stop_gap 8   longest losing streak 11
+    Largest wins:
+      NVDA  2023-01-24 -> 2023-08-10   325 sh  net    7,569.09  +14.31 R  (exit_signal)
+      NVDA  2024-01-09 -> 2024-04-22   229 sh  net    5,886.38  +9.99 R  (exit_signal)
+      AMD   2023-11-06 -> 2024-04-05    72 sh  net    3,995.24  +6.97 R  (exit_signal)
+      META  2023-03-16 -> 2023-08-18    43 sh  net    3,450.38  +6.65 R  (exit_signal)
+      TSLA  2024-11-07 -> 2024-12-31    27 sh  net    3,087.41  +4.68 R  (period_end)
+    Largest losses:
+      AAPL  2023-12-06 -> 2024-01-02   111 sh  net     -831.48  -1.46 R  (stop_gap)
+      AAPL  2024-10-16 -> 2024-11-01    74 sh  net     -814.46  -1.21 R  (stop_gap)
+      AMZN  2023-08-07 -> 2023-08-18    78 sh  net     -762.55  -1.29 R  (stop_gap)
+      NVDA  2022-03-30 -> 2022-04-06   204 sh  net     -692.91  -1.27 R  (stop_gap)
+      QQQ   2024-10-15 -> 2024-10-23    53 sh  net     -687.10  -1.02 R  (stop)
+
+  Drawdown
+    Maximum drawdown 13.2% (15,839.91): peak 2021-11-29 -> trough 2023-02-21 (308 sessions), recovered 2023-06-15 after 80 sessions
+
+  By symbol (strategy return = net profit / starting equity; not a stand-alone run)
+    SYMBOL  TRADES  WINS          NET  STRATEGY       B&H  % NET PROFIT  % GROSS PROFIT
+    NVDA         9     5    15,557.70   +15.56%  +724.83%         40.9%           31.6%
+    MSFT         4     4     6,447.62    +6.45%   +67.88%         17.0%           11.7%
+    AMD          5     3     3,793.79    +3.79%   +49.15%         10.0%            9.1%
+    TSLA         5     2     3,330.54    +3.33%   +92.97%          8.8%            9.3%
+    GOOGL        5     3     2,796.58    +2.80%   +59.51%          7.4%            6.7%
+    QQQ          5     3     2,258.92    +2.26%   +52.45%          5.9%            6.6%
+    META         6     3     2,163.23    +2.16%   +77.43%          5.7%            7.2%
+    AAPL         8     3     1,783.79    +1.78%  +100.32%          4.7%            8.0%
+    SPY          9     4     1,181.53    +1.18%   +38.69%          3.1%            6.7%
+    AMZN         6     1    -1,293.59    -1.29%   +35.32%         -3.4%            3.1%
+
+  Dependence on single stocks or trades
+    Best symbol NVDA: 40.9% of net profit; net without it 22,462.42
+    Best trade: 19.9% of net profit; net without it 30,451.03; top 5 trades 63.1%
+    Symbols with net profit 9, with net loss 1
+    Heavily dependent: no (no single symbol or trade carries the result)
+    (Removing a symbol only subtracts its recorded trades; the freed cash and slots are not re-simulated.)
+
+  Integrity
+    Signals 608: 62 taken, 546 not taken (already_in_position 370, no_free_slot 173, open_above_entry_limit 3)
+    Trades stored 62 (run header 62), of which 31 losing
+    One trade per taken signal: True; ending equity = start + all net results: True; equity curve complete: True; trade arithmetic and dates: True
+    Result: PASSED
+
+RUN 2: momentum_breakout v1.0, in_sample 2021-06-01 to 2024-12-31, cost scenario worse (10 bp per side)
+  Starting / ending equity  100,000.00 / 137,417.57   total return +37.42%, annualised +9.27%
+  Volatility (annualised)   9.4%   Sharpe ratio (risk-free rate 0) 0.99
+  Exposure                  69.7% of sessions with a position open at the close, 2.58 positions on average
+
+  Trades
+    Trades 62: 30 wins, 32 losses, 0 breakeven   win rate 48.4%
+    Profit factor 3.18   payoff ratio (avg win / avg loss) 3.40
+    Average win 1,818.45 (3.32 R)   average loss -535.49 (-0.94 R)
+    Expectancy 603.51 per trade (1.12 R)
+    Gross profit 54,553.37   gross loss -17,135.81   net 37,417.57   assumed slippage paid 1,740.07
+    Holding period: mean 37.6 sessions, median 27.0; winners 65.6, losers 11.4
+    Exits: exit_signal 31, period_end 4, stop 18, stop_gap 9   longest losing streak 11
+    Largest wins:
+      NVDA  2023-01-24 -> 2023-08-10   325 sh  net    7,559.18  +14.30 R  (exit_signal)
+      NVDA  2024-01-09 -> 2024-04-22   229 sh  net    5,871.44  +9.97 R  (exit_signal)
+      AMD   2023-11-06 -> 2024-04-05    72 sh  net    3,985.12  +6.96 R  (exit_signal)
+      META  2023-03-16 -> 2023-08-18    43 sh  net    3,440.13  +6.63 R  (exit_signal)
+      TSLA  2024-11-07 -> 2024-12-31    27 sh  net    3,078.06  +4.67 R  (period_end)
+    Largest losses:
+      AAPL  2023-12-06 -> 2024-01-02   111 sh  net     -852.66  -1.49 R  (stop_gap)
+      AAPL  2024-10-16 -> 2024-11-01    73 sh  net     -819.97  -1.23 R  (stop_gap)
+      QQQ   2024-10-15 -> 2024-10-23    53 sh  net     -699.98  -1.04 R  (stop)
+      NVDA  2022-03-30 -> 2022-04-06   203 sh  net     -694.92  -1.28 R  (stop_gap)
+      QQQ   2024-11-07 -> 2024-11-15    50 sh  net     -684.91  -1.04 R  (stop)
+
+  Drawdown
+    Maximum drawdown 13.3% (15,961.67): peak 2021-11-29 -> trough 2023-02-21 (308 sessions), recovered 2023-06-15 after 80 sessions
+
+  By symbol (strategy return = net profit / starting equity; not a stand-alone run)
+    SYMBOL  TRADES  WINS          NET  STRATEGY       B&H  % NET PROFIT  % GROSS PROFIT
+    NVDA         9     5    15,467.69   +15.47%  +724.83%         41.3%           31.8%
+    MSFT         4     4     6,367.30    +6.37%   +67.88%         17.0%           11.7%
+    AMD          5     3     3,765.73    +3.77%   +49.15%         10.1%            9.1%
+    TSLA         5     2     3,298.95    +3.30%   +92.97%          8.8%            9.4%
+    GOOGL        5     2     2,738.26    +2.74%   +59.51%          7.3%            6.6%
+    QQQ          5     3     2,181.86    +2.18%   +52.45%          5.8%            6.5%
+    META         6     3     2,096.09    +2.10%   +77.43%          5.6%            7.2%
+    AAPL         8     3     1,664.97    +1.66%  +100.32%          4.4%            8.0%
+    SPY          9     4     1,009.21    +1.01%   +38.69%          2.7%            6.6%
+    AMZN         6     1    -1,172.49    -1.17%   +35.32%         -3.1%            3.1%
+
+  Dependence on single stocks or trades
+    Best symbol NVDA: 41.3% of net profit; net without it 21,949.88
+    Best trade: 20.2% of net profit; net without it 29,858.39; top 5 trades 64.0%
+    Symbols with net profit 9, with net loss 1
+    Heavily dependent: no (no single symbol or trade carries the result)
+    (Removing a symbol only subtracts its recorded trades; the freed cash and slots are not re-simulated.)
+
+  Integrity
+    Signals 608: 62 taken, 546 not taken (already_in_position 370, no_free_slot 173, open_above_entry_limit 3)
+    Trades stored 62 (run header 62), of which 32 losing
+    One trade per taken signal: True; ending equity = start + all net results: True; equity curve complete: True; trade arithmetic and dates: True
+    Result: PASSED
+
+RUN 3: momentum_breakout v1.0, in_sample 2021-06-01 to 2024-12-31, cost scenario severe (20 bp per side)
+  Starting / ending equity  100,000.00 / 135,548.89   total return +35.55%, annualised +8.85%
+  Volatility (annualised)   9.4%   Sharpe ratio (risk-free rate 0) 0.95
+  Exposure                  69.7% of sessions with a position open at the close, 2.58 positions on average
+
+  Trades
+    Trades 62: 30 wins, 32 losses, 0 breakeven   win rate 48.4%
+    Profit factor 3.02   payoff ratio (avg win / avg loss) 3.22
+    Average win 1,770.85 (3.26 R)   average loss -549.26 (-0.98 R)
+    Expectancy 573.37 per trade (1.07 R)
+    Gross profit 53,125.35   gross loss -17,576.46   net 35,548.89   assumed slippage paid 3,450.80
+    Holding period: mean 37.6 sessions, median 27.0; winners 65.6, losers 11.4
+    Exits: exit_signal 31, period_end 4, stop 17, stop_gap 10   longest losing streak 11
+    Largest wins:
+      NVDA  2023-01-24 -> 2023-08-10   323 sh  net    7,492.97  +14.26 R  (exit_signal)
+      NVDA  2024-01-09 -> 2024-04-22   227 sh  net    5,790.53  +9.92 R  (exit_signal)
+      AMD   2023-11-06 -> 2024-04-05    71 sh  net    3,909.82  +6.92 R  (exit_signal)
+      META  2023-03-16 -> 2023-08-18    43 sh  net    3,419.61  +6.59 R  (exit_signal)
+      TSLA  2024-11-07 -> 2024-12-31    27 sh  net    3,059.35  +4.64 R  (period_end)
+    Largest losses:
+      AAPL  2023-12-06 -> 2024-01-02   110 sh  net     -886.96  -1.57 R  (stop_gap)
+      AAPL  2024-10-16 -> 2024-11-01    72 sh  net     -841.31  -1.28 R  (stop_gap)
+      QQQ   2024-10-15 -> 2024-10-23    52 sh  net     -712.07  -1.08 R  (stop)
+      QQQ   2024-11-07 -> 2024-11-15    50 sh  net     -709.75  -1.08 R  (stop)
+      NVDA  2022-03-30 -> 2022-04-06   202 sh  net     -702.24  -1.30 R  (stop_gap)
+
+  Drawdown
+    Maximum drawdown 13.5% (16,170.13): peak 2021-11-29 -> trough 2023-02-21 (308 sessions), recovered 2023-07-12 after 97 sessions
+
+  By symbol (strategy return = net profit / starting equity; not a stand-alone run)
+    SYMBOL  TRADES  WINS          NET  STRATEGY       B&H  % NET PROFIT  % GROSS PROFIT
+    NVDA         9     5    15,208.99   +15.21%  +724.83%         42.8%           32.2%
+    MSFT         4     4     6,135.86    +6.14%   +67.88%         17.3%           11.5%
+    AMD          5     3     3,641.05    +3.64%   +49.15%         10.2%            9.2%
+    TSLA         5     2     3,258.56    +3.26%   +92.97%          9.2%            9.6%
+    GOOGL        5     2     2,597.35    +2.60%   +59.51%          7.3%            6.7%
+    META         6     3     1,978.51    +1.98%   +77.43%          5.6%            7.2%
+    QQQ          5     3     1,963.60    +1.96%   +52.45%          5.5%            6.4%
+    AAPL         8     3     1,404.90    +1.40%  +100.32%          4.0%            7.9%
+    SPY          9     4       623.81    +0.62%   +38.69%          1.8%            6.3%
+    AMZN         6     1    -1,263.75    -1.26%   +35.32%         -3.6%            3.1%
+
+  Dependence on single stocks or trades
+    Best symbol NVDA: 42.8% of net profit; net without it 20,339.90
+    Best trade: 21.1% of net profit; net without it 28,055.92; top 5 trades 66.6%
+    Symbols with net profit 9, with net loss 1
+    Heavily dependent: no (no single symbol or trade carries the result)
+    (Removing a symbol only subtracts its recorded trades; the freed cash and slots are not re-simulated.)
+
+  Integrity
+    Signals 608: 62 taken, 546 not taken (already_in_position 370, no_free_slot 173, open_above_entry_limit 3)
+    Trades stored 62 (run header 62), of which 32 losing
+    One trade per taken signal: True; ending equity = start + all net results: True; equity curve complete: True; trade arithmetic and dates: True
+    Result: PASSED
+
+COST SCENARIOS COMPARED
+  Same parameters, data and period in every run: True
+                                   base #1        worse #2       severe #3
+  Slippage per side (bp)                 5              10              20
+  Total return                     +38.02%         +37.42%         +35.55%
+  Annualised return                 +9.40%          +9.27%          +8.85%
+  Trades                                62              62              62
+  Win rate                           50.0%           48.4%           48.4%
+  Profit factor                       3.23            3.18            3.02
+  Expectancy ($)                    613.23          603.51          573.37
+  Expectancy (R)                      1.14            1.12            1.07
+  Slippage paid ($)                 872.62        1,740.07        3,450.80
+  Maximum drawdown                   13.2%           13.3%           13.5%
+  Sharpe ratio                        1.01            0.99            0.95
+  Trades identical in every scenario (symbol, entry and exit session): 61 of [62, 62, 62]

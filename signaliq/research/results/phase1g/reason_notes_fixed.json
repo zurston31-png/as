@@ -1,0 +1,70 @@
+{
+ "sha256_before": "d08e272e66c5aa5b7e4f7473fe7b41b93bb671af56bda345fd81dd2146158528",
+ "sha256_after": "7357aa5f7fb9c4efab3ff71d00f7c6714029e6a5c73a232b5980a5c4e5d2b60c",
+ "rows": [
+  {
+   "table": "batch_symbols",
+   "symbol": "EBON",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 641,712,940 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 641,712,940 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "batch_symbols",
+   "symbol": "RLX",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 697,762,110 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 697,762,110 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "batch_symbols",
+   "symbol": "SI",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 638,168,276 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 638,168,276 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "batch_symbols",
+   "symbol": "TKAT",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 659,342,954 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 659,342,954 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "candidates",
+   "symbol": "EBON",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 641,712,940 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 641,712,940 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "candidates",
+   "symbol": "RLX",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 697,762,110 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 697,762,110 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "candidates",
+   "symbol": "SI",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 638,168,276 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 638,168,276 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  },
+  {
+   "table": "candidates",
+   "symbol": "TKAT",
+   "old": "could have been a member on 2021-04-30: dollar-volume bound 659,342,954 >= N-th member 615,174,483",
+   "new": "could have been a member on 2021-04-30: dollar-volume bound 659,342,954 >= N-th member 617,327,746",
+   "decision": "2021-04-30",
+   "hybrid_100th_member_median": 617327746.2800001
+  }
+ ]
+}

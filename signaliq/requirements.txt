@@ -1,0 +1,32 @@
+# SignalIQ - Milestone 1 dependencies.
+#
+# Versions are pinned to the exact set the test suite was run against
+# (Python 3.12), so a fresh install reproduces a known-good environment.
+# Install with:  pip install -r requirements.txt
+
+# Web API
+fastapi==0.163.1
+uvicorn==0.54.0
+# Starlette is pinned explicitly because FastAPI does not cap its version and
+# it provides the test client used by the API tests.
+starlette==1.10.0
+
+# Database and schema migrations
+sqlalchemy==2.0.57
+alembic==1.20.1
+
+# Configuration and schemas
+pydantic==2.14.3
+python-dotenv==1.2.4
+
+# Data handling and validation
+polars==1.44.2
+
+# HTTP client for the Alpaca Market Data API
+httpx==0.28.1
+
+# IANA time zone database (needed on Windows, harmless elsewhere)
+tzdata==2026.6
+
+# Testing
+pytest==9.2.0

@@ -1,0 +1,20 @@
+== response_store_tool verify
+responses: 4; body bytes: 865; fingerprint: 18b8b83bebcc77a5
+  /v2/stocks/bars: 4
+  recorded between 2026-11-27T15:56:38+00:00 and 2026-11-27T15:56:39+00:00
+  HTTP attempts: 4; non-200: 0; no response: 0
+bodies checked: 4; damaged: 0
+RESULT: PASS
+exit 0
+
+== G2 count: attempts logged vs client request log lines
+attempts: 4; request log lines: 4
+
+== per-response body sha256 (raw bodies stay in the store, not in git)
+29bbe5edb586fdecb6370eef2a8c099903eae6ea143fa0572f14fe48e19b94db    446 bytes  request_id f2f76f4786e7425c430c87b36b564b9b  /v2/stocks/bars?adjustment=raw&currency=USD&end=2021-10-25T20%3A00%3A00Z&feed=sip&limit=10000&sort=asc&start=2021-10-25T13%3A30%3A00Z&symbols=SPGI%2CAFL&timeframe=1Min
+c700148960d500511ad0040f8b1c3c6ebbac07572176aff49cfc66b69eec9aee     34 bytes  request_id c2645bcb459c05b34997bb8edd4392df  /v2/stocks/bars?adjustment=raw&currency=USD&end=2021-10-25T23%3A59%3A59Z&feed=iex&limit=10000&sort=asc&start=2021-10-25T00%3A00%3A00Z&symbols=AFL%2CCL%2CINFY%2CSPGI&timeframe=1Day
+ee937cf786e8d31f004df1c32ee0c4dc9df45127602c039b26a763686f2787ff    351 bytes  request_id b581f21616f78e99f2db1480ec185b0f  /v2/stocks/bars?adjustment=raw&currency=USD&end=2022-03-08T21%3A00%3A00Z&feed=sip&limit=10000&sort=asc&start=2022-03-08T14%3A30%3A00Z&symbols=AJG%2CAME&timeframe=1Min
+c700148960d500511ad0040f8b1c3c6ebbac07572176aff49cfc66b69eec9aee     34 bytes  request_id bb99265d207db692bbb617f751fc77e0  /v2/stocks/bars?adjustment=raw&currency=USD&end=2022-03-08T23%3A59%3A59Z&feed=iex&limit=10000&sort=asc&start=2022-03-08T00%3A00%3A00Z&symbols=AJG%2CAME%2CAVB&timeframe=1Day
+
+== store file
+4f157cc873d81628c40ab7be5786d3ebd360fe82b93b0e2ae7e3bb8aea76ffda  data/phase1d_anomaly/alpaca_responses.db

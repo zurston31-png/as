@@ -1,0 +1,21 @@
+Reproducibility of report v5 (research database data/sip_research.db, cache only)
+
+Report SHA-256:
+  run 0: f7904745513b89fd9057f1416c5036f07a1158ae9e4aed4dc11b25381953e27e
+  run 1: f7904745513b89fd9057f1416c5036f07a1158ae9e4aed4dc11b25381953e27e
+  run 2: f7904745513b89fd9057f1416c5036f07a1158ae9e4aed4dc11b25381953e27e
+Run log SHA-256:
+  run 0: 59df47796eea970bc3905142394164993e356521ad2287015400227ebd522dea
+  run 1: 59df47796eea970bc3905142394164993e356521ad2287015400227ebd522dea
+  run 2: 59df47796eea970bc3905142394164993e356521ad2287015400227ebd522dea
+
+run 1 vs run 2 report: byte-identical
+run 1 vs run 2 log: byte-identical
+run 0 (rebuild) vs run 1 report: byte-identical
+
+Network requests in runs 1 and 2:
+    OpenFIGI: 76 of 114 tickers found (requests this run: 0)
+    Wikidata: 60 of 114 tickers have a company item (requests this run: 0)
+    SEC: 2791 cached responses (requests this run: 0, failed: 0)
+
+validation_report.txt in this folder: f7904745513b89fd9057f1416c5036f07a1158ae9e4aed4dc11b25381953e27e

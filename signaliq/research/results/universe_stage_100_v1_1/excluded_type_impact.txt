@@ -1,0 +1,7 @@
+Securities with a conflicting or unknown type: 21
+Of these, would have been a member if treated as common stock: 1
+  id 556 TVIX (unknown, ended): 4 decisions 2020-03-31..2020-06-30; evidence: none
+Members that would have been displaced: 3
+  id 217 FI: 2 decisions
+  id 12 ACN: 1 decisions
+  id 173 EBAY: 1 decisions

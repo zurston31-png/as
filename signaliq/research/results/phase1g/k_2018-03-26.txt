@@ -1,0 +1,79 @@
+K (Kellogg, security 301) on 2018-03-26: investigation from stored data only (no request made)
+
+Question: is the partial-day alert (6 trades against a 20-session median of 20,258) a data defect
+or ordinary trading?
+
+Verdict: LIKELY A PROVIDER DATA DEFECT, NOT CONFIRMED. Status stays "potential".
+  - Every stored indicator points to a defect (auction-only bar), and none points to ordinary
+    trading.
+  - But no stored source is independent of Alpaca's daily bar, so there is no recorded evidence
+    that would meet the "confirmed" standard.
+  - Membership impact: none. The first decision is 2020-01-31, and its 63-session window starts
+    in October 2019, so no decision window contains 2018-03-26.
+
+Evidence for a defect
+  1. The bar looks exactly like the confirmed auction-only defects. Open equals the low and
+     close equals the high (63.59 / 64.13), with 6 trades. The confirmed AFL, SPGI, AJG and AME
+     bars have the same shape: high and low equal to open and close, 3-5 trades. In 2,264 K
+     sessions, open == low and close == high on only 3 days: 2017-02-24 (13,762 trades, a
+     normal day), 2018-03-26 (6 trades) and 2022-03-08 (31 trades; already a systemic alert).
+  2. K is the only security affected that day. Of 753 liquid securities that session, the
+     next-lowest is CEI at 45% of normal, and 99% are above 55%.
+  3. Market and peers were normal. SPY 450,166 trades. GIS, KHC, HSY, MDLZ, CAG, SJM, PEP and
+     KO all traded 66-89% of their previous-day counts (within normal day-to-day variation).
+  4. Nothing in K's own record explains a quiet day.
+     - Trades in the 20 sessions before: lowest 13,620, median 20,258.
+     - The next day: 16,704 trades.
+     - The day's price range was 0.54, below the 20-session minimum of 0.70.
+     - No corporate action for K near that date (the only one stored is the 2023-10-02 KLG
+       spin-off).
+  5. Volume 183,371 with VWAP 64.08 (near the close) fits mostly closing-auction shares.
+
+Evidence for ordinary trading: none found.
+
+Sources checked that cannot confirm
+  - Alpaca monthly bars: they are the sums of the same daily bars. K March 2018 is 72,392,805
+    shares and 464,413 trades in both. The confirmed defect months (AFL and SPGI 2021-10, AJG and
+    AME 2022-03) also add up exactly, so the monthly bars carry the daily defects and are not
+    independent. Over 88,998 ticker-months, 0 have a trade gap above 1%.
+  - Version 2 (Phase 1b, fetched 2026-11-27): identical bar, so not repaired as of that date.
+  - IEX database: holds only 10 symbols (not K), from 2018-11.
+  - No minute bars for K are stored.
+
+What would confirm it (needs approval, not done): one SIP 1-minute request for K on 2018-03-26
+(like Phase 1d). A full day has about 390 minute bars; auction prints only would confirm it.
+
+Raw outputs:
+2018-03-26: liquid securities 753; ratio quantiles p1 0.55 p5 0.69 median 1.06
+lowest 8: [('K', 0.0003), ('CEI', 0.4521), ('WTW', 0.4711), ('ARGX', 0.4809), ('EFX', 0.5046), ('SQM', 0.5432), ('AAXN', 0.5453), ('QTS', 0.5486)]
+SPY [('2018-03-23', 258.015, 186705769, 623865), ('2018-03-26', 265.14, 144878172, 450166), ('2018-03-27', 260.76, 134090487, 538201)]
+GIS [('2018-03-23', 44.21, 10699824, 60847), ('2018-03-26', 45.3, 10042732, 46103), ('2018-03-27', 45.31, 9803400, 56737)]
+KHC [('2018-03-23', 60.03, 7160315, 44299), ('2018-03-26', 61.65, 5961830, 39309), ('2018-03-27', 60.7, 5964922, 38202)]
+HSY [('2018-03-23', 96.06, 1626795, 13986), ('2018-03-26', 98.02, 1193588, 9575), ('2018-03-27', 97.79, 1108923, 10600)]
+MDLZ [('2018-03-23', 40.51, 13345635, 57836), ('2018-03-26', 41.33, 8506161, 47487), ('2018-03-27', 40.91, 7522505, 48953)]
+CAG [('2018-03-23', 35.5, 3639258, 24927), ('2018-03-26', 36.36, 3055366, 17962), ('2018-03-27', 36.3, 2686851, 18821)]
+SJM [('2018-03-23', 118.76, 1532966, 12877), ('2018-03-26', 121.7, 1307847, 8495), ('2018-03-27', 122.41, 1601133, 13314)]
+PEP [('2018-03-23', 106.15, 5758633, 41272), ('2018-03-26', 106.81, 4698650, 32596), ('2018-03-27', 107.64, 5907305, 36896)]
+KO [('2018-03-23', 42.33, 15231573, 76526), ('2018-03-26', 42.69, 12827999, 59665), ('2018-03-27', 42.89, 13117650, 63021)]
+known defects (open, high, low, close, trades):
+  AFL 2021-10-25 (56.69, 56.98, 56.69, 56.98, 3)
+  SPGI 2021-10-25 (450.14, 450.14, 447.37, 447.37, 3)
+  AJG 2022-03-08 (154.48, 154.48, 150.13, 150.13, 5)
+  AME 2022-03-08 (130.41, 130.41, 128.83, 128.83, 3)
+K days with open==low and close==high: [('2017-02-24', 13762), ('2018-03-26', 6), ('2022-03-08', 31)] of 2264
+K trades, 20 sessions before: min 13620 median 20258.0
+K range high-low, 20 sessions before: min 0.70 median 1.32; on 2018-03-26 0.54
+
+monthly bar vs sum of daily bars, ticker-months with >= 20,000 daily trades: 88998
+trade gap share (monthly - sum daily)/monthly: median 0.00000; p99 0.0000; share of months with gap > 1%: 0.0000
+K 2018-02: monthly volume 68,353,706 trades 466,925 | sum of 19 daily bars volume 68,353,706 trades 466,925 | gap volume 0 trades 0
+K 2018-03: monthly volume 72,392,805 trades 464,413 | sum of 21 daily bars volume 72,392,805 trades 464,413 | gap volume 0 trades 0
+K 2018-04: monthly volume 54,385,397 trades 387,561 | sum of 21 daily bars volume 54,385,397 trades 387,561 | gap volume 0 trades 0
+AFL 2021-10: monthly volume 70,992,199 trades 544,278 | sum of 21 daily bars volume 70,992,199 trades 544,278 | gap volume 0 trades 0
+SPGI 2021-10: monthly volume 27,442,310 trades 577,120 | sum of 21 daily bars volume 27,442,310 trades 577,120 | gap volume 0 trades 0
+AJG 2022-03: monthly volume 25,561,357 trades 382,983 | sum of 23 daily bars volume 25,561,357 trades 382,983 | gap volume 0 trades 0
+AME 2022-03: monthly volume 26,762,582 trades 359,119 | sum of 23 daily bars volume 26,762,582 trades 359,119 | gap volume 0 trades 0
+A 2021-04: monthly volume 37,444,520 trades 422,107 | sum of 21 daily bars volume 38,439,870 trades 437,036 | gap volume -995,350 trades -14,929
+AA 2021-04: monthly volume 130,788,286 trades 894,356 | sum of 21 daily bars volume 140,440,764 trades 960,149 | gap volume -9,652,478 trades -65,793
+months with trade gap > 1%: 0 []
+of them in 2018-03: []

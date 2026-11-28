@@ -1,0 +1,54 @@
+Neutral reproduction: unchanged N=100 setup, run into a fresh database (data/phase1_neutral) seeded from Stage 1.1,
+SEC read-only from the Stage 1.1 cache (SIGNALIQ_SEC_OFFLINE=1), code at commit 4584f02.
+
+RESULT: FAIL (not byte for byte). Cause: Alpaca revised its split-adjusted close for two securities.
+
+Neutral reproduction (commit 4584f02): report NOT byte-identical; security_bars fingerprint differs.
+Report sha256: Stage 1.1 run B 24741a6c...e96e96, neutral 794c0231...39b8. 3 lines differ (diff below).
+Tables: 20 of 21 identical; security_bars differs (ab82b29ee18a82d8 -> 910e3c8e45b32607).
+Only column changed: alpaca_adjusted_close (Alpaca's own split-adjusted close, a cross-check column).
+  id 374 NEE: 1213 rows, 2016-01-04..2020-10-26. Old = close/4 (correct for the 4:1 split of 2020-10-27); new = unadjusted close.
+  id 636 FTV: 1075 rows, 2016-07-05..2020-10-08. Old = close x 0.8368 (Vontier spin-off 2020-10-09); new = unadjusted close.
+Arithmetic: -1213 (NEE now off) +1075 (FTV now within) = -138 = 1,758,774 - 1,758,912.
+Direct check through the project's Alpaca client (2026-11-26), adjustment=split, feed=sip:
+  NEE 2020-10-26 302.65, 2020-10-27 75.78 (split NOT applied by Alpaca)
+  FTV 2020-10-08 81.79, 2020-10-09 69.82 (no spin-off factor)
+Use of the column: checks.adjustment_differences and checks.large_jumps (report diagnostics only).
+membership, split_checks and all other tables: identical fingerprints.
+2144c2144
+<   Our split adjustment against Alpaca's split-adjusted close: 1,758,912 of 1,903,181 sessions within 0.1%
+---
+>   Our split adjustment against Alpaca's split-adjusted close: 1,758,774 of 1,903,181 sessions within 0.1%
+2226a2227
+>     id 374 (NEE): 1213 of 2264 sessions off, worst 75.0% on 2016-01-04
+2239d2239
+<     id 636 (FTV): 1075 of 2138 sessions off, worst 19.5% on 2020-03-23
+
+Table fingerprints, Stage 1.1 vs neutral (diff):
+12c12
+< security_bars: 1928996 rows, sha256 ab82b29ee18a82d8 (columns left out: none)
+---
+> security_bars: 1928996 rows, sha256 910e3c8e45b32607 (columns left out: none)
+
+Neutral table fingerprints:
+batch_symbols: 1101 rows, sha256 46d0f9038d473f4a (columns left out: none)
+candidates: 18490 rows, sha256 fa6d31eca65e926e (columns left out: none)
+corporate_actions: 889 rows, sha256 67730ac904cf2127 (columns left out: ['fetched_at'])
+deal_values: 11 rows, sha256 4e5b4c67f7fe092b (columns left out: none)
+exit_evidence: 399 rows, sha256 6624f859e7dabe04 (columns left out: none)
+external_responses: 59007 rows, sha256 dd083732acf86453 (columns left out: ['fetched_at'])
+issuer_evidence: 71720 rows, sha256 0164d15727635eb0 (columns left out: none)
+issuer_sic: 4107 rows, sha256 68ed0468c1226145 (columns left out: none)
+membership: 61124 rows, sha256 78d11433877415bc (columns left out: none)
+monthly_bars: 691046 rows, sha256 c60804f7133b7b6f (columns left out: none)
+securities: 1036 rows, sha256 81fc4b128c23f35a (columns left out: none)
+security_bars: 1928996 rows, sha256 910e3c8e45b32607 (columns left out: none)
+security_issuers: 948 rows, sha256 304c24ce5daebc80 (columns left out: none)
+security_registry: 1088 rows, sha256 c98d619b15b1e0c9 (columns left out: none)
+segment_links: 74 rows, sha256 ba5b3e94201fd78b (columns left out: none)
+sip_research_alembic_version: 1 rows, sha256 2f70064bcd5be351 (columns left out: none)
+spin_offs: 27 rows, sha256 d6821e18388940d5 (columns left out: none)
+split_checks: 384 rows, sha256 1de319621b65bd50 (columns left out: none)
+ticker_bars: 1960141 rows, sha256 9b693ad36675d068 (columns left out: none)
+ticker_history: 1171 rows, sha256 75b0cb7cce4dfcbd (columns left out: none)
+type_evidence: 3134 rows, sha256 bdd23c51163f1707 (columns left out: none)

@@ -1,0 +1,41 @@
+Merges to audit: 21
+
+ok   BACA   2024-08-14 -> 2024-08-30: 11 sessions, 11 filler bars inside, price ratio 0.999, one security: True; issuer 0001869673: notice list read, 0 in gap
+ok   CETUR  2023-04-19 -> 2023-05-16: 18 sessions, 18 filler bars inside, price ratio 1.045, one security: True; issuer 0001936702: notice list read, 0 in gap
+ok   CETUR  2023-05-16 -> 2023-07-05: 32 sessions, 32 filler bars inside, price ratio 0.870, one security: True; issuer 0001936702: notice list read, 0 in gap
+ok   CETUR  2024-04-10 -> 2024-05-06: 17 sessions, 17 filler bars inside, price ratio 0.898, one security: True; issuer 0001936702: notice list read, 0 in gap
+ok   CETUR  2024-05-16 -> 2024-06-04: 11 sessions, 11 filler bars inside, price ratio 0.980, one security: True; issuer 0001936702: notice list read, 0 in gap
+ok   HSACW  2019-07-24 -> 2019-09-12: 34 sessions, 34 filler bars inside, price ratio 0.889, one security: True; no SEC issuer known
+ok   MDGS   2016-01-26 -> 2016-02-11: 11 sessions, 11 filler bars inside, price ratio 0.799, one security: True; issuer 0001618500: notice list read, 0 in gap
+ok   NOVVW  2022-09-29 -> 2022-10-20: 14 sessions, 14 filler bars inside, price ratio 0.762, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2022-12-13 -> 2023-01-03: 12 sessions, 12 filler bars inside, price ratio 1.107, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2023-01-13 -> 2023-02-02: 12 sessions, 12 filler bars inside, price ratio 1.923, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2023-05-04 -> 2023-05-22: 11 sessions, 11 filler bars inside, price ratio 0.695, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2023-10-05 -> 2023-11-02: 19 sessions, 19 filler bars inside, price ratio 0.840, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2023-11-10 -> 2023-11-29: 11 sessions, 11 filler bars inside, price ratio 1.900, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2024-01-08 -> 2024-02-23: 31 sessions, 31 filler bars inside, price ratio 1.018, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2024-02-23 -> 2024-03-15: 14 sessions, 14 filler bars inside, price ratio 0.969, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2024-06-25 -> 2024-07-31: 24 sessions, 24 filler bars inside, price ratio 1.333, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   NOVVW  2024-08-05 -> 2024-08-23: 13 sessions, 13 filler bars inside, price ratio 0.971, one security: True; issuer 0001858028: notice list read, 0 in gap
+ok   SCPX   2024-06-14 -> 2024-08-02: 32 sessions, 32 filler bars inside, price ratio 0.337 after splits x0.005, one security: True; issuer 0001476963: notice list read, 0 in gap
+ok   SHLD   2021-08-17 -> 2021-09-02: 11 sessions, 11 filler bars inside, price ratio 1.008, one security: True; no SEC issuer known
+ok   SMMC   2019-10-29 -> 2019-11-19: 14 sessions, 14 filler bars inside, price ratio 1.000, one security: True; issuer 0001774155: notice list read, 0 in gap
+ok   WDRW   2016-03-11 -> 2016-04-07: 17 sessions, 17 filler bars inside, price ratio 1.171, one security: True; no SEC issuer known
+
+21 of 21 merges pass every check
+
+Rejected merge candidates to audit: 11
+
+ok   CHK    2020-06-26 -> 2021-02-10 (ids [12] / [81]): price ratio 3.80; issuer 0000895126 delisting notice 25-NSE 2020-07-20
+ok   CRC    2020-07-15 -> 2020-10-28 (ids [14] / [77]): price ratio 12.71; issuer 0001609253 delisting notice 25-NSE 2020-07-31
+ok   DO     2020-04-24 -> 2022-03-30 (ids [18] / [94]): gap 486 sessions; price ratio 7.99; issuer 0000949039 delisting notice 25-NSE 2020-05-12
+ok   FSBC   2020-04-30 -> 2021-05-05 (ids [69] / [85]): gap 254 sessions; issuer 0001667939 delisting notice 25-NSE 2020-04-30; different issuers 0001667939 / 0001275168; Alpaca cash_merger 2020-05-01; Alpaca stock_and_cash_merger 2020-05-01; Alpaca stock_merger 2020-05-01
+ok   HTZ    2020-10-29 -> 2021-11-09 (ids [31] / [89]): gap 258 sessions; price ratio 14.70; issuer 0001657853 delisting notice 25-NSE 2020-10-30
+ok   MON    2018-06-06 -> 2021-03-16 (ids [38] / [82]): gap 697 sessions; price ratio 0.08; issuer 0001110783 delisting notice 25-NSE 2018-06-07; different issuers 0001110783 / 0001828325
+ok   OILD   2016-09-07 -> 2017-03-27 (ids [68] / [70]): fund liquidation quoted from SEC filings before the restart
+ok   OILD   2020-03-27 -> 2021-11-09 (ids [70] / [90]): gap 408 sessions; fund liquidation quoted from SEC filings before the restart
+ok   RATE   2017-11-08 -> 2022-11-14 (ids [46] / [95]): gap 1261 sessions; price ratio 2.21; issuer 0001518222 delisting notice 25-NSE 2017-11-09; different issuers 0001518222 / 0001432353; later segment is inside another security's history
+ok   SHLD   2018-10-23 -> 2020-11-06 (ids [52] / [78]): gap 513 sessions; price ratio 70.35; issuer 0001310067 delisting notice 25-NSE 2018-11-15
+ok   SHLD   2021-10-08 -> 2023-09-14 (ids [78] / [100]): gap 484 sessions; fund liquidation quoted from SEC filings before the restart
+
+11 of 11 rejections independently supported

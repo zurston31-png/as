@@ -1,0 +1,6 @@
+Ended securities: 153
+Confidence labels: {'lower confidence (one source)': 38, 'two independent sources': 87, 'unresolved': 28}
+Value basis: {'none': 71, 'stated_cash': 52, 'deal_terms': 11, 'assumed_zero': 19}
+Values presented as payouts (stated cash or verified deal terms): 63
+Zero values that are assumptions (event confirmed, recovery not confirmed): 19
+Problems: 0

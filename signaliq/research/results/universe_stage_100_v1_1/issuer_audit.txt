@@ -1,0 +1,25 @@
+1. CACHE COMPLETENESS
+  Issuer step replayed from the cache: requests to SEC 0
+  Answers needed but not cached: 0
+  Securities whose replayed evidence differs from the stored evidence: 0
+
+2. EVIDENCE
+  Evidence rows: 71720; kinds {'cover_page': 71585, 'form25': 97, 'full_text': 38}
+  Cover-page runs (security, ticker, company): 1019; ends re-read and listing the ticker: 2023
+  Own-filing evidence re-read, the company naming the ticker as its own: 38 of 38
+  Delisting notices re-read, a Form 25 in the company's own list near the last trade and naming it as the issuer: 97 of 97
+  Issuers at the last trade: 948; resting on a kind other than cover page, Form 25 or own filing: 0
+  Problems: 0
+
+3. MEMBERSHIP DECISIONS
+  Member decisions: 5900; without an issuer: 0
+  Member or blank-check decisions whose issuer rests on a later document: 198
+
+4. SIC AND BLANK-CHECK COMPANIES
+  SIC rows for a company that is not an issuer of that security: 0
+  Blank-check exclusions not re-derived from the SIC on file by then: 0; members that were blank-check companies then: 0
+
+5. FINGERPRINT
+  issuer_evidence: 71720 rows, sha256 7a037ec50c449f21
+
+RESULT: PASS

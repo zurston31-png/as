@@ -1,0 +1,6 @@
+request 1: ok, 1 page(s), 4 bars
+request 2: ok, 1 page(s), 0 bars
+request 3: ok, 1 page(s), 3 bars
+request 4: ok, 1 page(s), 0 bars
+distinct requests sent: 4; all equal to an approved URL: True
+store sha256 4f157cc873d81628c40ab7be5786d3ebd360fe82b93b0e2ae7e3bb8aea76ffda

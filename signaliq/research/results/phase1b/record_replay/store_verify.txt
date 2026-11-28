@@ -1,0 +1,6 @@
+responses: 2095; body bytes: 1900477670; fingerprint: 61544d16fc7e61e4
+  /v1/corporate-actions: 106
+  /v2/stocks/bars: 1989
+  recorded between 2026-11-27T08:38:02+00:00 and 2026-11-27T10:01:59+00:00
+bodies checked: 2095; damaged: 0
+RESULT: PASS

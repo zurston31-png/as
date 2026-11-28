@@ -1,0 +1,12 @@
+v5 validation batch: 66 ended securities
+  comparable (all answers cached for both): 66
+  not comparable yet (an answer not cached): 0
+  findings unchanged: 66
+  findings changed: 0
+
+Stage 1 (stage database): 158 ended securities
+  comparable (all answers cached for both): 110
+  not comparable yet (an answer not cached): 48
+  findings unchanged: 110
+  findings changed: 0
+

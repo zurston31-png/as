@@ -1,0 +1,94 @@
+{
+ "format": "signaliq-research-archive/1",
+ "source": "alpaca_responses.db",
+ "schema": [
+  "CREATE TABLE responses ( key TEXT PRIMARY KEY, path TEXT NOT NULL, params TEXT NOT NULL, status INTEGER NOT NULL, content_type TEXT, body BLOB NOT NULL, body_sha256 TEXT NOT NULL, body_bytes INTEGER NOT NULL, request_id TEXT, fetched_at TEXT NOT NULL)",
+  "CREATE TABLE store_meta (name TEXT PRIMARY KEY, value TEXT NOT NULL)"
+ ],
+ "tables": {
+  "responses": {
+   "columns": [
+    "key",
+    "path",
+    "params",
+    "status",
+    "content_type",
+    "body",
+    "body_sha256",
+    "body_bytes",
+    "request_id",
+    "fetched_at"
+   ],
+   "rows": 2095,
+   "fingerprint": "8830a672371352e2",
+   "fingerprint_all_columns": "e3a262f5fcb24fe7"
+  },
+  "store_meta": {
+   "columns": [
+    "name",
+    "value"
+   ],
+   "rows": 2,
+   "fingerprint": "4e5bf22d3a365133",
+   "fingerprint_all_columns": "4e5bf22d3a365133"
+  }
+ },
+ "files": [
+  {
+   "file": "0001-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 436,
+   "bytes": 79511310,
+   "sha256": "44d31a1b6fd32641ff5e2c27e518cefd5a046d9445c00f28344e2af705ee7422"
+  },
+  {
+   "file": "0002-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 293,
+   "bytes": 79613210,
+   "sha256": "a6fd5728ab2b52f37a8290bf753d93553b3d6eaec48de57ceab44f2ac18bbb5a"
+  },
+  {
+   "file": "0003-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 304,
+   "bytes": 79434603,
+   "sha256": "d57e63be64396806cd0ef24f0e6594ea7ef45fbc775ecce707c4338b69eb1438"
+  },
+  {
+   "file": "0004-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 289,
+   "bytes": 79628725,
+   "sha256": "7e8daadd2c48d0b67432282eaeeb307ae544f0bfa6c4488eaabe5ea240290691"
+  },
+  {
+   "file": "0005-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 305,
+   "bytes": 79448137,
+   "sha256": "8652743486c674b6b576cf553cc24e910b940098beddcc8dbd76a6dcd9a8a666"
+  },
+  {
+   "file": "0006-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 310,
+   "bytes": 79449527,
+   "sha256": "8ebf3dbc3d16763e893bb0519f381a525015492391d833d22262ccacf06d0154"
+  },
+  {
+   "file": "0007-responses.jsonl.gz",
+   "table": "responses",
+   "rows": 158,
+   "bytes": 44325913,
+   "sha256": "a586907b140632804d19e20814322d2f9771012101f5872eec7e23eb0f919fa5"
+  },
+  {
+   "file": "0008-store_meta.jsonl.gz",
+   "table": "store_meta",
+   "rows": 2,
+   "bytes": 113,
+   "sha256": "50a8b379110930783968c46e08e7bc2690cbf625d853ddbcbc5e12c0cf1ef9e9"
+  }
+ ]
+}
