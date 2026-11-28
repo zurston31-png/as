@@ -16,7 +16,8 @@ repaired or excluded:
 Half trading days (scheduled 13:00 closes) are tagged; on those days liquid securities trade
 about 35-60% of normal, far above the 10% line, so they do not alert by themselves.
 Alerts are potential anomalies. A defect is *confirmed* only by a reviewed entry
-(``--confirmed`` TSV: session, security_id or *, evidence) backed by recorded evidence.
+(``--confirmed`` TSV: session, security_id, evidence) backed by recorded evidence, one row per
+bar: there is no session-wide confirmation.
 
     python scripts/audit_partial_days.py --db DB [--confirmed FILE] [--out alerts.tsv]
 """
@@ -106,7 +107,7 @@ def alerts(db: sqlite3.Connection) -> tuple[list[dict], dict[str, int]]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", type=Path, required=True)
-    parser.add_argument("--confirmed", type=Path)
+    parser.add_argument("--confirmed", type=Path, help="TSV: session, security_id, evidence")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     db = sqlite3.connect(f"file:{args.db.resolve().as_posix()}?mode=ro", uri=True)
@@ -118,10 +119,7 @@ def main() -> int:
                 confirmed[(row["session"], row["security_id"])] = row["evidence"]
     for a in found:
         a["status"] = (
-            "confirmed"
-            if (a["session"], str(a["security_id"])) in confirmed
-            or (a["session"], "*") in confirmed
-            else "potential"
+            "confirmed" if (a["session"], str(a["security_id"])) in confirmed else "potential"
         )
     print(f"Partial-day audit of {args.db.name} (read-only)")
     print(

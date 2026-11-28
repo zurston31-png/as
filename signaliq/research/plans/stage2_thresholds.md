@@ -197,3 +197,61 @@ securities, a loss of volume with normal trade counts, or a loss on every securi
 also moves the baseline. There is no news data, so "real quiet day" vs "missing data" for an
 isolated alert is a human judgment. The numbers (1,000 / 20 / 10% / 5% / 10 / 3x) are part of
 what you approve.
+
+## G1 + G3 together: final wording proposed after Phase 1g
+
+**Not adopted.** This replaces G1 and G3 above with one gate if you accept it.
+Evidence: `research/results/phase1g/README.md`, section 4.
+
+**How the two detectors relate.** Both use the same liquidity baseline: the security's median
+trade count over the 20 sessions before the bar is at least 1,000, with missing sessions
+counting as 0. Every G1 bar (5 trades or fewer) is therefore below 0.5% of normal, which also
+makes it a G3 alert (below 10%). On Stage 1.1, all **767** G1 bars are among the **1,472** G3
+alerts. The two answer different questions:
+
+| | G1: near-empty bar | G3: partial-loss alert |
+| --- | --- | --- |
+| Catches | bars holding only auction prints (5 trades or fewer) | bars that lost most of their trades (below 10%), including near-empty ones |
+| Strength | a precise signature; on the one day with known truth, 499 of 499 were defects | wider reach: 705 more bars on Stage 1.1 (687 on the defect days with 6-2,960 trades, 18 elsewhere, including K 2018-03-26 with 6 trades) |
+| Weakness | misses partial losses (on 2021-10-25 it saw 221 of the 456 G3 alerts; on 2022-03-08, 47 of 499) | more alerts that are real quiet trading (17 of the 18 elsewhere look that way) |
+
+So G1 is the high-confidence tier inside G3, not a separate check. Keeping it as a tier tells
+the reviewer which alerts already have the defect signature.
+
+**Proposed final wording**
+
+> **G-data.** For every bar of a liquid security (20-session median of at least 1,000 trades,
+> missing sessions counted as 0), the data-quality audit raises an alert when the bar's trades are
+> below **10%** of that median. Alerts with **5 trades or fewer** are tier 1 (*near-empty*); the
+> rest are tier 2 (*partial loss*). Each alert is labelled `systemic` (at least 5% of liquid
+> securities, and at least 10, on the same session), `after_volume_spike` (20-session median above
+> 3x the median of the 60 sessions before), `last_bar` or `isolated`, and half trading days are
+> tagged.
+>
+> Every alert carries exactly one status:
+> - `potential`: the default. Nothing is ever promoted from it automatically.
+> - `confirmed`: only through a reviewed row for that **one bar** (session, security_id, evidence)
+>   that names recorded evidence: a provider revision held in a response store, or stored
+>   intraday data showing the missing trades. A label, a tier, a pattern or a session-wide rule
+>   never confirms a bar.
+> - `reviewed_normal`: only through a reviewed row for that one bar giving the reason (for example
+>   decay after a volume spike).
+>
+> The gate passes when every alert is `confirmed` with an approved treatment, or `reviewed_normal`,
+> or `potential` with the approved treatment *kept and flagged*, and every result that uses an
+> affected decision says so. Treatments: kept and flagged; excluded from the median; replaced
+> from a named, recorded source. Any treatment other than *kept and flagged* creates a new
+> dataset version and needs approval. The numbers (1,000 / 20 / 10% / 5 trades / 5% / 10 / 3x /
+> 60) are part of what is approved.
+
+**Measured state.**
+
+| Dataset | Tier 1 | Tier 2 | confirmed | potential | reviewed_normal | Gate today |
+| --- | --- | --- | --- | --- | --- | --- |
+| Stage 1.1 | 767 | 705 | 503 | 969 | 0 | fails (no review rows yet) |
+| Hybrid | 268 | 705 | 4 | 969 | 0 | fails (no review rows yet) |
+
+**What it cannot see** (stated in every report that uses it): losses milder than about 90%;
+lost volume with a normal trade count; illiquid securities; a loss on every security for many
+days, which moves the baseline. Monthly bars cannot cross-check daily bars, because Alpaca's
+monthly bars are sums of the same daily bars and carry the same defects.

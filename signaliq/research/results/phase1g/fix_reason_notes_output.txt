@@ -1,0 +1,3 @@
+fixed 8 notes: batch_symbols.EBON, batch_symbols.RLX, batch_symbols.SI, batch_symbols.TKAT, candidates.EBON, candidates.RLX, candidates.SI, candidates.TKAT
+hybrid sha256 before d08e272e66c5aa5b7e4f7473fe7b41b93bb671af56bda345fd81dd2146158528
+hybrid sha256 after  7357aa5f7fb9c4efab3ff71d00f7c6714029e6a5c73a232b5980a5c4e5d2b60c

@@ -16,9 +16,45 @@ One version prefix per dataset, never overwritten:
 | `sip_research.db` (validation batch v2) | export | ~0.4 GB (estimate) |
 | Phase 1b raw responses (dataset version 2) | 8 files + manifest | 0.5 GB |
 | Phase 1d anomaly responses | export | <1 MB |
-| Hybrid dataset (version 3, when approved) | export | ~0.2 GB (estimate) |
+| Hybrid dataset (version 3) + its replacement log | export + `replacements.json` | ~0.2 GB (estimate) |
+
+**Dependencies: back these up together, in the same export date.**
+- **Hybrid + Stage 1.1:** the hybrid keeps no SEC answers of its own and reads them from Stage
+  1.1, its read-only parent. A hybrid restore without Stage 1.1 cannot rerun its stage.
+- **Version 2 + the Phase 1b store:** version 2's database is rebuilt from the Phase 1b store,
+  starting from Stage 1.1, so it needs both.
+- F4 for the hybrid restores both, then checks the hybrid's fingerprints with Stage 1.1 as the
+  parent.
 
 Layout: `<bucket>/<dataset>/<export date>/...`, for example `stage_1_1/2026-11-28/0001-batch_symbols.jsonl.gz`.
+
+## Setup steps, in order (you do 1-6; I do 7 onward)
+
+1. **Choose** A (Backblaze B2) or B (AWS S3), and **Governance** or Compliance retention (see
+   "Retention"). The recommendation is Governance, **365 days**.
+2. **Create the bucket** with the settings in table A or B below. Object Lock can only be turned
+   on when the bucket is created, so do not skip it there.
+3. **Create the restricted credential:**
+   - A: on your own computer, install the B2 command-line tool (v4) and sign in with your master
+     key. Run the `b2 key create` command below; it shows the secret once.
+   - B: create the IAM user `signaliq-archive` with no console access, attach only the policy
+     below, and create one access key.
+4. **Check the credential's permissions** before handing it over:
+   - A: `b2 key list` shows the key restricted to the bucket, with exactly listBuckets,
+     listFiles, readFiles and writeFiles.
+   - B: the IAM user has that single policy and no groups.
+5. **Add the four environment variables** below in a **personal** environment for this
+   repository. Never put them in git, in the chat, in a file in the repository, or in the
+   Default environment.
+6. **Tell me** they are in place. I will then propose allowing exactly one network host (the
+   endpoint), for you to approve.
+7. **I run V1, the safety probe, before any research data.** Every line must give the stated
+   result, or I stop and report.
+8. **I upload one dataset**, download it fresh, and run F4 on the downloaded copy (V2-V4).
+   Disk allows one dataset at a time.
+9. **I record the results** (V5), dataset by dataset. Only the datasets that pass F4 are called
+   durable.
+10. **You make the second, independent copy** (C) with credentials no session sees.
 
 ## The four environment variables (same for A and B)
 
