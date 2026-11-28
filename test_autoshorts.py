@@ -40,3 +40,21 @@ def test_render_vertical_with_audio():
                            capture_output=True, text=True, check=True).stdout.strip()
     assert probe == "1080,1920"
     assert abs(duration(out) - 2.0) < 0.25
+
+
+def test_speak_falls_back_when_a_voice_returns_no_audio(monkeypatch):
+    import edge_tts
+    import autoshorts
+
+    class FakeCommunicate:
+        def __init__(self, text, voice, rate):
+            self.voice = voice
+
+        async def save(self, path):
+            if self.voice == autoshorts.VOICES[0]:
+                raise edge_tts.exceptions.NoAudioReceived("none")
+            Path(path).write_bytes(b"mp3")
+
+    monkeypatch.setattr(edge_tts, "Communicate", FakeCommunicate)
+    paths = autoshorts.speak(["hello"], Path(tempfile.mkdtemp()))
+    assert paths[0].read_bytes() == b"mp3"

@@ -18,7 +18,8 @@ import requests
 from pydantic import BaseModel
 
 STATE = Path(__file__).with_name("posted.json")
-VOICE = "en-US-AndrewMultilingualNeural"  # warmer, more expressive than GuyNeural
+# first voice that returns audio wins; edge-tts sometimes returns nothing for a voice
+VOICES = ["en-US-ChristopherNeural", "en-US-GuyNeural"]
 YT = "https://www.googleapis.com/youtube/v3"
 
 
@@ -139,7 +140,14 @@ def speak(lines, out_dir):
         paths = []
         for i, line in enumerate(lines):
             p = out_dir / f"line{i}.mp3"
-            await edge_tts.Communicate(line, VOICE, rate="+12%").save(str(p))
+            for voice in VOICES:
+                try:
+                    await edge_tts.Communicate(line, voice, rate="+10%").save(str(p))
+                    break
+                except edge_tts.exceptions.NoAudioReceived:
+                    print(f"no audio from {voice}, trying next voice")
+            else:
+                raise RuntimeError("no voice returned audio")
             paths.append(p)
         return paths
     return asyncio.run(run())
