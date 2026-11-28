@@ -3,7 +3,8 @@ rule: trades < 10% of the 20-session median, for securities with a median >= 100
 liquid security-sessions examined: 1833958; alerts: 1472
   after_volume_spike   potential  9
   isolated             potential  9
-  systemic             potential  1454
+  systemic             confirmed  503
+  systemic             potential  951
   systemic session 2021-04-19: 499 of 893 liquid securities
   systemic session 2021-10-25: 456 of 901 liquid securities
   systemic session 2022-03-08: 499 of 904 liquid securities

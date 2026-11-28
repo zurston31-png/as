@@ -286,7 +286,7 @@ def test_a_recorded_failure_is_replayed_as_the_same_failure(
     sent = len(alpaca_mock.requests)
     with (
         _client(settings, ResponseStore(path, "replay")) as c,
-        pytest.raises(getattr(ac, error), match="replay|422|Unprocessable|invalid") as raised,
+        pytest.raises(getattr(ac, error), match=r"replay|422|Unprocessable|invalid") as raised,
     ):
         _fetch(c)
     assert len(alpaca_mock.requests) == sent  # nothing reached the provider
@@ -317,4 +317,5 @@ def test_verify_finds_a_stored_response_without_its_logged_attempt(settings, tmp
     db.commit()
     db.close()
     problems = ResponseStore(path, "replay").verify()
-    assert len(problems) == 1 and "without its logged 200 attempt" in problems[0]
+    assert len(problems) == 1
+    assert "without its logged 200 attempt" in problems[0]

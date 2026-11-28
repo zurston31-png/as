@@ -65,6 +65,9 @@ PROTECTED_DATABASES: dict[Path, str] = {
     (_DATA / "phase1d_anomaly" / "alpaca_responses.db").resolve(): (
         "the raw Alpaca responses of the four approved anomaly requests (2026-11-27)"
     ),
+    (_DATA / "stage_1_1_hybrid" / "universe_stage.db").resolve(): (
+        "the hybrid dataset (version 3: Stage 1.1 with the repaired 2021-04-19 bars)"
+    ),
 }
 
 

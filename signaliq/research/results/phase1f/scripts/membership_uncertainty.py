@@ -9,7 +9,10 @@ above the 100th member's median. Otherwise each such non-member is listed with t
 volume its flagged bar would need. Eligibility cannot change: a flagged bar is still an active
 session, and the price filter uses the decision day only.
 
-    python research/results/phase1f/scripts/membership_uncertainty.py DB
+    python research/results/phase1f/scripts/membership_uncertainty.py DB [--all-bars]
+
+--all-bars: conservative variant; every bar on 2021-10-25 and 2022-03-08 counts as possibly
+short, not only the bars the partial-day audit flags.
 """
 
 import math
@@ -35,16 +38,27 @@ def main() -> int:
     db = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
     found, _ = alerts(db)
     flagged = {(a["security_id"], a["session"]) for a in found if a["label"] == "systemic"}
+    if "--all-bars" in sys.argv:
+        flagged = set(
+            db.execute(
+                "select security_id, session from security_bars where session in (?, ?)",
+                sorted(UNREPAIRED),
+            ).fetchall()
+        )
     leftover = sorted({s for _, s in flagged} - UNREPAIRED)
     print(f"Membership uncertainty in {db_path.name}")
-    print(f"flagged bars (systemic): {len(flagged)}; sessions {sorted({s for _, s in flagged})}")
+    print(
+        f"flagged bars ({'every bar on the two sessions' if '--all-bars' in sys.argv else 'systemic'}): {len(flagged)}; sessions {sorted({s for _, s in flagged})}"
+    )
     if leftover:
         print(f"WARNING: flagged bars on sessions outside 2021-10-25/2022-03-08: {leftover}")
     calendar = [d.isoformat() for d in p.trading_days(p.DATA_START, p.DATA_END)]
     index = {d: i for i, d in enumerate(calendar)}
     value = defaultdict(dict)
     symbol = {}
-    for sid, s, c, v, sym in db.execute("select security_id, session, close, volume, symbol from security_bars"):
+    for sid, s, c, v, sym in db.execute(
+        "select security_id, session, close, volume, symbol from security_bars"
+    ):
         value[sid][s] = c * v
         symbol[sid] = sym
     rows = defaultdict(list)
@@ -90,7 +104,8 @@ def main() -> int:
             lines.append(
                 f"    {symbol[sid]} (rank {rank}, median {med:,.0f}; at most {ceiling:,.0f}): enters if its "
                 f"{window[k]} dollar volume was above {hi:,.0f} (stored {vals[k]:,.0f}; neighbouring sessions "
-                + ", ".join(f"{x:,.0f}" for x in neigh) + ")"
+                + ", ".join(f"{x:,.0f}" for x in neigh)
+                + ")"
             )
         state = "UNCERTAIN" if lines else "certain"
         uncertain_total += bool(lines)

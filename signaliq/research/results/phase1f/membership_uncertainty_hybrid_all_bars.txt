@@ -1,0 +1,20 @@
+Membership uncertainty in universe_stage.db
+flagged bars (every bar on the two sessions): 1845; sessions ['2021-10-25', '2022-03-08']
+
+2021-10-29: window holds ['2021-10-25']; 741 eligible securities with a flagged bar, 641 of them non-members; 100th member PTON at 574,153,638 -> certain
+
+2021-11-30: window holds ['2021-10-25']; 733 eligible securities with a flagged bar, 633 of them non-members; 100th member FDX at 605,191,826 -> UNCERTAIN
+    DASH (rank 101, median 603,486,004; at most 607,974,167): enters if its 2021-10-25 dollar volume was above 605,191,826 (stored 18,207,631; neighbouring sessions 177,752,602, 186,906,121)
+
+2021-12-31: window holds ['2021-10-25']; 719 eligible securities with a flagged bar, 619 of them non-members; 100th member TMUS at 628,197,191 -> UNCERTAIN
+    PANW (rank 102, median 619,524,044; at most 634,636,784): enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 619,524,044; neighbouring sessions 580,266,737, 1,213,923,275)
+    SPGI (rank 101, median 625,129,380; at most 637,784,038): enters if its 2021-10-25 dollar volume was above 628,197,191 (stored 60,250,449; neighbouring sessions 670,222,804, 1,155,667,446)
+
+2022-03-31: window holds ['2022-03-08']; 713 eligible securities with a flagged bar, 613 of them non-members; 100th member CVS at 751,144,435 -> certain
+
+2022-04-29: window holds ['2022-03-08']; 707 eligible securities with a flagged bar, 607 of them non-members; 100th member ATVI at 687,334,896 -> UNCERTAIN
+    AMC (rank 101, median 679,500,945; at most 687,877,034): enters if its 2022-03-08 dollar volume was above 687,334,896 (stored 11,493,945; neighbouring sessions 608,855,585, 403,878,226)
+
+2022-05-31: window holds ['2022-03-08']; 705 eligible securities with a flagged bar, 605 of them non-members; 100th member ELV at 650,950,596 -> certain
+
+decisions uncertain: 3

@@ -153,3 +153,47 @@ caught, and the three numbers (1,000 / 20 / 5) are themselves part of what you a
 Limits: it covers the Alpaca client only (SEC requests have their own cache counts, B12). Stores
 recorded before attempt logging (the Phase 1b store) cannot meet G2. They still replay, and
 `verify` skips the attempt checks for them.
+
+## G3. Proposed after Phase 1f (partial data loss): for your decision
+
+**Not adopted.** Evidence: `research/results/phase1f/` (README section 3).
+
+| # | Threshold | What it measures | If it fails |
+| --- | --- | --- | --- |
+| G3 | **0** partial-day alerts that are neither *confirmed* (with recorded evidence and an approved treatment) nor *reviewed as normal* | that bars which lost most of their trades are never used silently | gate fails; every alert is listed with its label and waits for review |
+
+**How G3 is measured** (`scripts/audit_partial_days.py`, read-only, tested in
+`tests/test_audit_partial_days.py`):
+
+1. Liquid bar: the security's median trade count over the **20** market sessions before it is at
+   least **1,000** (missing sessions count as 0).
+2. Alert: trades below **10%** of that median.
+3. Labels (never a repair or exclusion): `systemic` (at least **5%** of liquid securities, and at
+   least **10**, alert on the same session), `after_volume_spike` (the 20-session median is more
+   than **3x** the median of the 60 sessions before), `last_bar`, `isolated`. Half trading days
+   are tagged from the exchange calendar.
+4. Status: `confirmed` only through a reviewed TSV row (session, security_id or `*`, evidence);
+   everything else is `potential`.
+
+Proposed numbers and why (Stage 1.1, 1,833,958 liquid security-sessions):
+
+| Alert ratio | Alerts on the 3 defect days | Alerts elsewhere | Systemic sessions |
+| --- | --- | --- | --- |
+| 0.05 | 1,451 | 1 | the 3 defect days |
+| **0.10** | **1,454** | **18** | the 3 defect days |
+| 0.15 | 1,454 | 88 | the 3 defect days |
+| 0.20 | 1,454 | 306 | the 3 defect days |
+| 0.25 | 1,454 | 899 | the 3 defect days **plus 6 half trading days** |
+
+On the one day with known truth (2021-04-19, repaired by the provider): 499 alerts, **499
+confirmed by the repair, 0 false positives**; 5 repaired bars missed, all below the 1,000-trade
+liquidity line. Elsewhere: 18 alerts, 0 confirmed, 1 that looks like a real single-stock defect
+(K 2018-03-26: 6 trades against a median of 20,258), 17 consistent with real quiet trading after a
+volume spike or during a wind-down. About 1 alert per 100,000 liquid security-sessions needs
+human review.
+
+Limits: a bar that lost less than about 90% of its trades is not caught; nor are illiquid
+securities, a loss of volume with normal trade counts, or a loss on every security at once that
+also moves the baseline. There is no news data, so "real quiet day" vs "missing data" for an
+isolated alert is a human judgment. The numbers (1,000 / 20 / 10% / 5% / 10 / 3x) are part of
+what you approve.

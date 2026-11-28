@@ -1,0 +1,28 @@
+Completeness audit of universe_stage.db (opened read-only)
+Decisions: 59 (2020-01-31 to 2024-11-29); N = 100
+Candidates: 18490; by selection {'completeness': 158, 'not_selected': 17492, 'screen': 840}
+
+1. POOL
+  ok   candidates with a recorded monthly fetch: 18490 of 18490
+
+2. SCREEN
+  ok   best monthly ranks recomputed and equal to the stored ones: 18490 of 18490
+  ok   tickers ranked within 3 x N = 300 in some month: 840; selection consistent with the rank for every candidate
+
+3. N-TH MEMBER, RECOMPUTED FROM DAILY BARS
+  ok   member medians recomputed and equal to the stored ones: 5900 of 5900
+  N-th member's 63-session median dollar volume: lowest 369,461,305 (2020-01-31), highest 751,144,435 (2022-03-31)
+
+4. PREMISES OF THE BOUND (checked on the calendar)
+  ok   every decision is the last session of its month and its 63-session window lies within the decision month and the three before it
+
+5. TICKERS WITHOUT DAILY DATA
+  ok   tickers without daily data whose bound reaches the N-th member at some decision: 0 (of 17492 checked at 59 decisions)
+  closest: RL on 2024-05-31, N-th member 1.001 x its bound
+
+6. TICKERS ADDED BY THE COMPLETENESS PROOF
+  ok   added tickers whose stated bound recomputes and reached the N-th member of that round: 158 of 158
+  ok   added tickers given daily data (in the batch): 158 of 158
+  of these, 158 still reach the final N-th member
+
+RESULT: PASS

@@ -96,7 +96,9 @@ def main() -> int:
     log = []
     for table, (k1, k2) in KEYS.items():
         cols = [r[1] for r in raw.execute(f"pragma main.table_info({table})")]
-        n_main = raw.execute(f"select count(*) from main.{table} where session=?", (DAY,)).fetchone()[0]
+        n_main = raw.execute(
+            f"select count(*) from main.{table} where session=?", (DAY,)
+        ).fetchone()[0]
         n_v2 = raw.execute(f"select count(*) from v2.{table} where session=?", (DAY,)).fetchone()[0]
         if n_main != n_v2:
             print(f"STOP: {table} has {n_main} rows on {DAY} here and {n_v2} in version 2")
@@ -135,7 +137,9 @@ def main() -> int:
     raw.close()
     (OUT.parent / "replacements.json").write_text(json.dumps(log, indent=1, default=str))
     with (RESULTS / "replacements_provenance.tsv").open("w") as f:
-        f.write("table\tkey\tsymbol\tcolumns_changed\tsource_body_sha256\tsource_fetched_at\tsource_key\n")
+        f.write(
+            "table\tkey\tsymbol\tcolumns_changed\tsource_body_sha256\tsource_fetched_at\tsource_key\n"
+        )
         for r in log:
             f.write(
                 f"{r['table']}\t{r['key'][0]}|{r['key'][1]}\t{r['symbol']}\t{','.join(r['changed'])}"

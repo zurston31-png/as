@@ -1,0 +1,4 @@
+hybrid vs v1 security_bars: 505 rows only in hybrid, 505 only in v1; sessions ['2021-04-19']; symbols 
+hybrid vs v1 ticker_bars: 504 rows only in hybrid, 504 only in v1; sessions ['2021-04-19']; symbols 
+hybrid vs v2 security_bars: 1 rows only in hybrid, 1 only in v2; sessions ['2019-08-12']; symbols ['SPY']
+hybrid vs v2 ticker_bars: 1 rows only in hybrid, 1 only in v2; sessions ['2019-08-12']; symbols ['SPY']

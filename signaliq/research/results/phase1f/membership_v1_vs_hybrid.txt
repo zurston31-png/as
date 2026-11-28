@@ -1,0 +1,7 @@
+A = data/universe_stage.db
+B = data/stage_1_1_hybrid/universe_stage.db
+decisions: 59 vs 59
+2021-04-30: 320 rows differ (columns ['median_dollar_volume', 'rank']; rows only in one: 0); members 100 vs 100, only in A [], only in B []
+2021-05-28: 269 rows differ (columns ['median_dollar_volume', 'rank']; rows only in one: 0); members 100 vs 100, only in A [], only in B []
+2021-06-30: 255 rows differ (columns ['median_dollar_volume', 'rank']; rows only in one: 0); members 100 vs 100, only in A [], only in B []
+decisions with any difference: 3 of 59
