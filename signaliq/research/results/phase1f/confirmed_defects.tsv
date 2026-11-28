@@ -1,0 +1,5 @@
+session	security_id	evidence
+2021-10-25	902	AFL: SIP minute bars hold only the 09:30 and 16:00 auction prints (3 trades), equal to the daily bar; phase1e/minute_vs_daily.txt
+2021-10-25	631	SPGI: SIP minute bars hold only the 09:30 and 16:00 auction prints (3 trades), equal to the daily bar; phase1e/minute_vs_daily.txt
+2022-03-08	905	AJG: SIP minute bars hold only the 09:30 print (1 trade); phase1e/minute_vs_daily.txt
+2022-03-08	907	AME: SIP minute bars hold only the 09:30 and 16:00 prints (2 trades); phase1e/minute_vs_daily.txt
