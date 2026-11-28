@@ -31,7 +31,15 @@ Script: `scripts/fix_reason_notes.py`. Output: `fix_reason_notes_output.txt`. Ol
 
 To rebuild the hybrid from scratch: `phase1f/scripts/build_hybrid.py`, then this script.
 
-RECHECK_PLACEHOLDER
+**Recheck after the fix:**
+
+| Check | Result |
+| --- | --- |
+| Table fingerprints, standard and logical (`hybrid_tables.txt`, `hybrid_tables_logical.txt`) | 21 tables, standard = logical. `batch_symbols` (a351b4dd…) and `candidates` (cdaf8c7c…) now **equal version 2's** |
+| Against version 2 (`hybrid_vs_v2_tables.diff`) | only `security_bars` and `ticker_bars` differ: the SPY 2019-08-12 row, left out of scope on purpose |
+| Membership vs version 2 (`membership_v2_vs_hybrid.txt`) | **0 of 59** decisions differ |
+| Membership vs Stage 1.1 (`membership_v1_vs_hybrid.txt`) | 3 of 59 (ranks and medians only, as in Phase 1f); **0 member changes** |
+| Completeness audit (`hybrid_completeness.txt`) | **PASS**; 158 of 158 added tickers' stated values recompute |
 
 ## 2. K (Kellogg) on 2018-03-26: investigated from stored data
 
@@ -112,4 +120,22 @@ requested, nothing uploaded.
 
 ## 6. Checks
 
-PROTECTED_PLACEHOLDER
+| Check | Result |
+| --- | --- |
+| Protected data (`protected_data_check.txt`) | **PASS**. sha256 unchanged: Stage 1.1, Stage 1.0, `signaliq.db`, `sip_research.db`, the Phase 1b and Phase 1d stores. Hybrid at its new reviewed sha256 7357aa5f…. IEX 15,861 bars, e66890e79788fc78. Strategy A 13 of 13. Stage 1.1 21 of 21 tables. Protected archive folders: 0 commits, 0 changes |
+| Tests | 991 passed |
+| Lint | new and changed files clean. Untouched: `tests/test_validation.py` and the archived Phase 1b scripts |
+
+## 7. Remaining risks
+
+- **Three decisions stay uncertain.** Resolving them needs data that isn't stored.
+- **K 2018-03-26 is likely a defect but unconfirmed.** It has no effect on membership.
+- **The completeness proof relies on monthly bars, which carry the same daily defects.** On
+  the decisions whose windows hold 2021-04-19 (in Stage 1.1's monthly data), 2021-10-25 or
+  2022-03-08, a ticker without daily data could have its upper bound understated by about one
+  day's volume. Across all decisions, the closest any such ticker comes is 0.1% short (RL,
+  2024-05-31, outside those windows). That margin has not been measured separately for the
+  affected decisions.
+- **The hybrid's pre-fix file was not kept.** It can be reconstructed from the log (section 1).
+- **No dataset is backed up off this container.**
+- **The data-quality gate cannot see partial losses milder than about 90%.**

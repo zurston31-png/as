@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501
 """Fix the stale free-text notes in the hybrid dataset (version 3), as approved after Phase 1f.
 
 ``batch_symbols.reason`` and ``candidates.reason`` quote the 100th member's median of the proof
@@ -49,7 +50,9 @@ def main() -> int:
             f"select {', '.join('h.' + c for c in cols)}, v.reason from main.{table} h"
             f" join v2.{table} v using (symbol) where h.reason is not v.reason"
         ).fetchall()
-        n_h, n_v = (db.execute(f"select count(*) from {s}.{table}").fetchone()[0] for s in ("main", "v2"))
+        n_h, n_v = (
+            db.execute(f"select count(*) from {s}.{table}").fetchone()[0] for s in ("main", "v2")
+        )
         other = db.execute(
             f"select count(*) from (select {', '.join(rest)} from main.{table}"
             f" except select {', '.join(rest)} from v2.{table})"
@@ -64,7 +67,12 @@ def main() -> int:
                 "select min(median_dollar_volume) from membership where member and decision_session like ?",
                 (day + "%",),
             ).fetchone()[0]
-            assert f"{m100:,.0f}" == nth, (table, old["symbol"], m100, nth)  # text matches this dataset
+            assert f"{m100:,.0f}" == nth, (
+                table,
+                old["symbol"],
+                m100,
+                nth,
+            )  # text matches this dataset
             db.execute(f"update main.{table} set reason = ? where symbol = ?", (new, old["symbol"]))
             log.append({"table": table, "symbol": old["symbol"], "old": old["reason"], "new": new,
                         "decision": day, "hybrid_100th_member_median": m100})  # fmt: skip
@@ -72,7 +80,9 @@ def main() -> int:
     db.execute("detach database v2")
     db.close()
     after = sha256(HYBRID)
-    LOG.write_text(json.dumps({"sha256_before": before, "sha256_after": after, "rows": log}, indent=1))
+    LOG.write_text(
+        json.dumps({"sha256_before": before, "sha256_after": after, "rows": log}, indent=1)
+    )
     print(f"fixed {len(log)} notes: " + ", ".join(f"{r['table']}.{r['symbol']}" for r in log))
     print(f"hybrid sha256 before {before}\nhybrid sha256 after  {after}")
     return 0

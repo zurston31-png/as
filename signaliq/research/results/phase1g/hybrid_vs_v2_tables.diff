@@ -1,0 +1,8 @@
+12c12
+< security_bars: 1928996 rows, sha256 49da2a3aea5ad76c (columns left out: none)
+---
+> security_bars: 1928996 rows, sha256 3b18260dd1aa597b (columns left out: none)
+19c19
+< ticker_bars: 1960141 rows, sha256 524e884e473f30c1 (columns left out: none)
+---
+> ticker_bars: 1960141 rows, sha256 8692a477d90f5f2d (columns left out: none)
